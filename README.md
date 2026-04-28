@@ -59,12 +59,22 @@ docker compose logs app
 docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
 ```
 
+Fuel Prices QLD sync runs every 30 minutes and loads reference data, sites, current prices, and price history:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
+docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+```
+
+Set `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/mysql.env` file.
+
 ## Common Commands
 
 ```bash
 docker compose up -d --build
 docker compose restart app
 docker compose exec app php setup.php
+docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
 docker compose exec app php bin/cron-heartbeat.php
 docker compose down
 ```

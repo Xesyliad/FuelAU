@@ -2,5 +2,8 @@ CRON_TZ=Australia/Brisbane
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Starter job: replace this command with the real API import/sync job when it is defined.
+# Keep a local cron heartbeat for operational visibility.
 */15 * * * * cd /var/www/html && php bin/cron-heartbeat.php >> /var/log/fuelapi/cron-heartbeat.log 2>&1
+
+# Fuel Prices QLD: refresh reference data and current prices every 30 minutes.
+0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
