@@ -23,16 +23,17 @@ Project-owned runtime state is stored under `var/docker/`, which is ignored by G
 
 Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or a compatible external BuildKit builder.
 
-`setup.php` creates the project-local runtime directories required by later services, including the Nominatim PostgreSQL path `var/docker/nominatim-db/16/main`.
+`setup.php` creates the project-local runtime directories required by later services, including the Nominatim PostgreSQL path `var/docker/nominatim-db/16/main`. The Nominatim image uses PostgreSQL as UID/GID `100:103`; the MariaDB image uses `999:999`.
 
 If `/opt/FuelAU` is mounted from Synology over NFS, the share must allow real ownership changes for PostgreSQL-backed services. Verify this on the Docker host:
 
 ```bash
-sudo chown -R 999:999 /opt/FuelAU/var/docker/nominatim-db
-stat -c '%u:%g %n' /opt/FuelAU/var/docker/nominatim-db/16/main
+sudo chown -R 100:103 /opt/FuelAU/var/docker/nominatim-db
+sudo chmod 700 /opt/FuelAU/var/docker/nominatim-db/16/main
+stat -c '%u:%g %a %n' /opt/FuelAU/var/docker/nominatim-db/16/main
 ```
 
-The `stat` output must show `999:999`. If it remains `65534:65534`, Synology is still mapping the Docker host user to `nobody`; set the NFS permission for the Docker host to read/write with squash/no mapping disabled as appropriate for your DSM version, or move Nominatim data to local disk or a Docker-managed volume.
+The `stat` output must show `100:103 700`. If it remains `65534:65534`, Synology is still mapping the Docker host user to `nobody`; set the NFS permission for the Docker host to read/write with squash/no mapping disabled as appropriate for your DSM version, or move Nominatim data to local disk or a Docker-managed volume.
 
 ## Start
 

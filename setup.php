@@ -9,19 +9,29 @@ const FUELAU_SCHEMA_VERSION = 2;
 function fuelauEnsureRuntimeDirectories(): void
 {
     $directories = [
-        __DIR__ . '/var/docker/app-logs',
-        __DIR__ . '/var/docker/db-data',
-        __DIR__ . '/var/docker/nominatim-db/16/main',
-        __DIR__ . '/var/docker/nominatim-flatnode',
-        __DIR__ . '/var/docker/osrm-data',
+        [__DIR__ . '/var/docker/app-logs', 0777, null, null],
+        [__DIR__ . '/var/docker/db-data', 0777, 999, 999],
+        [__DIR__ . '/var/docker/nominatim-db', 0755, 100, 103],
+        [__DIR__ . '/var/docker/nominatim-db/16', 0755, 100, 103],
+        [__DIR__ . '/var/docker/nominatim-db/16/main', 0700, 100, 103],
+        [__DIR__ . '/var/docker/nominatim-flatnode', 0777, null, null],
+        [__DIR__ . '/var/docker/osrm-data', 0777, null, null],
     ];
 
-    foreach ($directories as $directory) {
+    foreach ($directories as [$directory, $mode, $uid, $gid]) {
         if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
             throw new RuntimeException("Unable to create runtime directory: {$directory}");
         }
 
-        chmod($directory, 0777);
+        if ($uid !== null && function_exists('chown')) {
+            chown($directory, $uid);
+        }
+
+        if ($gid !== null && function_exists('chgrp')) {
+            chgrp($directory, $gid);
+        }
+
+        chmod($directory, $mode);
         if (!is_writable($directory)) {
             throw new RuntimeException("Runtime directory is not writable: {$directory}");
         }
