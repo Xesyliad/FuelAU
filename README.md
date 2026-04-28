@@ -1,5 +1,7 @@
 # FuelAU
 
+Australian routing by fuel stations.
+
 Docker-first PHP API scaffold based on the previous Fuel app conventions, but without the Fuel Prices QLD sync code.
 
 ## Services
