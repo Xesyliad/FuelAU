@@ -21,6 +21,7 @@ DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
 DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
 DEFAULT_TOKEN_CACHE_PATH = "/var/www/html/var/docker/app-state/nsw_fuel_api_token.json"
 DEFAULT_API_BASE_URL = "https://api.onegov.nsw.gov.au"
+DEFAULT_API_STATES = "NSW|TAS"
 DEFAULT_TIMEZONE = "Australia/Sydney"
 USER_AGENT = "fuelau-nsw-sync/0.1"
 MYSQL_INSERT_BATCH_SIZE = 500
@@ -194,8 +195,9 @@ def fetch_access_token(app_config: dict[str, str], cache_path: Path, api_base_ur
 
 
 def fetch_json(api_base_url: str, access_token: str, client_id: str, path: str) -> dict[str, object]:
+    request_url = api_base_url.rstrip("/") + path
     request = Request(
-        api_base_url.rstrip("/") + path,
+        request_url,
         headers={
             "Authorization": "Bearer " + access_token,
             "apikey": client_id,
@@ -210,7 +212,15 @@ def fetch_json(api_base_url: str, access_token: str, client_id: str, path: str) 
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} for {path}: {body[:500]}") from exc
+        raise RuntimeError(f"HTTP {exc.code} for {request_url}: {body[:500]}") from exc
+
+
+def build_api_path(path: str, states: str) -> str:
+    states_value = states.strip()
+    if states_value == "":
+        return path
+    delimiter = "&" if "?" in path else "?"
+    return f"{path}{delimiter}{urlencode({'states': states_value})}"
 
 
 def log_sync_run(mysql_env_path: str, job_name: str, status: str, rows_processed: int, message: str) -> None:
@@ -411,8 +421,19 @@ ON DUPLICATE KEY UPDATE
 """.strip()
 
 
-def sync_reference(mysql_env_path: str, api_base_url: str, access_token: str, client_id: str) -> SyncResult:
-    payload = fetch_json(api_base_url, access_token, client_id, "/FuelCheckRefData/v2/fuel/lovs")
+def sync_reference(
+    mysql_env_path: str,
+    api_base_url: str,
+    access_token: str,
+    client_id: str,
+    api_states: str,
+) -> SyncResult:
+    payload = fetch_json(
+        api_base_url,
+        access_token,
+        client_id,
+        build_api_path("/FuelCheckRefData/v2/fuel/lovs", api_states),
+    )
     brands = list(payload.get("brands", {}).get("items", [])) if isinstance(payload.get("brands"), dict) else []
     fuel_types = (
         list(payload.get("fueltypes", {}).get("items", [])) if isinstance(payload.get("fueltypes"), dict) else []
@@ -434,8 +455,9 @@ def sync_prices(
     client_id: str,
     path: str,
     job_name: str,
+    api_states: str,
 ) -> SyncResult:
-    payload = fetch_json(api_base_url, access_token, client_id, path)
+    payload = fetch_json(api_base_url, access_token, client_id, build_api_path(path, api_states))
     stations = list(payload.get("stations", [])) if isinstance(payload.get("stations"), list) else []
     prices = list(payload.get("prices", [])) if isinstance(payload.get("prices"), list) else []
     if stations:
@@ -469,7 +491,29 @@ def current_price_count(mysql_env_path: str) -> int:
     return int(values[0] or "0") if values else 0
 
 
-def should_refresh_reference(mysql_env_path: str) -> bool:
+def normalized_api_states(api_states: str) -> list[str]:
+    states = [item.strip().upper() for item in api_states.split("|")]
+    return [state for state in states if state != ""]
+
+
+def missing_reference_states(mysql_env_path: str, api_states: str) -> list[str]:
+    states = normalized_api_states(api_states)
+    if not states:
+        return []
+
+    expected = ", ".join(mysql_escape(state) for state in states)
+    sql = f"""
+SELECT DISTINCT `state`
+FROM `nsw_fuel_types`
+WHERE `state` IN ({expected});
+""".strip()
+    existing = {value.strip().upper() for value in query_mysql_values(mysql_env_path, sql) if value.strip() != ""}
+    return [state for state in states if state not in existing]
+
+
+def should_refresh_reference(mysql_env_path: str, api_states: str) -> bool:
+    if missing_reference_states(mysql_env_path, api_states):
+        return True
     latest = latest_success_value(mysql_env_path, "nsw_reference")
     if latest is None:
         return True
@@ -490,7 +534,12 @@ def should_run_full_prices(mysql_env_path: str) -> bool:
     return latest_dt.astimezone(sydney) < start_of_day_sydney
 
 
-def run_diagnostics(api_base_url: str, access_token: str, client_id: str) -> list[tuple[str, int, str]]:
+def run_diagnostics(
+    api_base_url: str,
+    access_token: str,
+    client_id: str,
+    api_states: str,
+) -> list[tuple[str, int, str]]:
     probes = [
         ("reference_brands", "/FuelCheckRefData/v2/fuel/lovs", ("brands", "items")),
         ("reference_fueltypes", "/FuelCheckRefData/v2/fuel/lovs", ("fueltypes", "items")),
@@ -501,7 +550,12 @@ def run_diagnostics(api_base_url: str, access_token: str, client_id: str) -> lis
     results: list[tuple[str, int, str]] = []
     for label, path, keys in probes:
         try:
-            payload: object = fetch_json(api_base_url, access_token, client_id, path)
+            payload: object = fetch_json(
+                api_base_url,
+                access_token,
+                client_id,
+                build_api_path(path, api_states),
+            )
             for key in keys:
                 if isinstance(payload, dict):
                     payload = payload.get(key)
@@ -538,6 +592,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="NSW Fuel API base URL.",
     )
     parser.add_argument(
+        "--api-states",
+        default="",
+        help="Pipe-delimited NSW API states query, for example NSW|TAS.",
+    )
+    parser.add_argument(
         "--token-cache",
         default=DEFAULT_TOKEN_CACHE_PATH,
         help="Path to the cached NSW access token file.",
@@ -548,6 +607,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
     app_config = parse_env_file(Path(args.app_env))
+    api_states = args.api_states.strip() or app_config.get("NSW_FUEL_API_STATES", "").strip() or DEFAULT_API_STATES
     try:
         access_token, client_id = fetch_access_token(app_config, Path(args.token_cache), args.api_base_url)
     except Exception as exc:
@@ -557,15 +617,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         results: list[SyncResult] = []
         if args.job == "diagnose":
-            diagnostics = run_diagnostics(args.api_base_url, access_token, client_id)
+            diagnostics = run_diagnostics(args.api_base_url, access_token, client_id, api_states)
             for label, count, message in diagnostics:
                 if count >= 0:
                     print(f"{label}: count={count}")
                 else:
                     print(f"{label}: error={message}")
             return 0
-        if args.job in ("reference", "all") and should_refresh_reference(args.mysql_env):
-            results.append(sync_reference(args.mysql_env, args.api_base_url, access_token, client_id))
+        if args.job in ("reference", "all") and should_refresh_reference(args.mysql_env, api_states):
+            results.append(sync_reference(args.mysql_env, args.api_base_url, access_token, client_id, api_states))
         elif args.job == "reference":
             results.append(SyncResult("nsw_reference", 0, "skipped reference refresh; last success < 24h"))
 
@@ -578,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
                     client_id,
                     "/FuelPriceCheck/v2/fuel/prices",
                     "nsw_prices_full",
+                    api_states,
                 )
             )
         elif args.job == "prices-new":
@@ -589,6 +650,7 @@ def main(argv: list[str] | None = None) -> int:
                     client_id,
                     "/FuelPriceCheck/v2/fuel/prices/new",
                     "nsw_prices_new",
+                    api_states,
                 )
             )
         elif args.job == "all":
@@ -601,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
                         client_id,
                         "/FuelPriceCheck/v2/fuel/prices",
                         "nsw_prices_full",
+                        api_states,
                     )
                 )
             else:
@@ -612,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
                         client_id,
                         "/FuelPriceCheck/v2/fuel/prices/new",
                         "nsw_prices_new",
+                        api_states,
                     )
                 )
     except Exception as exc:

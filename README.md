@@ -52,6 +52,7 @@ Current application-level config keys include:
 
 - `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN`
 - `NSW_FUEL_API_BASE_URL`
+- `NSW_FUEL_API_STATES`
 - `NSW_FUEL_API_KEY`
 - `NSW_FUEL_API_SECRET`
 - `NSW_FUEL_API_AUTHORIZATION_HEADER`
@@ -156,6 +157,8 @@ The importer requires `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/
 ## NSW Fuel API
 
 The NSW importer is in `src/nsw_sync`. It uses the official NSW Fuel API v2 endpoints, which cover both `NSW` and `TAS`.
+
+Set `NSW_FUEL_API_STATES=NSW|TAS` in `config/app.env`. The NSW v2 Swagger defaults to `NSW` when the `states` query is omitted, so FuelAU sends the explicit state list on the LOV and price endpoints.
 
 It caches the OAuth access token locally, refreshes reference data once per day, runs a full current-price refresh once per Sydney day, and uses the lighter `prices/new` endpoint for the other 30-minute runs. This keeps the sync under the free monthly API quota.
 
