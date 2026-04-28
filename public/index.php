@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 require dirname(__DIR__) . '/src/docker.php';
+require dirname(__DIR__) . '/src/http.php';
+require dirname(__DIR__) . '/src/routing.php';
+require dirname(__DIR__) . '/src/fuel.php';
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 
@@ -516,6 +519,75 @@ try {
             'services' => fuelauDockerServices(),
             'containers' => fuelauDockerContainers(),
             'disk' => fuelauDockerDiskSummary(),
+        ]);
+    }
+
+    if ($path === '/api/services/status') {
+        fuelauJsonResponse([
+            'service' => 'fuelau-api',
+            'upstreams' => fuelauServiceStatus(),
+        ]);
+    }
+
+    if ($path === '/api/geo/search') {
+        $query = trim((string) ($_GET['q'] ?? ''));
+        if ($query === '') {
+            fuelauJsonResponse([
+                'error' => 'invalid_query',
+                'message' => 'Missing required query parameter: q',
+            ], 400);
+        }
+
+        fuelauJsonResponse([
+            'query' => $query,
+            'results' => fuelauNominatimSearch($query, (int) ($_GET['limit'] ?? 10)),
+        ]);
+    }
+
+    if ($path === '/api/geo/reverse') {
+        $latitude = $_GET['lat'] ?? null;
+        $longitude = $_GET['lon'] ?? null;
+        if (!is_numeric((string) $latitude) || !is_numeric((string) $longitude)) {
+            fuelauJsonResponse([
+                'error' => 'invalid_query',
+                'message' => 'lat and lon are required numeric query parameters.',
+            ], 400);
+        }
+
+        fuelauJsonResponse([
+            'result' => fuelauNominatimReverse((float) $latitude, (float) $longitude),
+        ]);
+    }
+
+    if ($path === '/api/route') {
+        $coordinates = trim((string) ($_GET['coordinates'] ?? ''));
+        if ($coordinates === '') {
+            fuelauJsonResponse([
+                'error' => 'invalid_query',
+                'message' => 'Missing required query parameter: coordinates',
+            ], 400);
+        }
+
+        fuelauJsonResponse(
+            fuelauRoutePlan(
+                fuelauParseCoordinates($coordinates),
+                (($_GET['steps'] ?? '1') !== '0')
+            )
+        );
+    }
+
+    if ($path === '/api/fuel/sources') {
+        fuelauJsonResponse([
+            'sources' => fuelauFuelSourceSummary(fuelauPdo()),
+        ]);
+    }
+
+    if ($path === '/api/fuel/current') {
+        $pdo = fuelauPdo();
+        $filters = fuelauFuelRequestFilters();
+        fuelauJsonResponse([
+            'filters' => $filters,
+            'rows' => fuelauNormalizedFuelRows($pdo, $filters),
         ]);
     }
 

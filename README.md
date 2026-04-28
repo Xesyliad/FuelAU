@@ -100,6 +100,27 @@ Nominatim:   http://localhost:18081/
 
 OSRM and Nominatim bind to `127.0.0.1` by default. Their ports are only active when those profile services are running.
 
+## App API
+
+The frontend should use the app-owned API under `http://localhost:18080/api/` rather than talking directly to Nominatim or OSRM on separate ports.
+
+Current core endpoints:
+
+- `/api/health`
+- `/api/services/status`
+- `/api/fuel/sources`
+- `/api/fuel/current?source=all&limit=100`
+- `/api/fuel/current?source=all&q=sydney&fuel=DL&state=NSW&lat=-33.8688&lon=151.2093&radius_km=5`
+- `/api/geo/search?q=Sydney&limit=5`
+- `/api/geo/reverse?lat=-33.8688&lon=151.2093`
+- `/api/route?coordinates=151.2093,-33.8688;151.2069,-33.8731`
+
+Fuel response notes:
+
+- `price` is normalized to cents-per-litre across sources.
+- `price_raw` preserves the original stored source value.
+- `source` currently supports `qld`, `nsw`, `tas`, and `all`.
+
 ## Fuel Prices Queensland
 
 The Fuel Prices Queensland importer is in `src/fpq_sync`. It loads:
