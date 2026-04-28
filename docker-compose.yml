@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_HTTP_PORT:-18080}:80"
+    volumes:
+      - .:/var/www/html
+      - ./config/mysql.env:/etc/fuelapi/mysql.env:ro
+      - app-logs:/var/log/fuelapi
+    environment:
+      APP_ENV: "${APP_ENV:-local}"
+      TZ: "${TZ:-Australia/Brisbane}"
+    restart: unless-stopped
+
+  db:
+    image: mariadb:11.4
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-fuelau_root_password}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-fuelau}"
+      MYSQL_USER: "${MYSQL_USER:-fuelau}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-fuelau_password}"
+      TZ: "${TZ:-Australia/Brisbane}"
+    ports:
+      - "${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  app-logs:
+  db-data:
