@@ -209,6 +209,11 @@ try {
             color: #991b1b;
         }
 
+        .badge.planned {
+            background: #e0f2fe;
+            color: #075985;
+        }
+
         .logs {
             min-height: 260px;
             max-height: 360px;
@@ -361,37 +366,55 @@ try {
             return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
         }
 
-        function renderContainers(containers) {
+        function renderContainers(services) {
             containerGrid.innerHTML = '';
 
-            if (containers.length === 0) {
-                containerGrid.innerHTML = '<p>No Compose containers found for this project.</p>';
+            if (services.length === 0) {
+                containerGrid.innerHTML = '<p>No Compose services found for this project.</p>';
                 selectedContainerId = null;
                 restartContainer.disabled = true;
                 return;
             }
 
-            containers.forEach((container) => {
+            services.forEach((service) => {
+                const container = service.container || {};
+                const hasContainer = Boolean(service.has_container && container.id);
                 const card = document.createElement('article');
                 card.className = `container-card${container.id === selectedContainerId ? ' selected' : ''}`;
 
-                const statusClass = container.state === 'running' ? 'running' : (container.state === 'exited' ? 'exited' : '');
+                const state = hasContainer ? (container.state || 'unknown') : 'not created';
+                const statusClass = container.state === 'running' ? 'running' : (container.state === 'exited' ? 'exited' : 'planned');
+                const dataPaths = Array.isArray(service.data_paths) && service.data_paths.length > 0
+                    ? service.data_paths.join(', ')
+                    : 'None configured';
+                const source = service.source ? `<span>Source: ${escapeHtml(service.source)}</span>` : '';
+                const updates = service.updates ? `<span>Updates: ${escapeHtml(service.updates)}</span>` : '';
                 card.innerHTML = `
-                    <h2>${escapeHtml(container.service || container.name)}</h2>
-                    <span class="badge ${statusClass}">${escapeHtml(container.state || 'unknown')}</span>
+                    <h2>${escapeHtml(service.title || service.service)}</h2>
+                    <span class="badge ${statusClass}">${escapeHtml(state)}</span>
                     <div class="container-meta">
-                        <span>Name: ${escapeHtml(container.name)}</span>
-                        <span>Image: ${escapeHtml(container.image)}</span>
-                        <span>Status: ${escapeHtml(container.status)}</span>
+                        <span>Service: ${escapeHtml(service.service)}</span>
+                        <span>Role: ${escapeHtml(service.role || '')}</span>
+                        <span>Profile: ${escapeHtml(service.profile || 'default')}</span>
+                        <span>Name: ${escapeHtml(container.name || 'No container created')}</span>
+                        <span>Image: ${escapeHtml(container.image || 'Pending image pull/build')}</span>
+                        <span>Status: ${escapeHtml(container.status || 'Not started')}</span>
                         <span>Ports: ${escapeHtml(renderPorts(container.ports))}</span>
+                        <span>Data: ${escapeHtml(dataPaths)}</span>
+                        <span>Start: ${escapeHtml(service.start_command || 'Not configured')}</span>
+                        ${source}
+                        ${updates}
                     </div>
-                    <button class="button" type="button">View Logs</button>
+                    <button class="button" type="button" ${hasContainer ? '' : 'disabled'}>View Logs</button>
                 `;
 
                 card.querySelector('button').addEventListener('click', () => {
+                    if (!hasContainer) {
+                        return;
+                    }
                     selectedContainerId = container.id;
                     restartContainer.disabled = false;
-                    renderContainers(containers);
+                    renderContainers(services);
                     loadLogs(container.id);
                 });
 
@@ -403,9 +426,9 @@ try {
             containerStatus.textContent = 'Loading container status...';
             try {
                 const payload = await apiRequest('/api/docker/status');
-                renderContainers(payload.containers || []);
+                renderContainers(payload.services || []);
                 const disk = payload.disk || {};
-                containerStatus.textContent = `Project: ${payload.project}. Containers: ${(payload.containers || []).length}. Images: ${disk.image_count || 0}. Build cache: ${formatBytes(disk.build_cache_size)}.`;
+                containerStatus.textContent = `Project: ${payload.project}. Services: ${(payload.services || []).length}. Containers: ${(payload.containers || []).length}. Images: ${disk.image_count || 0}. Build cache: ${formatBytes(disk.build_cache_size)}.`;
             } catch (error) {
                 containerStatus.textContent = error.message;
             }
@@ -490,6 +513,7 @@ try {
     if ($path === '/api/docker/status') {
         fuelauDockerApiResponse([
             'project' => fuelauDockerProject(),
+            'services' => fuelauDockerServices(),
             'containers' => fuelauDockerContainers(),
             'disk' => fuelauDockerDiskSummary(),
         ]);

@@ -38,3 +38,85 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  nominatim:
+    image: mediagis/nominatim:5.1
+    profiles:
+      - routing
+    environment:
+      PBF_URL: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
+      REPLICATION_URL: https://download.geofabrik.de/australia-oceania/australia-updates
+      NOMINATIM_PASSWORD: "${NOMINATIM_PASSWORD:?set NOMINATIM_PASSWORD in .env}"
+      THREADS: "${NOMINATIM_THREADS:-4}"
+      IMPORT_WIKIPEDIA: "false"
+      IMPORT_US_POSTCODES: "false"
+      FREEZE: "false"
+      TZ: "${TZ:-Australia/Brisbane}"
+    ports:
+      - "127.0.0.1:${NOMINATIM_HTTP_PORT:-18081}:8080"
+    volumes:
+      - ./var/docker/nominatim-db:/var/lib/postgresql
+      - ./var/docker/nominatim-flatnode:/nominatim/flatnode
+    shm_size: 1gb
+    restart: unless-stopped
+
+  osrm-download:
+    image: curlimages/curl:8.10.1
+    profiles:
+      - routing-setup
+    user: "0:0"
+    command:
+      - -L
+      - --fail
+      - --output
+      - /data/australia-latest.osm.pbf
+      - https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
+    volumes:
+      - ./var/docker/osrm-data:/data
+
+  osrm-extract:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles:
+      - routing-setup
+    command:
+      - osrm-extract
+      - -p
+      - /opt/car.lua
+      - /data/australia-latest.osm.pbf
+    volumes:
+      - ./var/docker/osrm-data:/data
+
+  osrm-partition:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles:
+      - routing-setup
+    command:
+      - osrm-partition
+      - /data/australia-latest.osrm
+    volumes:
+      - ./var/docker/osrm-data:/data
+
+  osrm-customize:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles:
+      - routing-setup
+    command:
+      - osrm-customize
+      - /data/australia-latest.osrm
+    volumes:
+      - ./var/docker/osrm-data:/data
+
+  osrm-routed:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles:
+      - routing
+    command:
+      - osrm-routed
+      - --algorithm
+      - mld
+      - /data/australia-latest.osrm
+    ports:
+      - "127.0.0.1:${OSRM_HTTP_PORT:-15000}:5000"
+    volumes:
+      - ./var/docker/osrm-data:/data
+    restart: unless-stopped

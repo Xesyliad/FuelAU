@@ -17,6 +17,9 @@ Project-owned runtime state is stored under `var/docker/`, which is ignored by G
 
 - `var/docker/db-data`: MariaDB data directory
 - `var/docker/app-logs`: app and cron logs
+- `var/docker/nominatim-db`: Nominatim PostgreSQL data
+- `var/docker/nominatim-flatnode`: Nominatim flatnode data
+- `var/docker/osrm-data`: downloaded and processed OSRM routing data
 
 Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or a compatible external BuildKit builder.
 
@@ -67,6 +70,29 @@ docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 ```
 
 Set `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/mysql.env` file.
+
+## Routing Services
+
+Nominatim and OSRM are defined in `docker-compose.yml` but are behind profiles and will not start with a normal `docker compose up -d`.
+
+Nominatim uses:
+
+```text
+PBF_URL=https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
+REPLICATION_URL=https://download.geofabrik.de/australia-oceania/australia-updates
+```
+
+OSRM setup uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
+
+After reviewing `docker-compose.yml`, the intended manual sequence is:
+
+```bash
+docker compose --profile routing-setup run --rm osrm-download
+docker compose --profile routing-setup run --rm osrm-extract
+docker compose --profile routing-setup run --rm osrm-partition
+docker compose --profile routing-setup run --rm osrm-customize
+docker compose --profile routing up -d nominatim osrm-routed
+```
 
 ## Common Commands
 

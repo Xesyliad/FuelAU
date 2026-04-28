@@ -148,6 +148,121 @@ function fuelauDockerContainers(): array
     return $result;
 }
 
+function fuelauConfiguredServices(): array
+{
+    return [
+        'app' => [
+            'service' => 'app',
+            'title' => 'FuelAU App',
+            'role' => 'PHP web app, API, cron, and management UI.',
+            'profile' => 'default',
+            'start_command' => 'docker compose up -d app',
+            'data_paths' => ['var/docker/app-logs'],
+        ],
+        'db' => [
+            'service' => 'db',
+            'title' => 'MariaDB',
+            'role' => 'FuelAU application database.',
+            'profile' => 'default',
+            'start_command' => 'docker compose up -d db',
+            'data_paths' => ['var/docker/db-data'],
+        ],
+        'nominatim' => [
+            'service' => 'nominatim',
+            'title' => 'Nominatim',
+            'role' => 'Australia geocoding service.',
+            'profile' => 'routing',
+            'start_command' => 'docker compose --profile routing up -d nominatim',
+            'data_paths' => ['var/docker/nominatim-db', 'var/docker/nominatim-flatnode'],
+            'source' => 'https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf',
+            'updates' => 'https://download.geofabrik.de/australia-oceania/australia-updates',
+        ],
+        'osrm-download' => [
+            'service' => 'osrm-download',
+            'title' => 'OSRM Download',
+            'role' => 'Downloads the Australia OSM PBF before OSRM preprocessing.',
+            'profile' => 'routing-setup',
+            'start_command' => 'docker compose --profile routing-setup run --rm osrm-download',
+            'data_paths' => ['var/docker/osrm-data'],
+            'source' => 'https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf',
+        ],
+        'osrm-extract' => [
+            'service' => 'osrm-extract',
+            'title' => 'OSRM Extract',
+            'role' => 'Builds OSRM extract data from the Australia PBF.',
+            'profile' => 'routing-setup',
+            'start_command' => 'docker compose --profile routing-setup run --rm osrm-extract',
+            'data_paths' => ['var/docker/osrm-data'],
+        ],
+        'osrm-partition' => [
+            'service' => 'osrm-partition',
+            'title' => 'OSRM Partition',
+            'role' => 'Prepares MLD partitions for OSRM routing.',
+            'profile' => 'routing-setup',
+            'start_command' => 'docker compose --profile routing-setup run --rm osrm-partition',
+            'data_paths' => ['var/docker/osrm-data'],
+        ],
+        'osrm-customize' => [
+            'service' => 'osrm-customize',
+            'title' => 'OSRM Customize',
+            'role' => 'Customizes MLD cells for OSRM routing.',
+            'profile' => 'routing-setup',
+            'start_command' => 'docker compose --profile routing-setup run --rm osrm-customize',
+            'data_paths' => ['var/docker/osrm-data'],
+        ],
+        'osrm-routed' => [
+            'service' => 'osrm-routed',
+            'title' => 'OSRM Routed',
+            'role' => 'Australia routing API service.',
+            'profile' => 'routing',
+            'start_command' => 'docker compose --profile routing up -d osrm-routed',
+            'data_paths' => ['var/docker/osrm-data'],
+        ],
+    ];
+}
+
+function fuelauDockerServices(): array
+{
+    $configured = fuelauConfiguredServices();
+    $containersByService = [];
+    foreach (fuelauDockerContainers() as $container) {
+        $service = (string) ($container['service'] ?? '');
+        if ($service !== '') {
+            $containersByService[$service] = $container;
+        }
+    }
+
+    $services = [];
+    foreach ($configured as $service => $metadata) {
+        $container = $containersByService[$service] ?? null;
+        $services[] = array_merge(
+            $metadata,
+            [
+                'configured' => true,
+                'has_container' => $container !== null,
+                'container' => $container,
+            ]
+        );
+        unset($containersByService[$service]);
+    }
+
+    foreach ($containersByService as $service => $container) {
+        $services[] = [
+            'service' => $service,
+            'title' => $service,
+            'role' => 'Compose service detected from Docker labels.',
+            'profile' => 'unknown',
+            'start_command' => '',
+            'data_paths' => [],
+            'configured' => false,
+            'has_container' => true,
+            'container' => $container,
+        ];
+    }
+
+    return $services;
+}
+
 function fuelauDockerContainerId(string $id): string
 {
     $id = trim($id);
