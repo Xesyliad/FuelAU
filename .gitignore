@@ -1,3 +1,5 @@
 \#recycle/
 .codex
+.env
 config/mysql.env
+var/

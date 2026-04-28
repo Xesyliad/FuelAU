@@ -11,31 +11,30 @@ services:
     volumes:
       - .:/var/www/html
       - ./config/mysql.env:/etc/fuelapi/mysql.env:ro
-      - app-logs:/var/log/fuelapi
+      - ./var/docker/app-logs:/var/log/fuelapi
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       APP_ENV: "${APP_ENV:-local}"
+      FUELAU_DOCKER_PROJECT: "${COMPOSE_PROJECT_NAME:-fuelau}"
       TZ: "${TZ:-Australia/Brisbane}"
     restart: unless-stopped
 
   db:
     image: mariadb:11.4
+    user: "999:999"
     environment:
-      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-fuelau_root_password}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}"
       MYSQL_DATABASE: "${MYSQL_DATABASE:-fuelau}"
       MYSQL_USER: "${MYSQL_USER:-fuelau}"
-      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-fuelau_password}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
       TZ: "${TZ:-Australia/Brisbane}"
     ports:
       - "${MYSQL_HOST_PORT:-3307}:3306"
     volumes:
-      - db-data:/var/lib/mysql
+      - ./var/docker/db-data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 10
     restart: unless-stopped
-
-volumes:
-  app-logs:
-  db-data:

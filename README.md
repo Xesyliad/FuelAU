@@ -11,7 +11,25 @@ Docker-first PHP API scaffold based on the previous Fuel app conventions, but wi
 
 Both services are managed from the single root `docker-compose.yml`.
 
+## Local Docker State
+
+Project-owned runtime state is stored under `var/docker/`, which is ignored by Git:
+
+- `var/docker/db-data`: MariaDB data directory
+- `var/docker/app-logs`: app and cron logs
+
+Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or a compatible external BuildKit builder.
+
 ## Start
+
+Create local runtime config from the tracked samples:
+
+```bash
+cp .env.sample .env
+cp config/mysql-sample.env config/mysql.env
+```
+
+Edit both files so the database passwords match.
 
 ```bash
 docker compose up -d --build
@@ -26,13 +44,9 @@ http://localhost:18080/api/health
 
 ## Runtime Config
 
-The app reads database settings from `/etc/fuelapi/mysql.env` inside the container. Docker Compose mounts `config/mysql.env` there.
+The app reads database settings from `/etc/fuelapi/mysql.env` inside the container. Docker Compose mounts `config/mysql.env` there. Compose itself reads database bootstrap settings from `.env`.
 
-Copy the sample before first run if needed:
-
-```bash
-cp config/mysql-sample.env config/mysql.env
-```
+Files containing real passwords are ignored. Commit only `.env.sample` and `config/mysql-sample.env`.
 
 ## Cron
 
