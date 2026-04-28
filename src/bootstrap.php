@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-const FUELAU_MYSQL_ENV_PATH = '/etc/fuelapi/mysql.env';
+define('FUELAU_MYSQL_ENV_PATH', getenv('FUELAU_MYSQL_ENV_PATH') ?: '/etc/fuelapi/mysql.env');
 
 function fuelauParseEnvFile(string $path): array
 {

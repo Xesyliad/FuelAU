@@ -6,6 +6,28 @@ require __DIR__ . '/src/bootstrap.php';
 
 const FUELAU_SCHEMA_VERSION = 2;
 
+function fuelauEnsureRuntimeDirectories(): void
+{
+    $directories = [
+        __DIR__ . '/var/docker/app-logs',
+        __DIR__ . '/var/docker/db-data',
+        __DIR__ . '/var/docker/nominatim-db/16/main',
+        __DIR__ . '/var/docker/nominatim-flatnode',
+        __DIR__ . '/var/docker/osrm-data',
+    ];
+
+    foreach ($directories as $directory) {
+        if (!is_dir($directory) && !mkdir($directory, 0777, true)) {
+            throw new RuntimeException("Unable to create runtime directory: {$directory}");
+        }
+
+        chmod($directory, 0777);
+        if (!is_writable($directory)) {
+            throw new RuntimeException("Runtime directory is not writable: {$directory}");
+        }
+    }
+}
+
 function fuelauApplyStatements(PDO $pdo, array $statements): void
 {
     foreach ($statements as $statement) {
@@ -210,6 +232,8 @@ SQL,
         $statement->execute(['version' => $version]);
     }
 }
+
+fuelauEnsureRuntimeDirectories();
 
 $pdo = fuelauPdo();
 fuelauEnsureSchema($pdo);

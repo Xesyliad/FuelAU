@@ -6,3 +6,4 @@ config/mysql.env
 var/
 __pycache__/
 *.py[cod]
+*.swp

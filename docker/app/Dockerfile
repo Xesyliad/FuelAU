@@ -20,5 +20,8 @@ RUN chmod +x /usr/local/bin/fuelau-entrypoint \
 
 WORKDIR /var/www/html
 
+COPY . /var/www/html
+RUN chown -R www-data:www-data /var/www/html
+
 ENTRYPOINT ["fuelau-entrypoint"]
 CMD ["apache2-foreground"]
