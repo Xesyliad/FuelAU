@@ -35,15 +35,17 @@ Create local runtime config from the tracked samples:
 
 ```bash
 cp .env.sample .env
+cp config/app-sample.env config/app.env
 cp config/mysql-sample.env config/mysql.env
 ```
 
-Edit both files before starting the stack:
+Edit these files before starting the stack:
 
 - `.env`: Compose ports, MariaDB bootstrap credentials, Nominatim password, timezone.
-- `config/mysql.env`: app database connection settings and the Fuel Prices Queensland subscriber token.
+- `config/app.env`: central application settings such as external API tokens.
+- `config/mysql.env`: MySQL connection settings only.
 
-Files containing real secrets are ignored by Git. Commit only `.env.sample` and `config/mysql-sample.env`.
+Files containing real secrets are ignored by Git. Commit only `.env.sample`, `config/app-sample.env`, and `config/mysql-sample.env`.
 
 ## Local Runtime State
 
@@ -119,7 +121,7 @@ View sync logs:
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 ```
 
-The importer requires `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/mysql.env` file.
+The importer requires `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/app.env` file.
 
 ## Cron
 
@@ -220,6 +222,7 @@ Ignored local files include:
 
 - `.codex`
 - `.env`
+- `config/app.env`
 - `config/mysql.env`
 - `var/`
 - `#recycle/`

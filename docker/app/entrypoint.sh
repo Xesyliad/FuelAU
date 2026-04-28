@@ -13,6 +13,14 @@ if [ -r /etc/fuelapi/mysql.env ]; then
     export FUELAU_MYSQL_ENV_PATH=/run/fuelapi/mysql.env
 fi
 
+if [ -r /etc/fuelapi/app.env ]; then
+    mkdir -p /run/fuelapi
+    cp /etc/fuelapi/app.env /run/fuelapi/app.env
+    chown www-data:www-data /run/fuelapi/app.env
+    chmod 0400 /run/fuelapi/app.env
+    export FUELAU_APP_ENV_PATH=/run/fuelapi/app.env
+fi
+
 if [ -e /var/www/html/public/index.php ]; then
     web_uid="$(stat -c '%u' /var/www/html/public/index.php)"
     web_gid="$(stat -c '%g' /var/www/html/public/index.php)"

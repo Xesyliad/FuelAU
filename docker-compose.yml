@@ -9,6 +9,7 @@ services:
     ports:
       - "${APP_HTTP_PORT:-18080}:80"
     volumes:
+      - ./config/app.env:/etc/fuelapi/app.env:ro
       - ./config/mysql.env:/etc/fuelapi/mysql.env:ro
       - ./var/docker:/var/www/html/var/docker
       - ./var/docker/app-logs:/var/log/fuelapi

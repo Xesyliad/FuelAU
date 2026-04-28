@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 define('FUELAU_MYSQL_ENV_PATH', getenv('FUELAU_MYSQL_ENV_PATH') ?: '/etc/fuelapi/mysql.env');
+define('FUELAU_APP_ENV_PATH', getenv('FUELAU_APP_ENV_PATH') ?: '/etc/fuelapi/app.env');
 
 function fuelauParseEnvFile(string $path): array
 {
@@ -34,6 +35,9 @@ function fuelauConfig(): array
     static $config = null;
     if ($config === null) {
         $config = fuelauParseEnvFile(FUELAU_MYSQL_ENV_PATH);
+        if (is_readable(FUELAU_APP_ENV_PATH)) {
+            $config = array_merge($config, fuelauParseEnvFile(FUELAU_APP_ENV_PATH));
+        }
     }
 
     return $config;

@@ -2,6 +2,7 @@
 \#recycle/
 .codex
 .env
+config/app.env
 config/mysql.env
 var/
 __pycache__/

@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
+DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
 DEFAULT_API_HOST = "https://fppdirectapi-prod.fuelpricesqld.com.au"
 USER_AGENT = "fuel-fpq-sync/0.1"
 MYSQL_INSERT_BATCH_SIZE = 500
@@ -648,6 +649,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Path to the MySQL env file.",
     )
     parser.add_argument(
+        "--app-env",
+        default=DEFAULT_APP_ENV_PATH,
+        help="Path to the app env file.",
+    )
+    parser.add_argument(
         "--api-host",
         default=DEFAULT_API_HOST,
         help="Fuel Prices QLD API host.",
@@ -657,10 +663,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
-    config = parse_env_file(Path(args.mysql_env))
+    config = parse_env_file(Path(args.app_env))
     token = config.get("FUEL_PRICES_QLD_SUBSCRIBER_TOKEN")
     if not token:
-        print("error: missing FUEL_PRICES_QLD_SUBSCRIBER_TOKEN in env file", file=os.sys.stderr)
+        print("error: missing FUEL_PRICES_QLD_SUBSCRIBER_TOKEN in app env file", file=os.sys.stderr)
         return 1
 
     try:
