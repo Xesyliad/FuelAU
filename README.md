@@ -1,41 +1,35 @@
 # FuelAU
 
-Australian routing by fuel stations.
+Australian fuel price and routing API project.
 
-Docker-first PHP API scaffold based on the previous Fuel app conventions, but without the Fuel Prices QLD sync code.
+FuelAU is a Docker-first PHP application based on the previous Fuel app structure. It currently provides:
+
+- A fixed-width-font web UI with tabs for Fuel Prices, Route Planning, and Container Management.
+- A PHP/Apache app container with cron.
+- MariaDB-backed Fuel Prices Queensland imports.
+- Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
+- Optional Australia routing/geocoding services using OSRM and Nominatim.
+
+All services are managed from the single root `docker-compose.yml`.
 
 ## Services
 
-- `app`: PHP Apache runtime, cron, and project files.
-- `db`: MariaDB for API storage.
+- `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
+- `db`: MariaDB 11.4 application database.
+- `nominatim`: Australia geocoding service using `mediagis/nominatim:5.1`.
+- `osrm-download`: downloads the Australia OSM PBF for OSRM.
+- `osrm-extract`: builds the OSRM extract.
+- `osrm-partition`: prepares OSRM MLD partitions.
+- `osrm-customize`: customizes OSRM MLD cells.
+- `osrm-routed`: Australia routing API service.
 
-Both services are managed from the single root `docker-compose.yml`.
-
-## Local Docker State
-
-Project-owned runtime state is stored under `var/docker/`, which is ignored by Git:
-
-- `var/docker/db-data`: MariaDB data directory
-- `var/docker/app-logs`: app and cron logs
-- `var/docker/nominatim-db`: Nominatim PostgreSQL data
-- `var/docker/nominatim-flatnode`: Nominatim flatnode data
-- `var/docker/osrm-data`: downloaded and processed OSRM routing data
-
-Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or a compatible external BuildKit builder.
-
-`setup.php` creates the project-local runtime directories required by later services, including the Nominatim PostgreSQL path `var/docker/nominatim-db/16/main`. The Nominatim image uses PostgreSQL as UID/GID `100:103`; the MariaDB image uses `999:999`.
-
-If `/opt/FuelAU` is mounted from Synology over NFS, the share must allow real ownership changes for PostgreSQL-backed services. Verify this on the Docker host:
+The `app` image copies the project source into the image at build time. Rebuild the app container after source changes:
 
 ```bash
-sudo chown -R 100:103 /opt/FuelAU/var/docker/nominatim-db
-sudo chmod 700 /opt/FuelAU/var/docker/nominatim-db/16/main
-stat -c '%u:%g %a %n' /opt/FuelAU/var/docker/nominatim-db/16/main
+docker compose up -d --build app
 ```
 
-The `stat` output must show `100:103 700`. If it remains `65534:65534`, Synology is still mapping the Docker host user to `nobody`; set the NFS permission for the Docker host to read/write with squash/no mapping disabled as appropriate for your DSM version, or move Nominatim data to local disk or a Docker-managed volume.
-
-## Start
+## Configuration
 
 Create local runtime config from the tracked samples:
 
@@ -44,48 +38,128 @@ cp .env.sample .env
 cp config/mysql-sample.env config/mysql.env
 ```
 
-Edit both files so the database passwords match.
+Edit both files before starting the stack:
+
+- `.env`: Compose ports, MariaDB bootstrap credentials, Nominatim password, timezone.
+- `config/mysql.env`: app database connection settings and the Fuel Prices Queensland subscriber token.
+
+Files containing real secrets are ignored by Git. Commit only `.env.sample` and `config/mysql-sample.env`.
+
+## Local Runtime State
+
+Project-owned runtime state is stored under `/opt/FuelAU/var/docker/`, which is ignored by Git:
+
+- `var/docker/app-logs`: app, cron, and sync logs
+- `var/docker/db-data`: MariaDB data directory
+- `var/docker/nominatim-db`: Nominatim PostgreSQL data
+- `var/docker/nominatim-flatnode`: Nominatim flatnode data
+- `var/docker/osrm-data`: downloaded and processed OSRM routing data
+
+Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or compatible external BuildKit builder.
+
+`setup.php` creates the project-local runtime directories required by later services. The MariaDB image uses UID/GID `999:999`; the Nominatim image uses PostgreSQL as UID/GID `100:103`.
+
+For Synology/NFS-backed `/opt/FuelAU`, the share must allow real ownership changes for PostgreSQL-backed services. Verify Nominatim ownership on the Docker host:
+
+```bash
+sudo chown -R 100:103 /opt/FuelAU/var/docker/nominatim-db
+sudo chmod 700 /opt/FuelAU/var/docker/nominatim-db/16/main
+stat -c '%u:%g %a %n' /opt/FuelAU/var/docker/nominatim-db/16/main
+```
+
+The `stat` output must show `100:103 700`. If it remains `65534:65534`, Synology is still mapping the Docker host user to `nobody`; set the NFS permission for the Docker host to read/write with squash/no mapping disabled as appropriate for the DSM version, or move Nominatim data to local disk or a Docker-managed volume.
+
+## Start
+
+Start the core app and database:
 
 ```bash
 docker compose up -d --build
 docker compose exec app php setup.php
 ```
 
-The API will be available at:
+Default local endpoints:
 
 ```text
-http://localhost:18080/api/health
+Web UI:      http://localhost:18080/
+Health API:  http://localhost:18080/api/health
+OSRM:        http://localhost:15000/
+Nominatim:   http://localhost:18081/
 ```
 
-## Runtime Config
+OSRM and Nominatim bind to `127.0.0.1` by default. Their ports are only active when those profile services are running.
 
-The app reads database settings from `/etc/fuelapi/mysql.env` inside the container. Docker Compose mounts `config/mysql.env` there. Compose itself reads database bootstrap settings from `.env`.
+## Fuel Prices Queensland
 
-Files containing real passwords are ignored. Commit only `.env.sample` and `config/mysql-sample.env`.
+The Fuel Prices Queensland importer is in `src/fpq_sync`. It loads:
 
-## Cron
+- brands
+- geographic regions
+- fuel types
+- sites
+- current prices
+- price history
+- sync run records
 
-Cron runs inside the `app` container and loads jobs from `docker/cron.d/fuelau`.
+The cron job runs every 30 minutes:
 
-The starter job runs every 15 minutes and records a heartbeat in the database:
-
-```bash
-docker compose logs app
-docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
+```cron
+0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
 ```
 
-Fuel Prices QLD sync runs every 30 minutes and loads reference data, sites, current prices, and price history:
+Manual sync:
 
 ```bash
 docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
+```
+
+View sync logs:
+
+```bash
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 ```
 
-Set `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/mysql.env` file.
+The importer requires `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/mysql.env` file.
+
+## Cron
+
+Cron runs inside the `app` container from `docker/cron.d/fuelau`.
+
+Current jobs:
+
+- Every 15 minutes: PHP heartbeat to `/var/log/fuelapi/cron-heartbeat.log`.
+- Every 30 minutes: Fuel Prices Queensland sync to `/var/log/fuelapi/fpq_sync.log`.
+
+Useful checks:
+
+```bash
+docker compose exec app ps -ef | grep '[c]ron'
+docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
+docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+```
+
+## Container Management
+
+The Container Management tab uses the Docker socket mounted into the `app` container:
+
+```yaml
+/var/run/docker.sock:/var/run/docker.sock
+```
+
+It shows configured services even before a container exists, including app, database, Nominatim, and the OSRM setup/runtime services. It currently supports:
+
+- service/container status
+- container logs
+- container restart
+- project stopped-container pruning
+- dangling-image pruning
+- Docker disk usage summary
+
+Because this UI can control Docker on the host, only run it in a trusted local environment.
 
 ## Routing Services
 
-Nominatim and OSRM are defined in `docker-compose.yml` but are behind profiles and will not start with a normal `docker compose up -d`.
+Routing and geocoding are profile-gated and do not need to run for core Fuel Prices Queensland imports.
 
 Nominatim uses:
 
@@ -94,25 +168,62 @@ PBF_URL=https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
 REPLICATION_URL=https://download.geofabrik.de/australia-oceania/australia-updates
 ```
 
-OSRM setup uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
+OSRM uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
 
-After reviewing `docker-compose.yml`, the intended manual sequence is:
+Build OSRM data:
 
 ```bash
-docker compose --profile routing-setup run --rm osrm-download
-docker compose --profile routing-setup run --rm osrm-extract
-docker compose --profile routing-setup run --rm osrm-partition
-docker compose --profile routing-setup run --rm osrm-customize
+docker compose --profile routing-setup up osrm-customize
+```
+
+Start routing services after OSRM data exists:
+
+```bash
 docker compose --profile routing up -d nominatim osrm-routed
 ```
+
+Or start all profile services:
+
+```bash
+docker compose --profile routing --profile routing-setup up -d
+```
+
+Nominatim import for the Australia PBF is large and can take a long time. During import, `nominatim` may show `health: starting`.
+
+## Dependency Order
+
+Compose health and dependency rules are configured so the core database becomes healthy before the app starts:
+
+```text
+db -> app -> nominatim/osrm-routed
+osrm-download -> osrm-extract -> osrm-partition -> osrm-customize
+```
+
+`depends_on` controls startup ordering, not application readiness beyond configured health checks. Nominatim can still take hours to finish its import after the container starts.
 
 ## Common Commands
 
 ```bash
 docker compose up -d --build
-docker compose restart app
 docker compose exec app php setup.php
+docker compose restart app
 docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
-docker compose exec app php bin/cron-heartbeat.php
+docker compose --profile routing-setup up osrm-customize
+docker compose --profile routing up -d nominatim osrm-routed
+docker compose --profile routing ps
 docker compose down
 ```
+
+## Git Hygiene
+
+Ignored local files include:
+
+- `.codex`
+- `.env`
+- `config/mysql.env`
+- `var/`
+- `#recycle/`
+- Python cache files
+- swap files
+
+Any new file containing real passwords, API keys, or tokens should be ignored, with a tracked sample file added beside it.
