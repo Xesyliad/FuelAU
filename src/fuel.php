@@ -9,15 +9,24 @@ function fuelauClampInt(int $value, int $minimum, int $maximum): int
 
 function fuelauFuelRequestFilters(): array
 {
-    $source = trim((string) ($_GET['source'] ?? 'all'));
     $search = trim((string) ($_GET['q'] ?? ''));
     $state = strtoupper(trim((string) ($_GET['state'] ?? '')));
+    $requestedSource = trim((string) ($_GET['source'] ?? ''));
     $fuel = trim((string) ($_GET['fuel'] ?? ''));
     $brand = trim((string) ($_GET['brand'] ?? ''));
     $limit = fuelauClampInt((int) ($_GET['limit'] ?? 100), 1, 500);
     $latitude = $_GET['lat'] ?? null;
     $longitude = $_GET['lon'] ?? null;
     $radiusKm = isset($_GET['radius_km']) ? max(0.1, (float) $_GET['radius_km']) : null;
+    $source = strtolower($requestedSource);
+    if ($source === '') {
+        $source = match ($state) {
+            'QLD' => 'qld',
+            'NSW' => 'nsw',
+            'TAS' => 'tas',
+            default => 'all',
+        };
+    }
 
     return [
         'source' => $source,
@@ -272,18 +281,26 @@ function fuelauFuelOptionRows(PDO $pdo): array
 function fuelauFuelOptions(PDO $pdo): array
 {
     $rows = fuelauFuelOptionRows($pdo);
+    $summary = fuelauFuelSourceSummary($pdo);
     $sources = [
         ['value' => 'all', 'label' => 'All Sources'],
         ['value' => 'qld', 'label' => 'QLD'],
         ['value' => 'nsw', 'label' => 'NSW'],
-        ['value' => 'tas', 'label' => 'TAS'],
     ];
-    $states = [
-        ['value' => '', 'label' => 'All States'],
-        ['value' => 'QLD', 'label' => 'QLD'],
-        ['value' => 'NSW', 'label' => 'NSW'],
-        ['value' => 'TAS', 'label' => 'TAS'],
-    ];
+    if (($summary['tas']['stations'] ?? 0) > 0 || ($summary['tas']['current_prices'] ?? 0) > 0) {
+        $sources[] = ['value' => 'tas', 'label' => 'TAS'];
+    }
+
+    $states = [['value' => '', 'label' => 'All States']];
+    if (($summary['qld']['stations'] ?? 0) > 0 || ($summary['qld']['current_prices'] ?? 0) > 0) {
+        $states[] = ['value' => 'QLD', 'label' => 'QLD'];
+    }
+    if (($summary['nsw']['stations'] ?? 0) > 0 || ($summary['nsw']['current_prices'] ?? 0) > 0) {
+        $states[] = ['value' => 'NSW', 'label' => 'NSW'];
+    }
+    if (($summary['tas']['stations'] ?? 0) > 0 || ($summary['tas']['current_prices'] ?? 0) > 0) {
+        $states[] = ['value' => 'TAS', 'label' => 'TAS'];
+    }
     $fuels = [];
     $seen = [];
 
@@ -316,13 +333,21 @@ function fuelauFuelOptions(PDO $pdo): array
 
 function fuelauHistoricalFilters(): array
 {
-    $source = strtolower(trim((string) ($_GET['source'] ?? 'all')));
     $state = strtoupper(trim((string) ($_GET['state'] ?? '')));
+    $requestedSource = strtolower(trim((string) ($_GET['source'] ?? '')));
     $fuel = trim((string) ($_GET['fuel'] ?? ''));
     $period = strtolower(trim((string) ($_GET['period'] ?? 'weekly')));
     if (!in_array($period, ['weekly', 'monthly'], true)) {
         $period = 'weekly';
     }
+    $source = $requestedSource !== ''
+        ? $requestedSource
+        : match ($state) {
+            'QLD' => 'qld',
+            'NSW' => 'nsw',
+            'TAS' => 'tas',
+            default => 'all',
+        };
 
     return [
         'source' => $source,

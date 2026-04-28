@@ -217,6 +217,16 @@ try {
             color: #075985;
         }
 
+        .badge.prepared {
+            background: #f3e8ff;
+            color: #6b21a8;
+        }
+
+        .badge.partial {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
         .logs {
             min-height: 260px;
             max-height: 360px;
@@ -415,10 +425,6 @@ try {
                 <div class="fuel-layout">
                     <div class="fuel-toolbar">
                         <div class="field">
-                            <label for="fuel-source">Source</label>
-                            <select id="fuel-source"></select>
-                        </div>
-                        <div class="field">
                             <label for="fuel-state">State</label>
                             <select id="fuel-state"></select>
                         </div>
@@ -492,7 +498,6 @@ try {
         const restartContainer = document.getElementById('restart-container');
         const pruneStopped = document.getElementById('prune-stopped');
         const pruneImages = document.getElementById('prune-images');
-        const fuelSource = document.getElementById('fuel-source');
         const fuelState = document.getElementById('fuel-state');
         const fuelType = document.getElementById('fuel-type');
         const fuelStatus = document.getElementById('fuel-status');
@@ -504,6 +509,7 @@ try {
         const fuelSnapshot = document.getElementById('fuel-snapshot');
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
         let selectedContainerId = null;
+        let selectedContainerRestartable = false;
         let fuelOptions = null;
 
         tabs.forEach((tab) => {
@@ -628,8 +634,8 @@ try {
             if (!fuelOptions) {
                 return [{ value: '', label: 'All Fuels' }];
             }
-            const source = fuelSource.value || 'all';
             const state = fuelState.value || '';
+            const source = state === 'QLD' ? 'qld' : (state === 'NSW' ? 'nsw' : (state === 'TAS' ? 'tas' : 'all'));
             return fuelOptions.fuels.filter((item) => {
                 if (item.value === '') {
                     return true;
@@ -647,15 +653,17 @@ try {
         function syncFuelSelectors() {
             const currentFuel = fuelType.value;
             const options = filteredFuelOptions();
-            const fallbackFuel = options.find((item) => item.value === currentFuel)
+            const desiredDefaultFuel = fuelState.value === 'QLD'
+                ? '3'
+                : ((fuelState.value === 'NSW' || fuelState.value === 'TAS') ? 'DL' : '');
+            const fallbackFuel = currentFuel !== '' && options.find((item) => item.value === currentFuel)
                 ? currentFuel
-                : (options.find((item) => item.value === '2' && item.state === 'QLD')?.value || '');
+                : (options.find((item) => item.value === desiredDefaultFuel)?.value || '');
             setSelectOptions(fuelType, options, fallbackFuel);
         }
 
         function selectedFuelFilters() {
             return new URLSearchParams({
-                source: fuelSource.value || 'all',
                 state: fuelState.value || '',
                 fuel: fuelType.value || '',
             });
@@ -824,8 +832,7 @@ try {
             fuelStatus.textContent = 'Loading fuel dashboard...';
             try {
                 const options = await loadFuelOptions();
-                if (!fuelSource.options.length) {
-                    setSelectOptions(fuelSource, options.sources, 'qld');
+                if (!fuelState.options.length) {
                     setSelectOptions(fuelState, options.states, 'QLD');
                     syncFuelSelectors();
                 }
@@ -857,9 +864,12 @@ try {
             if (services.length === 0) {
                 containerGrid.innerHTML = '<p>No Compose services found for this project.</p>';
                 selectedContainerId = null;
+                selectedContainerRestartable = false;
                 restartContainer.disabled = true;
                 return;
             }
+
+            let selectedFound = false;
 
             services.forEach((service) => {
                 const container = service.container || {};
@@ -867,30 +877,48 @@ try {
                 const card = document.createElement('article');
                 card.className = `container-card${container.id === selectedContainerId ? ' selected' : ''}`;
 
-                const state = hasContainer ? (container.state || 'unknown') : 'not created';
-                const statusClass = container.state === 'running' ? 'running' : (container.state === 'exited' ? 'exited' : 'planned');
+                if (container.id === selectedContainerId) {
+                    selectedFound = true;
+                }
+
+                const state = service.display_state || (hasContainer ? (container.state || 'unknown') : 'not created');
+                const statusClass = service.display_badge || (container.state === 'running' ? 'running' : (container.state === 'exited' ? 'exited' : 'planned'));
+                const statusText = service.display_status || container.status || 'Not started';
+                const lifecycle = service.kind === 'setup_job' ? 'Setup job' : 'Runtime service';
                 const dataPaths = Array.isArray(service.data_paths) && service.data_paths.length > 0
                     ? service.data_paths.join(', ')
                     : 'None configured';
+                const dataStatus = service.data_status || {};
+                const artifactStatus = service.artifacts || {};
+                const dataSummary = Number.isFinite(dataStatus.total) && dataStatus.total > 0
+                    ? `${dataStatus.ready || 0}/${dataStatus.total} paths present`
+                    : 'No managed data paths';
+                const artifactSummary = Number.isFinite(artifactStatus.total) && artifactStatus.total > 0
+                    ? `${artifactStatus.ready || 0}/${artifactStatus.total} outputs ready`
+                    : 'No output checks';
                 const source = service.source ? `<span>Source: ${escapeHtml(service.source)}</span>` : '';
                 const updates = service.updates ? `<span>Updates: ${escapeHtml(service.updates)}</span>` : '';
+                const logLabel = hasContainer ? 'View Logs' : (service.kind === 'setup_job' ? 'Prepared' : 'Unavailable');
                 card.innerHTML = `
                     <h2>${escapeHtml(service.title || service.service)}</h2>
                     <span class="badge ${statusClass}">${escapeHtml(state)}</span>
                     <div class="container-meta">
                         <span>Service: ${escapeHtml(service.service)}</span>
+                        <span>Lifecycle: ${escapeHtml(lifecycle)}</span>
                         <span>Role: ${escapeHtml(service.role || '')}</span>
                         <span>Profile: ${escapeHtml(service.profile || 'default')}</span>
                         <span>Name: ${escapeHtml(container.name || 'No container created')}</span>
                         <span>Image: ${escapeHtml(container.image || 'Pending image pull/build')}</span>
-                        <span>Status: ${escapeHtml(container.status || 'Not started')}</span>
+                        <span>Status: ${escapeHtml(statusText)}</span>
                         <span>Ports: ${escapeHtml(renderPorts(container.ports))}</span>
                         <span>Data: ${escapeHtml(dataPaths)}</span>
+                        <span>Data State: ${escapeHtml(dataSummary)}</span>
+                        <span>Outputs: ${escapeHtml(artifactSummary)}</span>
                         <span>Start: ${escapeHtml(service.start_command || 'Not configured')}</span>
                         ${source}
                         ${updates}
                     </div>
-                    <button class="button" type="button" ${hasContainer ? '' : 'disabled'}>View Logs</button>
+                    <button class="button" type="button" ${hasContainer ? '' : 'disabled'}>${escapeHtml(logLabel)}</button>
                 `;
 
                 card.querySelector('button').addEventListener('click', () => {
@@ -898,13 +926,20 @@ try {
                         return;
                     }
                     selectedContainerId = container.id;
-                    restartContainer.disabled = false;
+                    selectedContainerRestartable = Boolean(service.allow_restart);
+                    restartContainer.disabled = !selectedContainerRestartable;
                     renderContainers(services);
                     loadLogs(container.id);
                 });
 
                 containerGrid.appendChild(card);
             });
+
+            if (!selectedFound) {
+                selectedContainerId = null;
+                selectedContainerRestartable = false;
+            }
+            restartContainer.disabled = !selectedContainerRestartable;
         }
 
         async function loadContainers() {
@@ -972,10 +1007,9 @@ try {
             'Remove dangling Docker images? This does not remove tagged images.'
         ));
 
-        [fuelSource, fuelState, fuelType].forEach((element) => {
+        [fuelState, fuelType].forEach((element) => {
             element.addEventListener('change', loadFuelDashboard);
         });
-        fuelSource.addEventListener('change', syncFuelSelectors);
         fuelState.addEventListener('change', syncFuelSelectors);
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
         loadFuelDashboard();

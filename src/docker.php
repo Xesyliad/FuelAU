@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 const FUELAU_DOCKER_SOCKET = '/var/run/docker.sock';
 
+function fuelauProjectRoot(): string
+{
+    return dirname(__DIR__);
+}
+
 function fuelauDockerProject(): string
 {
     $project = trim((string) getenv('FUELAU_DOCKER_PROJECT'));
@@ -155,6 +160,7 @@ function fuelauConfiguredServices(): array
             'service' => 'app',
             'title' => 'FuelAU App',
             'role' => 'PHP web app, API, cron, and management UI.',
+            'kind' => 'runtime',
             'profile' => 'default',
             'start_command' => 'docker compose up -d app',
             'data_paths' => ['var/docker/app-logs'],
@@ -163,6 +169,7 @@ function fuelauConfiguredServices(): array
             'service' => 'db',
             'title' => 'MariaDB',
             'role' => 'FuelAU application database.',
+            'kind' => 'runtime',
             'profile' => 'default',
             'start_command' => 'docker compose up -d db',
             'data_paths' => ['var/docker/db-data'],
@@ -171,6 +178,7 @@ function fuelauConfiguredServices(): array
             'service' => 'nominatim',
             'title' => 'Nominatim',
             'role' => 'Australia geocoding service.',
+            'kind' => 'runtime',
             'profile' => 'routing',
             'start_command' => 'docker compose --profile routing up -d nominatim',
             'data_paths' => ['var/docker/nominatim-db', 'var/docker/nominatim-flatnode'],
@@ -181,43 +189,152 @@ function fuelauConfiguredServices(): array
             'service' => 'osrm-download',
             'title' => 'OSRM Download',
             'role' => 'Downloads the Australia OSM PBF before OSRM preprocessing.',
+            'kind' => 'setup_job',
             'profile' => 'routing-setup',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-download',
             'data_paths' => ['var/docker/osrm-data'],
+            'artifact_checks' => ['var/docker/osrm-data/australia-latest.osm.pbf'],
             'source' => 'https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf',
         ],
         'osrm-extract' => [
             'service' => 'osrm-extract',
             'title' => 'OSRM Extract',
             'role' => 'Builds OSRM extract data from the Australia PBF.',
+            'kind' => 'setup_job',
             'profile' => 'routing-setup',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-extract',
             'data_paths' => ['var/docker/osrm-data'],
+            'artifact_checks' => [
+                'var/docker/osrm-data/australia-latest.osrm.timestamp',
+                'var/docker/osrm-data/australia-latest.osrm.edges',
+            ],
         ],
         'osrm-partition' => [
             'service' => 'osrm-partition',
             'title' => 'OSRM Partition',
             'role' => 'Prepares MLD partitions for OSRM routing.',
+            'kind' => 'setup_job',
             'profile' => 'routing-setup',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-partition',
             'data_paths' => ['var/docker/osrm-data'],
+            'artifact_checks' => [
+                'var/docker/osrm-data/australia-latest.osrm.partition',
+                'var/docker/osrm-data/australia-latest.osrm.cells',
+            ],
         ],
         'osrm-customize' => [
             'service' => 'osrm-customize',
             'title' => 'OSRM Customize',
             'role' => 'Customizes MLD cells for OSRM routing.',
+            'kind' => 'setup_job',
             'profile' => 'routing-setup',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-customize',
             'data_paths' => ['var/docker/osrm-data'],
+            'artifact_checks' => ['var/docker/osrm-data/australia-latest.osrm.mldgr'],
         ],
         'osrm-routed' => [
             'service' => 'osrm-routed',
             'title' => 'OSRM Routed',
             'role' => 'Australia routing API service.',
+            'kind' => 'runtime',
             'profile' => 'routing',
             'start_command' => 'docker compose --profile routing up -d osrm-routed',
             'data_paths' => ['var/docker/osrm-data'],
+            'artifact_checks' => ['var/docker/osrm-data/australia-latest.osrm.mldgr'],
         ],
+    ];
+}
+
+function fuelauRelativePathSummary(array $paths): array
+{
+    $items = [];
+    $ready = 0;
+
+    foreach ($paths as $path) {
+        $relativePath = ltrim((string) $path, '/');
+        if ($relativePath === '') {
+            continue;
+        }
+
+        $absolutePath = fuelauProjectRoot() . '/' . $relativePath;
+        $exists = file_exists($absolutePath);
+        if ($exists) {
+            $ready++;
+        }
+
+        $items[] = [
+            'path' => $relativePath,
+            'exists' => $exists,
+        ];
+    }
+
+    return [
+        'items' => $items,
+        'ready' => $ready,
+        'total' => count($items),
+        'complete' => count($items) > 0 && $ready === count($items),
+    ];
+}
+
+function fuelauDockerDisplayState(array $metadata, ?array $container, array $artifacts): array
+{
+    $kind = (string) ($metadata['kind'] ?? 'runtime');
+    $hasContainer = $container !== null && ($container['id'] ?? '') !== '';
+    $containerState = strtolower((string) ($container['state'] ?? ''));
+    $containerStatus = trim((string) ($container['status'] ?? ''));
+
+    if ($hasContainer) {
+        if ($containerState === 'running') {
+            return [
+                'state' => 'running',
+                'badge' => 'running',
+                'status' => $containerStatus !== '' ? $containerStatus : 'Running',
+            ];
+        }
+
+        if ($containerState === 'exited') {
+            return [
+                'state' => 'exited',
+                'badge' => 'exited',
+                'status' => $containerStatus !== '' ? $containerStatus : 'Exited',
+            ];
+        }
+
+        return [
+            'state' => $containerState !== '' ? $containerState : 'unknown',
+            'badge' => 'planned',
+            'status' => $containerStatus !== '' ? $containerStatus : 'Container created',
+        ];
+    }
+
+    if ($kind === 'setup_job') {
+        if ($artifacts['complete']) {
+            return [
+                'state' => 'prepared',
+                'badge' => 'prepared',
+                'status' => 'Output files are ready. Rerun this job only when routing data needs rebuilding.',
+            ];
+        }
+
+        if (($artifacts['ready'] ?? 0) > 0) {
+            return [
+                'state' => 'partial',
+                'badge' => 'partial',
+                'status' => 'Some output files exist. Continue the remaining routing preparation steps.',
+            ];
+        }
+
+        return [
+            'state' => 'pending',
+            'badge' => 'planned',
+            'status' => 'This setup job has not been run yet.',
+        ];
+    }
+
+    return [
+        'state' => 'not created',
+        'badge' => 'planned',
+        'status' => 'No container created yet.',
     ];
 }
 
@@ -235,12 +352,21 @@ function fuelauDockerServices(): array
     $services = [];
     foreach ($configured as $service => $metadata) {
         $container = $containersByService[$service] ?? null;
+        $artifactStatus = fuelauRelativePathSummary(is_array($metadata['artifact_checks'] ?? null) ? $metadata['artifact_checks'] : []);
+        $dataStatus = fuelauRelativePathSummary(is_array($metadata['data_paths'] ?? null) ? $metadata['data_paths'] : []);
+        $display = fuelauDockerDisplayState($metadata, $container, $artifactStatus);
         $services[] = array_merge(
             $metadata,
             [
                 'configured' => true,
                 'has_container' => $container !== null,
                 'container' => $container,
+                'artifacts' => $artifactStatus,
+                'data_status' => $dataStatus,
+                'display_state' => $display['state'],
+                'display_badge' => $display['badge'],
+                'display_status' => $display['status'],
+                'allow_restart' => ($container !== null) && (($metadata['kind'] ?? 'runtime') === 'runtime'),
             ]
         );
         unset($containersByService[$service]);
@@ -251,12 +377,19 @@ function fuelauDockerServices(): array
             'service' => $service,
             'title' => $service,
             'role' => 'Compose service detected from Docker labels.',
+            'kind' => 'runtime',
             'profile' => 'unknown',
             'start_command' => '',
             'data_paths' => [],
             'configured' => false,
             'has_container' => true,
             'container' => $container,
+            'artifacts' => fuelauRelativePathSummary([]),
+            'data_status' => fuelauRelativePathSummary([]),
+            'display_state' => (string) ($container['state'] ?? 'unknown'),
+            'display_badge' => ($container['state'] ?? '') === 'running' ? 'running' : (($container['state'] ?? '') === 'exited' ? 'exited' : 'planned'),
+            'display_status' => (string) ($container['status'] ?? 'Container detected'),
+            'allow_restart' => true,
         ];
     }
 
