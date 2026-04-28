@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/src/bootstrap.php';
 
-const FUELAU_SCHEMA_VERSION = 2;
+const FUELAU_SCHEMA_VERSION = 3;
 
 function fuelauEnsureRuntimeDirectories(): void
 {
     $directories = [
         [__DIR__ . '/var/docker/app-logs', 0777, null, null],
+        [__DIR__ . '/var/docker/app-state', 0777, null, null],
         [__DIR__ . '/var/docker/db-data', 0777, 999, 999],
         [__DIR__ . '/var/docker/nominatim-db', 0755, 100, 103],
         [__DIR__ . '/var/docker/nominatim-db/16', 0755, 100, 103],
@@ -230,6 +231,99 @@ CREATE TABLE IF NOT EXISTS `fpq_stage_prices` (
     KEY `idx_fpq_stage_prices_batch` (`sync_batch_id`),
     KEY `idx_fpq_stage_prices_site_id` (`site_id`),
     KEY `idx_fpq_stage_prices_fuel_id` (`fuel_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_brands` (
+    `state` CHAR(3) NOT NULL,
+    `name` VARCHAR(255) NOT NULL,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`state`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_fuel_types` (
+    `state` CHAR(3) NOT NULL,
+    `fuel_code` VARCHAR(32) NOT NULL,
+    `name` VARCHAR(255) NOT NULL,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`state`, `fuel_code`),
+    KEY `idx_nsw_fuel_types_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_stations` (
+    `state` CHAR(3) NOT NULL,
+    `station_code` VARCHAR(32) NOT NULL,
+    `station_id` VARCHAR(64) NULL,
+    `brand_name` VARCHAR(255) NULL,
+    `brand_id` VARCHAR(64) NULL,
+    `name` VARCHAR(255) NOT NULL,
+    `address` VARCHAR(255) NOT NULL,
+    `latitude` DECIMAL(10, 7) NULL,
+    `longitude` DECIMAL(10, 7) NULL,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`state`, `station_code`),
+    KEY `idx_nsw_stations_brand_name` (`brand_name`),
+    KEY `idx_nsw_stations_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_site_prices_history` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `state` CHAR(3) NOT NULL,
+    `station_code` VARCHAR(32) NOT NULL,
+    `fuel_code` VARCHAR(32) NOT NULL,
+    `last_updated_at` DATETIME NOT NULL,
+    `price` DECIMAL(10, 3) NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_nsw_prices_station_fuel_time` (`state`, `station_code`, `fuel_code`, `last_updated_at`),
+    KEY `idx_nsw_prices_history_updated` (`last_updated_at`),
+    KEY `idx_nsw_prices_history_station` (`state`, `station_code`),
+    KEY `idx_nsw_prices_history_fuel` (`state`, `fuel_code`),
+    CONSTRAINT `fk_nsw_prices_history_station`
+        FOREIGN KEY (`state`, `station_code`) REFERENCES `nsw_stations` (`state`, `station_code`)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_nsw_prices_history_fuel`
+        FOREIGN KEY (`state`, `fuel_code`) REFERENCES `nsw_fuel_types` (`state`, `fuel_code`)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_site_prices_current` (
+    `state` CHAR(3) NOT NULL,
+    `station_code` VARCHAR(32) NOT NULL,
+    `fuel_code` VARCHAR(32) NOT NULL,
+    `last_updated_at` DATETIME NOT NULL,
+    `price` DECIMAL(10, 3) NOT NULL,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`state`, `station_code`, `fuel_code`),
+    KEY `idx_nsw_prices_current_updated` (`last_updated_at`),
+    CONSTRAINT `fk_nsw_prices_current_station`
+        FOREIGN KEY (`state`, `station_code`) REFERENCES `nsw_stations` (`state`, `station_code`)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_nsw_prices_current_fuel`
+        FOREIGN KEY (`state`, `fuel_code`) REFERENCES `nsw_fuel_types` (`state`, `fuel_code`)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+            <<<SQL
+CREATE TABLE IF NOT EXISTS `nsw_sync_runs` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `job_name` VARCHAR(64) NOT NULL,
+    `started_at_utc` DATETIME NOT NULL,
+    `finished_at_utc` DATETIME NULL,
+    `status` ENUM('started', 'success', 'error') NOT NULL,
+    `rows_processed` INT NOT NULL DEFAULT 0,
+    `message` TEXT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_nsw_sync_runs_job_started` (`job_name`, `started_at_utc`),
+    KEY `idx_nsw_sync_runs_status_started` (`status`, `started_at_utc`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL,
         ]
