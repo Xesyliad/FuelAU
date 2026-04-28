@@ -231,6 +231,147 @@ try {
             font: inherit;
         }
 
+        .fuel-layout {
+            display: grid;
+            gap: 18px;
+            margin-top: 18px;
+        }
+
+        .fuel-toolbar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+            align-items: end;
+        }
+
+        .field {
+            display: grid;
+            gap: 6px;
+        }
+
+        .field label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .field select {
+            min-height: 38px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--text);
+            padding: 0 10px;
+            font: inherit;
+        }
+
+        .fuel-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1.2fr 0.9fr;
+            gap: 14px;
+        }
+
+        .surface-block {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            padding: 14px;
+        }
+
+        .surface-block h2 {
+            margin: 0 0 6px;
+            font-size: 15px;
+            line-height: 1.3;
+        }
+
+        .surface-block p {
+            max-width: none;
+            font-size: 13px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+
+        .summary-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fbfcfd;
+            padding: 12px;
+        }
+
+        .summary-card strong {
+            display: block;
+            font-size: 24px;
+            line-height: 1.1;
+            margin-bottom: 6px;
+            color: var(--accent);
+        }
+
+        .summary-card span {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .chart {
+            width: 100%;
+            height: 280px;
+            display: block;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background:
+                linear-gradient(to bottom, rgba(15, 118, 110, 0.03), rgba(15, 118, 110, 0.01)),
+                #fff;
+        }
+
+        .chart-empty {
+            display: grid;
+            place-items: center;
+            min-height: 280px;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .chart-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .snapshot-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .snapshot-table th,
+        .snapshot-table td {
+            text-align: left;
+            padding: 8px 0;
+            border-bottom: 1px solid #e8edf2;
+            vertical-align: top;
+        }
+
+        .snapshot-table th {
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .snapshot-price {
+            font-weight: 700;
+            color: var(--accent);
+        }
+
         @media (max-width: 640px) {
             .app-shell {
                 width: 95%;
@@ -250,6 +391,12 @@ try {
                 padding: 18px;
             }
         }
+
+        @media (max-width: 1100px) {
+            .fuel-grid {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -263,7 +410,53 @@ try {
         <section class="content">
             <div class="panel active" role="tabpanel" id="fuel-prices" aria-labelledby="fuel-prices-tab">
                 <h1>Fuel Prices</h1>
-                <p>Fuel price data controls will be added here.</p>
+                <p>App-owned price analytics from the ingested fuel datasets. Weekly and monthly trend charts are rendered locally with SVG.</p>
+
+                <div class="fuel-layout">
+                    <div class="fuel-toolbar">
+                        <div class="field">
+                            <label for="fuel-source">Source</label>
+                            <select id="fuel-source"></select>
+                        </div>
+                        <div class="field">
+                            <label for="fuel-state">State</label>
+                            <select id="fuel-state"></select>
+                        </div>
+                        <div class="field">
+                            <label for="fuel-type">Fuel</label>
+                            <select id="fuel-type"></select>
+                        </div>
+                        <div class="field">
+                            <label>&nbsp;</label>
+                            <button class="button primary" type="button" id="refresh-fuel-dashboard">Refresh Graphs</button>
+                        </div>
+                    </div>
+
+                    <div class="status-line" id="fuel-status">Loading fuel dashboard...</div>
+                    <div class="summary-grid" id="fuel-summary"></div>
+
+                    <div class="fuel-grid">
+                        <section class="surface-block">
+                            <h2>Weekly Trend</h2>
+                            <p>Rolling daily average over the last six weeks.</p>
+                            <div id="fuel-weekly-chart"></div>
+                            <div class="chart-meta" id="fuel-weekly-meta"></div>
+                        </section>
+
+                        <section class="surface-block">
+                            <h2>Monthly Trend</h2>
+                            <p>Monthly average over the last twelve months.</p>
+                            <div id="fuel-monthly-chart"></div>
+                            <div class="chart-meta" id="fuel-monthly-meta"></div>
+                        </section>
+
+                        <section class="surface-block">
+                            <h2>Recent Snapshot</h2>
+                            <p>Most recent prices from the filtered dataset.</p>
+                            <div id="fuel-snapshot"></div>
+                        </section>
+                    </div>
+                </div>
             </div>
             <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab">
                 <h1>Route Planning</h1>
@@ -299,7 +492,19 @@ try {
         const restartContainer = document.getElementById('restart-container');
         const pruneStopped = document.getElementById('prune-stopped');
         const pruneImages = document.getElementById('prune-images');
+        const fuelSource = document.getElementById('fuel-source');
+        const fuelState = document.getElementById('fuel-state');
+        const fuelType = document.getElementById('fuel-type');
+        const fuelStatus = document.getElementById('fuel-status');
+        const fuelSummary = document.getElementById('fuel-summary');
+        const fuelWeeklyChart = document.getElementById('fuel-weekly-chart');
+        const fuelWeeklyMeta = document.getElementById('fuel-weekly-meta');
+        const fuelMonthlyChart = document.getElementById('fuel-monthly-chart');
+        const fuelMonthlyMeta = document.getElementById('fuel-monthly-meta');
+        const fuelSnapshot = document.getElementById('fuel-snapshot');
+        const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
         let selectedContainerId = null;
+        let fuelOptions = null;
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -311,6 +516,9 @@ try {
 
                 if (tab.id === 'container-management-tab') {
                     loadContainers();
+                }
+                if (tab.id === 'fuel-prices-tab') {
+                    loadFuelDashboard();
                 }
             });
         });
@@ -367,6 +575,280 @@ try {
             }
 
             return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
+        }
+
+        function formatPrice(value) {
+            const amount = Number(value || 0);
+            return `${amount.toFixed(1)} c/L`;
+        }
+
+        function formatCompactDate(value) {
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) {
+                return value;
+            }
+            return parsed.toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
+        }
+
+        function formatDateTime(value) {
+            const parsed = new Date(value.replace(' ', 'T') + 'Z');
+            if (Number.isNaN(parsed.getTime())) {
+                return value;
+            }
+            return parsed.toLocaleString('en-AU', {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+        }
+
+        function setSelectOptions(select, options, selectedValue) {
+            select.innerHTML = '';
+            options.forEach((option) => {
+                const element = document.createElement('option');
+                element.value = option.value;
+                element.textContent = option.label;
+                if (option.value === selectedValue) {
+                    element.selected = true;
+                }
+                select.appendChild(element);
+            });
+        }
+
+        async function loadFuelOptions() {
+            if (fuelOptions) {
+                return fuelOptions;
+            }
+            fuelOptions = await apiRequest('/api/fuel/options');
+            return fuelOptions;
+        }
+
+        function filteredFuelOptions() {
+            if (!fuelOptions) {
+                return [{ value: '', label: 'All Fuels' }];
+            }
+            const source = fuelSource.value || 'all';
+            const state = fuelState.value || '';
+            return fuelOptions.fuels.filter((item) => {
+                if (item.value === '') {
+                    return true;
+                }
+                if (source !== 'all' && item.source !== source && !(source === 'tas' && item.state === 'TAS')) {
+                    return false;
+                }
+                if (state !== '' && item.state !== state) {
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        function syncFuelSelectors() {
+            const currentFuel = fuelType.value;
+            const options = filteredFuelOptions();
+            const fallbackFuel = options.find((item) => item.value === currentFuel)
+                ? currentFuel
+                : (options.find((item) => item.value === '2' && item.state === 'QLD')?.value || '');
+            setSelectOptions(fuelType, options, fallbackFuel);
+        }
+
+        function selectedFuelFilters() {
+            return new URLSearchParams({
+                source: fuelSource.value || 'all',
+                state: fuelState.value || '',
+                fuel: fuelType.value || '',
+            });
+        }
+
+        function renderFuelSummary(summary) {
+            fuelSummary.innerHTML = '';
+            const cards = [
+                ['QLD', summary.qld],
+                ['NSW', summary.nsw],
+                ['TAS', summary.tas],
+            ];
+            cards.forEach(([label, item]) => {
+                const card = document.createElement('article');
+                card.className = 'summary-card';
+                card.innerHTML = `
+                    <strong>${escapeHtml(String(item.current_prices || 0))}</strong>
+                    <span>${escapeHtml(label)} current prices</span>
+                    <span>${escapeHtml(String(item.stations || 0))} stations</span>
+                    <span>${escapeHtml(item.latest_update || 'No data yet')}</span>
+                `;
+                fuelSummary.appendChild(card);
+            });
+        }
+
+        function chartEmpty(message) {
+            return `<div class="chart-empty">${escapeHtml(message)}</div>`;
+        }
+
+        function renderLineChart(container, meta, series) {
+            if (!Array.isArray(series) || series.length === 0) {
+                container.innerHTML = chartEmpty('No weekly data available for this filter.');
+                meta.innerHTML = '';
+                return;
+            }
+
+            const values = series.map((item) => Number(item.average_price));
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const spread = Math.max(max - min, 1);
+            const width = 640;
+            const height = 280;
+            const padding = { top: 20, right: 16, bottom: 32, left: 48 };
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
+            const points = series.map((item, index) => {
+                const x = padding.left + (plotWidth * index / Math.max(series.length - 1, 1));
+                const y = padding.top + ((max - Number(item.average_price)) / spread) * plotHeight;
+                return { x, y, item };
+            });
+            const polyline = points.map((point) => `${point.x},${point.y}`).join(' ');
+            const area = [
+                `${padding.left},${height - padding.bottom}`,
+                ...points.map((point) => `${point.x},${point.y}`),
+                `${points[points.length - 1].x},${height - padding.bottom}`,
+            ].join(' ');
+
+            const yTicks = [min, min + spread / 2, max];
+            container.innerHTML = `
+                <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Weekly fuel price trend">
+                    <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
+                    ${yTicks.map((tick) => {
+                        const y = padding.top + ((max - tick) / spread) * plotHeight;
+                        return `<g>
+                            <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5edf3" stroke-width="1"></line>
+                            <text x="${padding.left - 8}" y="${y + 4}" fill="#5b6775" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
+                        </g>`;
+                    }).join('')}
+                    <polygon points="${area}" fill="rgba(15,118,110,0.12)"></polygon>
+                    <polyline points="${polyline}" fill="none" stroke="#0f766e" stroke-width="3"></polyline>
+                    ${points.map((point) => `
+                        <g>
+                            <circle cx="${point.x}" cy="${point.y}" r="4" fill="#0f766e"></circle>
+                            <title>${formatCompactDate(point.item.bucket_date)}: ${formatPrice(point.item.average_price)}</title>
+                        </g>
+                    `).join('')}
+                    ${points.filter((_, index) => index % Math.ceil(series.length / 6) === 0 || index === points.length - 1).map((point) => `
+                        <text x="${point.x}" y="${height - 10}" fill="#5b6775" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(point.item.bucket_date))}</text>
+                    `).join('')}
+                </svg>
+            `;
+            meta.innerHTML = `
+                <span>Low: ${formatPrice(min)}</span>
+                <span>High: ${formatPrice(max)}</span>
+                <span>Points: ${series.length}</span>
+            `;
+        }
+
+        function renderBarChart(container, meta, series) {
+            if (!Array.isArray(series) || series.length === 0) {
+                container.innerHTML = chartEmpty('No monthly data available for this filter.');
+                meta.innerHTML = '';
+                return;
+            }
+
+            const values = series.map((item) => Number(item.average_price));
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const spread = Math.max(max - min, 1);
+            const width = 640;
+            const height = 280;
+            const padding = { top: 20, right: 16, bottom: 40, left: 48 };
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
+            const barWidth = Math.max(16, plotWidth / Math.max(series.length * 1.6, 1));
+
+            container.innerHTML = `
+                <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Monthly fuel price trend">
+                    ${[min, min + spread / 2, max].map((tick) => {
+                        const y = padding.top + ((max - tick) / spread) * plotHeight;
+                        return `<g>
+                            <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5edf3" stroke-width="1"></line>
+                            <text x="${padding.left - 8}" y="${y + 4}" fill="#5b6775" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
+                        </g>`;
+                    }).join('')}
+                    ${series.map((item, index) => {
+                        const x = padding.left + (plotWidth * index / Math.max(series.length, 1)) + 6;
+                        const barHeight = ((Number(item.average_price) - min) / spread) * plotHeight;
+                        const y = height - padding.bottom - barHeight;
+                        return `
+                            <g>
+                                <rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(barHeight, 2)}" rx="4" fill="#0f766e"></rect>
+                                <title>${formatCompactDate(item.bucket_date)}: ${formatPrice(item.average_price)}</title>
+                                <text x="${x + barWidth / 2}" y="${height - 12}" fill="#5b6775" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(item.bucket_date))}</text>
+                            </g>
+                        `;
+                    }).join('')}
+                </svg>
+            `;
+            meta.innerHTML = `
+                <span>Low: ${formatPrice(min)}</span>
+                <span>High: ${formatPrice(max)}</span>
+                <span>Months: ${series.length}</span>
+            `;
+        }
+
+        function renderSnapshot(rows) {
+            if (!Array.isArray(rows) || rows.length === 0) {
+                fuelSnapshot.innerHTML = chartEmpty('No current prices available for this filter.');
+                return;
+            }
+
+            fuelSnapshot.innerHTML = `
+                <table class="snapshot-table">
+                    <thead>
+                        <tr>
+                            <th>Site</th>
+                            <th>Fuel</th>
+                            <th>Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.slice(0, 8).map((row) => `
+                            <tr>
+                                <td>${escapeHtml(row.station_name)}<br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
+                                <td>${escapeHtml(row.fuel_name)}</td>
+                                <td><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span><br><span>${escapeHtml(formatDateTime(row.updated_at))}</span></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        async function loadFuelDashboard() {
+            fuelStatus.textContent = 'Loading fuel dashboard...';
+            try {
+                const options = await loadFuelOptions();
+                if (!fuelSource.options.length) {
+                    setSelectOptions(fuelSource, options.sources, 'qld');
+                    setSelectOptions(fuelState, options.states, 'QLD');
+                    syncFuelSelectors();
+                }
+
+                const filters = selectedFuelFilters();
+                const [sources, current, weekly, monthly] = await Promise.all([
+                    apiRequest('/api/fuel/sources'),
+                    apiRequest(`/api/fuel/current?${filters.toString()}&limit=8`),
+                    apiRequest(`/api/fuel/history?${filters.toString()}&period=weekly`),
+                    apiRequest(`/api/fuel/history?${filters.toString()}&period=monthly`),
+                ]);
+
+                renderFuelSummary(sources.sources || {});
+                renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
+                renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
+                renderSnapshot(current.rows || []);
+                fuelStatus.textContent = `Loaded ${Array.isArray(current.rows) ? current.rows.length : 0} current records for the selected filter.`;
+            } catch (error) {
+                fuelStatus.textContent = error.message;
+                fuelWeeklyChart.innerHTML = chartEmpty(error.message);
+                fuelMonthlyChart.innerHTML = chartEmpty(error.message);
+                fuelSnapshot.innerHTML = chartEmpty(error.message);
+            }
         }
 
         function renderContainers(services) {
@@ -489,6 +971,14 @@ try {
             'dangling_images',
             'Remove dangling Docker images? This does not remove tagged images.'
         ));
+
+        [fuelSource, fuelState, fuelType].forEach((element) => {
+            element.addEventListener('change', loadFuelDashboard);
+        });
+        fuelSource.addEventListener('change', syncFuelSelectors);
+        fuelState.addEventListener('change', syncFuelSelectors);
+        refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
+        loadFuelDashboard();
     </script>
 </body>
 </html>
@@ -582,12 +1072,25 @@ try {
         ]);
     }
 
+    if ($path === '/api/fuel/options') {
+        fuelauJsonResponse(fuelauFuelOptions(fuelauPdo()));
+    }
+
     if ($path === '/api/fuel/current') {
         $pdo = fuelauPdo();
         $filters = fuelauFuelRequestFilters();
         fuelauJsonResponse([
             'filters' => $filters,
             'rows' => fuelauNormalizedFuelRows($pdo, $filters),
+        ]);
+    }
+
+    if ($path === '/api/fuel/history') {
+        $pdo = fuelauPdo();
+        $filters = fuelauHistoricalFilters();
+        fuelauJsonResponse([
+            'filters' => $filters,
+            'series' => fuelauHistoricalSeries($pdo, $filters),
         ]);
     }
 

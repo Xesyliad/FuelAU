@@ -246,3 +246,234 @@ function fuelauFuelSourceSummary(PDO $pdo): array
 
     return $summary;
 }
+
+function fuelauFuelOptionRows(PDO $pdo): array
+{
+    $sql = "
+        SELECT DISTINCT
+            CAST('qld' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS source,
+            CAST('QLD' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS state,
+            CAST(fuel_id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
+            CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_name
+        FROM fpq_fuel_types
+        UNION ALL
+        SELECT DISTINCT
+            CAST('nsw' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS source,
+            CAST(state AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS state,
+            CAST(fuel_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
+            CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_name
+        FROM nsw_fuel_types
+        ORDER BY source, state, fuel_name
+    ";
+
+    return $pdo->query($sql)->fetchAll();
+}
+
+function fuelauFuelOptions(PDO $pdo): array
+{
+    $rows = fuelauFuelOptionRows($pdo);
+    $sources = [
+        ['value' => 'all', 'label' => 'All Sources'],
+        ['value' => 'qld', 'label' => 'QLD'],
+        ['value' => 'nsw', 'label' => 'NSW'],
+        ['value' => 'tas', 'label' => 'TAS'],
+    ];
+    $states = [
+        ['value' => '', 'label' => 'All States'],
+        ['value' => 'QLD', 'label' => 'QLD'],
+        ['value' => 'NSW', 'label' => 'NSW'],
+        ['value' => 'TAS', 'label' => 'TAS'],
+    ];
+    $fuels = [];
+    $seen = [];
+
+    foreach ($rows as $row) {
+        $key = strtoupper((string) $row['state']) . '|' . (string) $row['fuel_code'] . '|' . (string) $row['fuel_name'];
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $fuels[] = [
+            'value' => (string) $row['fuel_code'],
+            'label' => (string) $row['fuel_name'],
+            'state' => (string) $row['state'],
+            'source' => (string) $row['source'],
+        ];
+    }
+
+    usort(
+        $fuels,
+        static fn (array $left, array $right): int => strcmp($left['label'], $right['label'])
+    );
+    array_unshift($fuels, ['value' => '', 'label' => 'All Fuels']);
+
+    return [
+        'sources' => $sources,
+        'states' => $states,
+        'fuels' => $fuels,
+    ];
+}
+
+function fuelauHistoricalFilters(): array
+{
+    $source = strtolower(trim((string) ($_GET['source'] ?? 'all')));
+    $state = strtoupper(trim((string) ($_GET['state'] ?? '')));
+    $fuel = trim((string) ($_GET['fuel'] ?? ''));
+    $period = strtolower(trim((string) ($_GET['period'] ?? 'weekly')));
+    if (!in_array($period, ['weekly', 'monthly'], true)) {
+        $period = 'weekly';
+    }
+
+    return [
+        'source' => $source,
+        'state' => $state,
+        'fuel' => $fuel,
+        'period' => $period,
+    ];
+}
+
+function fuelauQldHistoryRows(PDO $pdo, array $filters): array
+{
+    $where = ['1=1'];
+    if ($filters['fuel'] !== '') {
+        $where[] = '(CAST(h.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+    }
+
+    $selectPeriod = $filters['period'] === 'monthly'
+        ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
+        : "DATE(h.transaction_date_utc)";
+    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
+
+    $sql = "
+        SELECT
+            'qld' AS source,
+            'QLD' AS state,
+            {$selectPeriod} AS bucket_date,
+            AVG(h.price / 10) AS average_price,
+            MIN(h.price / 10) AS minimum_price,
+            MAX(h.price / 10) AS maximum_price,
+            COUNT(*) AS sample_count
+        FROM fpq_site_prices_history h
+        INNER JOIN fpq_fuel_types f ON f.fuel_id = h.fuel_id
+        WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
+          AND h.price BETWEEN 500 AND 4000
+          AND " . implode(' AND ', $where) . "
+        GROUP BY bucket_date
+        ORDER BY bucket_date ASC
+    ";
+
+    $statement = $pdo->prepare($sql);
+    if ($filters['fuel'] !== '') {
+        $statement->bindValue(':fuel', $filters['fuel']);
+    }
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
+function fuelauNswHistoryRows(PDO $pdo, array $filters): array
+{
+    $where = ['1=1'];
+    if ($filters['state'] !== '') {
+        $where[] = 'h.state = :state';
+    }
+    if ($filters['fuel'] !== '') {
+        $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+    }
+
+    $selectPeriod = $filters['period'] === 'monthly'
+        ? "DATE_FORMAT(h.last_updated_at, '%Y-%m-01')"
+        : "DATE(h.last_updated_at)";
+    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
+
+    $sql = "
+        SELECT
+            'nsw' AS source,
+            h.state,
+            {$selectPeriod} AS bucket_date,
+            AVG(h.price) AS average_price,
+            MIN(h.price) AS minimum_price,
+            MAX(h.price) AS maximum_price,
+            COUNT(*) AS sample_count
+        FROM nsw_site_prices_history h
+        INNER JOIN nsw_fuel_types f
+            ON f.state = h.state
+           AND f.fuel_code = h.fuel_code
+        WHERE h.last_updated_at >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
+          AND h.price BETWEEN 50 AND 400
+          AND " . implode(' AND ', $where) . "
+        GROUP BY h.state, bucket_date
+        ORDER BY bucket_date ASC
+    ";
+
+    $statement = $pdo->prepare($sql);
+    if ($filters['state'] !== '') {
+        $statement->bindValue(':state', $filters['state']);
+    }
+    if ($filters['fuel'] !== '') {
+        $statement->bindValue(':fuel', $filters['fuel']);
+    }
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
+function fuelauHistoricalSeries(PDO $pdo, array $filters): array
+{
+    $source = $filters['source'];
+    $rows = [];
+    if ($source === 'all' || $source === 'qld') {
+        $rows = array_merge($rows, fuelauQldHistoryRows($pdo, $filters));
+    }
+    if ($source === 'all' || $source === 'nsw' || $source === 'tas') {
+        $nswFilters = $filters;
+        if ($source === 'tas') {
+            $nswFilters['state'] = 'TAS';
+        } elseif ($source === 'nsw' && $filters['state'] === '') {
+            $nswFilters['state'] = 'NSW';
+        }
+        $rows = array_merge($rows, fuelauNswHistoryRows($pdo, $nswFilters));
+    }
+
+    $buckets = [];
+    foreach ($rows as $row) {
+        $bucket = (string) $row['bucket_date'];
+        if (!isset($buckets[$bucket])) {
+            $buckets[$bucket] = [
+                'bucket_date' => $bucket,
+                'average_price_total' => 0.0,
+                'minimum_price' => null,
+                'maximum_price' => null,
+                'sample_count' => 0,
+            ];
+        }
+        $sampleCount = (int) $row['sample_count'];
+        $average = (float) $row['average_price'];
+        $minimum = isset($row['minimum_price']) ? (float) $row['minimum_price'] : null;
+        $maximum = isset($row['maximum_price']) ? (float) $row['maximum_price'] : null;
+
+        $buckets[$bucket]['average_price_total'] += $average * $sampleCount;
+        $buckets[$bucket]['sample_count'] += $sampleCount;
+        $buckets[$bucket]['minimum_price'] = $buckets[$bucket]['minimum_price'] === null
+            ? $minimum
+            : min((float) $buckets[$bucket]['minimum_price'], (float) $minimum);
+        $buckets[$bucket]['maximum_price'] = $buckets[$bucket]['maximum_price'] === null
+            ? $maximum
+            : max((float) $buckets[$bucket]['maximum_price'], (float) $maximum);
+    }
+
+    ksort($buckets);
+    $series = [];
+    foreach ($buckets as $bucket) {
+        if ((int) $bucket['sample_count'] <= 0) {
+            continue;
+        }
+        $series[] = [
+            'bucket_date' => $bucket['bucket_date'],
+            'average_price' => round($bucket['average_price_total'] / (int) $bucket['sample_count'], 1),
+            'minimum_price' => round((float) $bucket['minimum_price'], 1),
+            'maximum_price' => round((float) $bucket['maximum_price'], 1),
+            'sample_count' => (int) $bucket['sample_count'],
+        ];
+    }
+
+    return $series;
+}
