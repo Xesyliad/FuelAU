@@ -1,2 +1,3 @@
 \#recycle/
+.codex
 config/mysql.env
