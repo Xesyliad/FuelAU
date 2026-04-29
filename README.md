@@ -62,6 +62,202 @@ docker compose --profile map-setup run --rm map-build
 docker compose --profile map up -d map-server map-scheduler
 ```
 
+## Tester Setup Checklist
+
+FuelAU can be tested in stages. Start with the base stack first, then add the large routing and map services only when the basic app is working.
+
+### Stage 1: Base App and Container Panel
+
+Use this stage to confirm Docker, PHP, MariaDB, cron, and the Container Management tab work.
+
+1. Clone the repository and enter the project directory.
+
+```bash
+git clone https://github.com/Xesyliad/FuelAU.git
+cd FuelAU
+```
+
+2. Copy the sample configuration files.
+
+```bash
+cp .env.sample .env
+cp config/app-sample.env config/app.env
+cp config/mysql-sample.env config/mysql.env
+```
+
+3. Edit `.env` and `config/mysql.env`.
+
+At minimum, set:
+
+- `MYSQL_ROOT_PASSWORD`
+- `MYSQL_PASSWORD`
+- `NOMINATIM_PASSWORD`
+- `FUELAU_HOST_PROJECT_ROOT` if the checkout is not at `/opt/FuelAU`
+
+4. Start the base stack.
+
+```bash
+docker compose up -d --build
+docker compose exec app php setup.php
+```
+
+5. Open the app.
+
+```text
+http://localhost:18080/
+```
+
+Expected result:
+
+- The UI loads.
+- The Container Management tab shows `app` and `db`.
+- `/api/health` responds.
+- Fuel charts may be empty until API keys are added and sync jobs run.
+
+### Stage 2: Fuel Price Imports
+
+Use this stage to test the Fuel Prices tab, history graphs, station map markers, and route fuel-stop pricing.
+
+1. Apply for the required API credentials.
+
+| Source | Covers | Config keys | Access/sign-up URL |
+| --- | --- | --- | --- |
+| Fuel Prices Queensland | QLD | `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` | https://www.fuelpricesqld.com.au/#developers |
+| NSW Fuel API | NSW and TAS | `NSW_FUEL_API_KEY`, `NSW_FUEL_API_SECRET`, `NSW_FUEL_API_AUTHORIZATION_HEADER` | https://api.nsw.gov.au/Product/Index/22 |
+| Victoria Servo Saver Public API | VIC | `VIC_SERVO_SAVER_API_KEY` | https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api |
+
+Useful portal links:
+
+- API.NSW account/sign-up: https://api.nsw.gov.au/
+- API.NSW Fuel API product: https://api.nsw.gov.au/Product/Index/22
+- Fuel Prices Queensland developer information: https://www.fuelpricesqld.com.au/#developers
+- Servo Saver API information: https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api
+
+2. Put the credentials in `config/app.env`.
+
+```env
+FUEL_PRICES_QLD_SUBSCRIBER_TOKEN=your_qld_token
+NSW_FUEL_API_BASE_URL=https://api.onegov.nsw.gov.au
+NSW_FUEL_API_STATES=NSW|TAS
+NSW_FUEL_API_KEY=your_nsw_key
+NSW_FUEL_API_SECRET=your_nsw_secret
+NSW_FUEL_API_AUTHORIZATION_HEADER=Basic your_nsw_basic_header
+VIC_SERVO_SAVER_API_KEY=your_vic_key
+```
+
+3. Rebuild or restart the app after changing env files.
+
+```bash
+docker compose up -d --build app
+docker compose exec app php setup.php
+```
+
+4. Run initial imports manually instead of waiting for cron.
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
+```
+
+5. Check logs if any source is empty.
+
+```bash
+docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
+docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
+```
+
+Expected result:
+
+- Fuel Prices has selectable states, regions, and fuels.
+- Weekly and monthly graphs populate after price/history data is present.
+- The station map shows clickable stations for the selected state, region, and fuel.
+- Cron continues refreshing supported sources every 30 minutes.
+
+### Stage 3: Route Planning Without Local Map Tiles
+
+Use this stage to test Nominatim search, OSRM routing, route summaries, turn-by-turn legs, and fuel-stop planning. This stage does not require the local basemap tile build, but it does require routing/geocoding data.
+
+1. Build OSRM data.
+
+```bash
+docker compose --profile routing-setup up osrm-customize
+```
+
+2. Start Nominatim and OSRM.
+
+```bash
+docker compose --profile routing up -d nominatim osrm-routed
+```
+
+3. Watch service status.
+
+```bash
+docker compose --profile routing ps
+docker compose --profile routing logs -f nominatim
+docker compose --profile routing logs -f osrm-routed
+```
+
+Expected result:
+
+- Origin and destination search suggestions work after Nominatim import is ready.
+- Route Planning can build routes after OSRM data exists.
+- Fuel stops are calculated from imported fuel data.
+- The route map area may still lack a useful basemap until Stage 4 is complete.
+
+Important notes:
+
+- Nominatim Australia import is large and can take hours.
+- OSRM setup downloads and processes the Australia OSM extract.
+- On Synology or NFS-backed storage, Nominatim may need host-side ownership fixes described in `Local Runtime State`.
+
+### Stage 4: Full Local Map Display
+
+Use this stage to test local Australia map tiles in the Fuel Prices and Route Planning maps.
+
+1. Build the Australia basemap.
+
+```bash
+docker compose --profile map-setup run --rm map-build
+```
+
+2. Start the tile server and weekly rebuild scheduler.
+
+```bash
+docker compose --profile map up -d map-server map-scheduler
+```
+
+3. Confirm tile configuration through the app.
+
+```text
+http://localhost:18080/api/map/config
+```
+
+Expected result:
+
+- `map-server` is healthy.
+- The app serves tiles through `/tiles/`.
+- Fuel Prices station map displays local basemap tiles.
+- Route Planning displays route lines and fuel-stop markers over the local basemap.
+
+### Stage 5: Tester Sanity Routes
+
+After Stages 2-4 are running, test these route examples in the Route Planning tab with Diesel, a `60 L` tank, and `12 L/100km` economy:
+
+- Cairns, Queensland -> Townsville, Queensland
+- Cairns, Queensland -> Brisbane, Queensland
+- Cairns, Queensland -> Sydney, NSW
+- Cairns, Queensland -> Melbourne, Victoria
+- Cairns, Queensland -> Brisbane, Queensland -> Sydney, NSW
+
+Expected result:
+
+- The planner returns a route summary.
+- Fuel stops are listed with litres and total fill price.
+- The map shows the route and fuel-stop markers.
+- No normal stop should be a tiny refill; safety stops should be labelled if the planner cannot maintain the normal half-tank refill rule.
+
 ## Services
 
 - `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
