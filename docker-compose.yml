@@ -185,3 +185,23 @@ services:
       retries: 10
       start_period: 1m
     restart: unless-stopped
+
+  map-scheduler:
+    image: docker:27-cli
+    profiles:
+      - map
+    working_dir: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
+    environment:
+      FUELAU_HOST_PROJECT_ROOT: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
+      TZ: "${TZ:-Australia/Brisbane}"
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p var/docker/app-logs
+        printf '%s\n' "10 3 * * 0 cd $${FUELAU_HOST_PROJECT_ROOT} && docker compose --profile map-setup run --rm map-build >> var/docker/app-logs/map_build.log 2>&1" > /etc/crontabs/root
+        crond -f -l 8
+    volumes:
+      - "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}:${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped

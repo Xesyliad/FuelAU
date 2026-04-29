@@ -242,6 +242,37 @@ function fuelauConfiguredServices(): array
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => ['var/docker/osrm-data/australia-latest.osrm.mldgr'],
         ],
+        'map-build' => [
+            'service' => 'map-build',
+            'title' => 'Map Tile Build',
+            'role' => 'One-shot Planetiler build for the local Australia vector basemap.',
+            'kind' => 'setup_job',
+            'profile' => 'map-setup',
+            'start_command' => 'docker compose --profile map-setup run --rm map-build',
+            'data_paths' => ['var/docker/map-tiles'],
+            'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
+            'source' => 'Planetiler Australia extract',
+        ],
+        'map-server' => [
+            'service' => 'map-server',
+            'title' => 'Map Tile Server',
+            'role' => 'Local TileServer GL service for Fuel Prices and Route Planning maps.',
+            'kind' => 'runtime',
+            'profile' => 'map',
+            'start_command' => 'docker compose --profile map up -d map-server',
+            'data_paths' => ['var/docker/map-tiles'],
+            'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
+        ],
+        'map-scheduler' => [
+            'service' => 'map-scheduler',
+            'title' => 'Map Tile Scheduler',
+            'role' => 'Weekly Docker CLI scheduler for rebuilding the local Australia basemap.',
+            'kind' => 'runtime',
+            'profile' => 'map',
+            'start_command' => 'docker compose --profile map up -d map-scheduler',
+            'data_paths' => ['var/docker/app-logs', 'var/docker/map-tiles'],
+            'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
+        ],
     ];
 }
 
@@ -312,7 +343,7 @@ function fuelauDockerDisplayState(array $metadata, ?array $container, array $art
             return [
                 'state' => 'prepared',
                 'badge' => 'prepared',
-                'status' => 'Output files are ready. Rerun this job only when routing data needs rebuilding.',
+                'status' => 'Output files are ready. Rerun this job only when source data needs rebuilding.',
             ];
         }
 
@@ -320,7 +351,7 @@ function fuelauDockerDisplayState(array $metadata, ?array $container, array $art
             return [
                 'state' => 'partial',
                 'badge' => 'partial',
-                'status' => 'Some output files exist. Continue the remaining routing preparation steps.',
+                'status' => 'Some output files exist. Continue the remaining preparation steps.',
             ];
         }
 

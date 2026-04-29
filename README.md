@@ -5,12 +5,15 @@ Australian fuel price and routing API project.
 FuelAU is a Docker-first PHP application based on the previous Fuel app structure. It currently provides:
 
 - A fixed-width-font web UI with tabs for Fuel Prices, Route Planning, and Container Management.
+- Fuel price graphs, a region-based station map, and clickable station price popups for the selected fuel.
+- Route planning with Nominatim geocoding, OSRM routing, local map display, and fuel-stop planning.
 - A PHP/Apache app container with cron.
 - MariaDB-backed Fuel Prices Queensland imports.
 - MariaDB-backed NSW Fuel API imports for NSW and Tasmania.
 - Victoria Servo Saver open-data imports.
 - Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
 - Optional Australia routing/geocoding services using OSRM and Nominatim.
+- Optional local Australia vector basemap using Planetiler and TileServer GL.
 
 All services are managed from the single root `docker-compose.yml`.
 
@@ -56,7 +59,7 @@ docker compose --profile routing --profile routing-setup up -d
 
 ```bash
 docker compose --profile map-setup run --rm map-build
-docker compose --profile map up -d map-server
+docker compose --profile map up -d map-server map-scheduler
 ```
 
 ## Services
@@ -69,6 +72,9 @@ docker compose --profile map up -d map-server
 - `osrm-partition`: prepares OSRM MLD partitions.
 - `osrm-customize`: customizes OSRM MLD cells.
 - `osrm-routed`: Australia routing API service.
+- `map-build`: one-shot Planetiler build for the local Australia vector basemap.
+- `map-server`: local TileServer GL service exposed through the app `/tiles/` proxy.
+- `map-scheduler`: weekly Docker CLI scheduler for local basemap rebuilds.
 
 The `app` image copies the project source into the image at build time. Rebuild the app container after source changes:
 
@@ -85,6 +91,8 @@ Edit these files before starting the stack:
 - `config/mysql.env`: MySQL connection settings only.
 
 Files containing real secrets are ignored by Git. Commit only `.env.sample`, `config/app-sample.env`, and `config/mysql-sample.env`.
+
+Set `FUELAU_HOST_PROJECT_ROOT` in `.env` when the project is not checked out at `/opt/FuelAU`. The `map-scheduler` container runs Docker Compose from inside Docker, so the project must be mounted at the same absolute path that exists on the Docker host.
 
 Current application-level config keys include:
 
@@ -142,7 +150,7 @@ docker compose up -d --build
 docker compose exec app php setup.php
 ```
 
-That gives you the app, database, and cron jobs. Routing and the local map stack are optional profiles and must be started separately if you want those features.
+That gives you the app, database, cron jobs, and the Fuel Prices tab. Routing and the local map stack are optional profiles and must be started separately if you want route planning maps, geocoding, local basemap tiles, or station maps backed by local tiles.
 
 Default local endpoints:
 
@@ -169,13 +177,32 @@ Build the local Australia basemap:
 docker compose --profile map-setup run --rm map-build
 ```
 
-Start the local basemap server:
+Start the local basemap server and weekly rebuild scheduler:
 
 ```bash
-docker compose --profile map up -d map-server
+docker compose --profile map up -d map-server map-scheduler
 ```
 
-The basemap build runs weekly after the first manual build. The routing setup jobs are one-shot preprocessing services and do not stay running.
+The basemap scheduler runs weekly after the first manual build. The routing setup and map build jobs are one-shot preprocessing services and do not stay running.
+
+## User Experience
+
+The Fuel Prices tab has:
+
+- `State`: limits fuel options and regions to that state.
+- `Region`: major city/region selector for the selected state. Regions are currently seeded from Australian cities over roughly 20,000 people.
+- `Fuel`: selected fuel type, persisted in a long-lived browser cookie.
+- Weekly and monthly trend graphs.
+- A recent snapshot table.
+- A station map showing current prices for the selected state, region, and fuel. Click a station marker to see station name, address, selected fuel price, source/state, and update time.
+
+The Route Planning tab has:
+
+- Origin and reorderable destinations with Nominatim-backed search suggestions.
+- Fuel type, tank fill size, and fuel economy controls.
+- Direct-return or reverse-path return mode.
+- A MapLibre route map using the local `/tiles/` basemap when the map stack is running.
+- Fuel stops plotted on the route and a turn-by-turn breakdown.
 
 ## App API
 
@@ -296,6 +323,8 @@ Current jobs:
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
 - Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
 
+The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
+
 Useful checks:
 
 ```bash
@@ -304,6 +333,7 @@ docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
+docker compose --profile map logs -f map-scheduler
 ```
 
 ## Container Management
@@ -314,7 +344,7 @@ The Container Management tab uses the Docker socket mounted into the `app` conta
 /var/run/docker.sock:/var/run/docker.sock
 ```
 
-It shows configured services even before a container exists, including app, database, Nominatim, and the OSRM setup/runtime services. It currently supports:
+It shows configured services even before a container exists, including app, database, Nominatim, OSRM setup/runtime services, and local map services. It currently supports:
 
 - service/container status
 - container logs
@@ -322,6 +352,12 @@ It shows configured services even before a container exists, including app, data
 - project stopped-container pruning
 - dangling-image pruning
 - Docker disk usage summary
+
+The local map services are shown as:
+
+- `map-build`: one-shot Planetiler job.
+- `map-server`: TileServer GL runtime.
+- `map-scheduler`: weekly Docker CLI scheduler.
 
 Because this UI can control Docker on the host, only run it in a trusted local environment.
 
@@ -371,8 +407,9 @@ The local map stack is built from an Australia OpenStreetMap extract and stored 
 
 Current services:
 
-- `map-build`: weekly Planetiler rebuild job that writes `australia.mbtiles`
+- `map-build`: one-shot Planetiler rebuild job that writes `australia.mbtiles`
 - `map-server`: local TileServer GL light instance that serves the rebuilt tiles and style JSON
+- `map-scheduler`: weekly Docker CLI scheduler that runs the map build through Compose
 
 The app exposes the tile server config at `/api/map/config`. The default local settings are:
 
@@ -387,13 +424,13 @@ Rebuild the basemap manually:
 docker compose --profile map-setup run --rm map-build
 ```
 
-Start the local tile server:
+Start the local tile server and weekly rebuild scheduler:
 
 ```bash
-docker compose --profile map up -d map-server
+docker compose --profile map up -d map-server map-scheduler
 ```
 
-The rebuild cadence should be weekly. The server is designed to read the latest `var/docker/map-tiles/australia.mbtiles` file without involving the app database.
+The rebuild cadence is weekly at Sunday 03:10 Australia/Brisbane time. The scheduler requires access to the Docker socket and the host project path via `FUELAU_HOST_PROJECT_ROOT`. The server is designed to read the latest `var/docker/map-tiles/australia.mbtiles` file without involving the app database.
 
 ## Dependency Order
 
@@ -402,6 +439,7 @@ Compose health and dependency rules are configured so the core database becomes 
 ```text
 db -> app -> nominatim/osrm-routed
 osrm-download -> osrm-extract -> osrm-partition -> osrm-customize
+manual map-build -> map-server/map-scheduler
 ```
 
 `depends_on` controls startup ordering, not application readiness beyond configured health checks. Nominatim can still take hours to finish its import after the container starts.
@@ -417,6 +455,8 @@ docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
 docker compose --profile routing-setup up osrm-customize
 docker compose --profile routing up -d nominatim osrm-routed
+docker compose --profile map-setup run --rm map-build
+docker compose --profile map up -d map-server map-scheduler
 docker compose --profile routing ps
 docker compose down
 ```
