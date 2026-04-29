@@ -776,12 +776,12 @@ try {
 
                         <div class="route-switches" role="group" aria-label="Return mode">
                             <label class="switch-control">
-                                <input type="checkbox" id="route-return-reverses">
+                                <input type="radio" name="route-return-mode" id="route-return-reverses" value="reverses">
                                 <span class="switch-track" aria-hidden="true"></span>
                                 <span>Return reverses path</span>
                             </label>
                             <label class="switch-control">
-                                <input type="checkbox" id="route-return-direct">
+                                <input type="radio" name="route-return-mode" id="route-return-direct" value="direct" checked>
                                 <span class="switch-track" aria-hidden="true"></span>
                                 <span>Return direct to origin</span>
                             </label>
@@ -1153,12 +1153,8 @@ try {
             });
         }
 
-        function setExclusiveRouteSwitch(changedInput) {
-            if (changedInput === routeReturnReverses && routeReturnReverses.checked) {
-                routeReturnDirect.checked = false;
-            } else if (changedInput === routeReturnDirect && routeReturnDirect.checked) {
-                routeReturnReverses.checked = false;
-            }
+        function routeReturnMode() {
+            return routeReturnReverses.checked ? 'reverses' : 'direct';
         }
 
         function renderRouteEmpty(message) {
@@ -1301,11 +1297,11 @@ try {
                     legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index + 1]));
                 }
 
-                if (routeReturnReverses.checked) {
+                if (routeReturnMode() === 'reverses') {
                     for (let index = forwardStops.length - 1; index > 0; index -= 1) {
                         legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index - 1]));
                     }
-                } else if (routeReturnDirect.checked) {
+                } else {
                     legs.push(await requestRouteLeg(forwardStops[forwardStops.length - 1], origin));
                 }
 
@@ -1324,9 +1320,9 @@ try {
                 renderRouteResolved([origin, ...destinations]);
                 renderRouteLegs(legs);
 
-                const returnMode = routeReturnReverses.checked
+                const returnMode = routeReturnMode() === 'reverses'
                     ? 'Return reverses path'
-                    : (routeReturnDirect.checked ? 'Return direct to origin' : 'No return leg');
+                    : 'Return direct to origin';
                 routeStatus.textContent = `Planned ${legs.length} legs using ${returnMode}.`;
             } catch (error) {
                 routeStatus.textContent = error.message;
@@ -1342,8 +1338,8 @@ try {
             routeOrigin.value = '';
             routeFuelFill.value = '';
             routeFuelEconomy.value = '';
+            routeReturnDirect.checked = true;
             routeReturnReverses.checked = false;
-            routeReturnDirect.checked = false;
             routeDestinationList.innerHTML = '';
             routeDestinationCounter = 0;
             addRouteDestination('');
@@ -1800,8 +1796,6 @@ try {
         ));
 
         routeAddDestination.addEventListener('click', () => addRouteDestination(''));
-        routeReturnReverses.addEventListener('change', () => setExclusiveRouteSwitch(routeReturnReverses));
-        routeReturnDirect.addEventListener('change', () => setExclusiveRouteSwitch(routeReturnDirect));
         routePlan.addEventListener('click', planRoute);
         routeReset.addEventListener('click', resetRoutePlanner);
 
