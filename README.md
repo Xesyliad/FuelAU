@@ -56,6 +56,7 @@ Current application-level config keys include:
 - `NSW_FUEL_API_KEY`
 - `NSW_FUEL_API_SECRET`
 - `NSW_FUEL_API_AUTHORIZATION_HEADER`
+- `VIC_SERVO_SAVER_API_KEY`
 
 ## Local Runtime State
 
