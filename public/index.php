@@ -975,6 +975,7 @@ try {
         let fuelOptions = null;
         let routeDestinationCounter = 0;
         let routeMapInstance = null;
+        const fuelSelectionCookieName = 'fuelau_selected_fuel';
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -1031,6 +1032,28 @@ try {
                 '"': '&quot;',
                 "'": '&#039;',
             }[character]));
+        }
+
+        function getCookie(name) {
+            const prefix = `${encodeURIComponent(name)}=`;
+            return document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith(prefix))?.slice(prefix.length) || '';
+        }
+
+        function setCookie(name, value, maxAgeDays = 365) {
+            const safeValue = encodeURIComponent(String(value || '').trim());
+            const maxAge = Math.max(1, Number(maxAgeDays || 365)) * 24 * 60 * 60;
+            document.cookie = `${encodeURIComponent(name)}=${safeValue}; path=/; max-age=${maxAge}; samesite=lax`;
+        }
+
+        function savedFuelLabel() {
+            return decodeURIComponent(getCookie(fuelSelectionCookieName) || '').trim();
+        }
+
+        function persistFuelLabel(label) {
+            const value = String(label || '').trim();
+            if (value !== '') {
+                setCookie(fuelSelectionCookieName, value);
+            }
         }
 
         function formatRouteDistance(meters) {
@@ -1322,43 +1345,49 @@ try {
             return Number.isFinite(value) ? value : 0;
         }
 
-        function routeFuelChoices() {
-            if (!fuelOptions || !Array.isArray(fuelOptions.fuels)) {
-                return [{ value: 'Diesel', label: 'Diesel' }];
+        function fuelOptionLabelForValue(value) {
+            const option = Array.from(fuelType.options).find((item) => item.value === value);
+            return option ? option.textContent.trim() : '';
+        }
+
+        function fuelOptionValueForLabel(label) {
+            const normalized = String(label || '').trim().toLowerCase();
+            if (normalized === '') {
+                return '';
             }
 
-            const choices = [];
-            const seen = new Set();
-            fuelOptions.fuels.forEach((item) => {
-                const label = String(item?.label || '').trim();
-                if (label === '' || label === 'All Fuels') {
-                    return;
-                }
+            const option = Array.from(fuelType.options).find((item) => item.textContent.trim().toLowerCase() === normalized);
+            return option ? option.value : '';
+        }
 
-                const key = label.toLowerCase();
-                if (seen.has(key)) {
-                    return;
-                }
+        function fuelTypeSelectedLabel() {
+            const label = fuelOptionLabelForValue(fuelType.value);
+            if (label !== '') {
+                return label;
+            }
+            return fuelType.options[fuelType.selectedIndex]?.textContent?.trim() || 'Diesel';
+        }
 
-                seen.add(key);
-                choices.push({
-                    value: label,
-                    label,
-                });
-            });
-
-            choices.sort((left, right) => left.label.localeCompare(right.label));
+        function routeFuelChoices() {
+            const choices = filteredFuelOptions().filter((item) => String(item.value || '') !== '');
             return choices.length > 0 ? choices : [{ value: 'Diesel', label: 'Diesel' }];
         }
 
         function routeFuelDefaultValue() {
             const options = routeFuelChoices();
             const current = String(routeFuelType?.value || '').trim();
+            const cookieValue = savedFuelLabel();
+            if (cookieValue !== '') {
+                const cookieMatch = options.find((item) => item.label.trim().toLowerCase() === cookieValue.toLowerCase());
+                if (cookieMatch) {
+                    return cookieMatch.value;
+                }
+            }
             if (current !== '' && options.some((item) => item.value === current)) {
                 return current;
             }
 
-            const diesel = options.find((item) => item.value.toLowerCase() === 'diesel');
+            const diesel = options.find((item) => item.label.toLowerCase() === 'diesel');
             return diesel ? diesel.value : options[0].value;
         }
 
@@ -1374,8 +1403,21 @@ try {
             return value !== '' ? value : routeFuelDefaultValue();
         }
 
+        function routeFuelSelectedLabel() {
+            const option = Array.from(routeFuelType?.options || []).find((item) => item.value === routeFuelSelectedValue());
+            return option ? option.textContent.trim() : '';
+        }
+
+        function selectedFuelLabel() {
+            const cookieValue = savedFuelLabel();
+            if (cookieValue !== '') {
+                return cookieValue;
+            }
+            return fuelTypeSelectedLabel();
+        }
+
         function routeFuelQueryLabel() {
-            return routeFuelQuery();
+            return routeFuelSelectedLabel();
         }
 
         function renderRouteEmpty(message) {
@@ -2313,13 +2355,14 @@ try {
         }
 
         function syncFuelSelectors() {
-            const currentFuel = fuelType.value;
+            const currentLabel = selectedFuelLabel();
             const options = filteredFuelOptions();
             const desiredDefaultFuel = fuelState.value === 'QLD'
                 ? '3'
                 : ((fuelState.value === 'NSW' || fuelState.value === 'TAS') ? 'DL' : '');
-            const fallbackFuel = currentFuel !== '' && options.find((item) => item.value === currentFuel)
-                ? currentFuel
+            const labelFuel = options.find((item) => item.label.toLowerCase() === currentLabel.toLowerCase())?.value || '';
+            const fallbackFuel = labelFuel !== ''
+                ? labelFuel
                 : (options.find((item) => item.value === desiredDefaultFuel)?.value || '');
             setSelectOptions(fuelType, options, fallbackFuel);
         }
@@ -2681,7 +2724,16 @@ try {
         routeReset.addEventListener('click', resetRoutePlanner);
 
         fuelState.addEventListener('change', handleFuelFilterChange);
-        fuelType.addEventListener('change', loadFuelDashboard);
+        fuelType.addEventListener('change', async () => {
+            persistFuelLabel(fuelTypeSelectedLabel());
+            syncRouteFuelSelector();
+            await loadFuelDashboard();
+        });
+        routeFuelType.addEventListener('change', async () => {
+            persistFuelLabel(routeFuelSelectedLabel());
+            syncFuelSelectors();
+            await loadFuelDashboard();
+        });
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
         attachRouteAutocomplete(routeOrigin);
         resetRoutePlanner();
