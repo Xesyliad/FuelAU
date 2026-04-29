@@ -1298,7 +1298,7 @@ try {
                     panel.hidden = false;
 
                     try {
-                        const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=5`);
+                        const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=10`);
                         if (state.sequence !== currentSequence || input.value.trim() !== query) {
                             return;
                         }
@@ -2174,7 +2174,7 @@ try {
         }
 
         async function resolveRouteLocation(query) {
-            const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=5`);
+                        const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=10`);
             const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
             const result = results[0] || null;
             if (!result) {
