@@ -11,6 +11,28 @@ function fuelauServiceBaseUrl(string $service): string
     };
 }
 
+function fuelauMapTileConfig(): array
+{
+    $config = fuelauConfig();
+    $baseUrl = trim((string) ($config['MAP_TILE_SERVER_URL'] ?? 'http://127.0.0.1:18082'));
+    $styleId = trim((string) ($config['MAP_TILE_STYLE'] ?? 'basic-preview'));
+    if ($baseUrl === '') {
+        $baseUrl = 'http://127.0.0.1:18082';
+    }
+    if ($styleId === '') {
+        $styleId = 'basic-preview';
+    }
+
+    return [
+        'provider' => 'Local Australia Tiles',
+        'base_url' => $baseUrl,
+        'style_id' => $styleId,
+        'style_url' => rtrim($baseUrl, '/') . "/styles/{$styleId}/style.json",
+        'tile_url' => rtrim($baseUrl, '/') . "/styles/{$styleId}/{z}/{x}/{y}.png",
+        'attribution' => '&copy; OpenStreetMap contributors',
+    ];
+}
+
 function fuelauServiceStatus(): array
 {
     $services = [];

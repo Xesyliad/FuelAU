@@ -148,3 +148,37 @@ services:
       timeout: 10s
       retries: 10
     restart: unless-stopped
+
+  map-build:
+    image: ghcr.io/onthegomap/planetiler:latest
+    profiles:
+      - map-setup
+    environment:
+      JAVA_TOOL_OPTIONS: "${MAP_BUILD_JAVA_TOOL_OPTIONS:--Xmx4g}"
+      TZ: "${TZ:-Australia/Brisbane}"
+    command:
+      - --download
+      - --area=australia
+      - --output=/data/australia.mbtiles
+      - --force
+    volumes:
+      - ./var/docker/map-tiles:/data
+
+  map-server:
+    image: maptiler/tileserver-gl-light:v5.6.0
+    profiles:
+      - map
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${MAP_TILE_PORT:-18082}:8080"
+    volumes:
+      - ./var/docker/map-tiles:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const http=require('http');http.get('http://127.0.0.1:8080/styles.json',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1m
+    restart: unless-stopped

@@ -20,6 +20,10 @@ try {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FuelAU</title>
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+    >
     <style>
         :root {
             color-scheme: light;
@@ -562,6 +566,25 @@ try {
                 #fff;
         }
 
+        .route-map-frame {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at center, rgba(15, 118, 110, 0.02), rgba(15, 118, 110, 0.00)),
+                #fff;
+        }
+
+        .route-map-frame > .route-empty,
+        .route-map-frame > .route-map {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            border-radius: 0;
+        }
+
         .route-map-legend {
             display: flex;
             flex-wrap: wrap;
@@ -741,6 +764,12 @@ try {
     </style>
 </head>
 <body>
+    <script>
+        window.fuelauMapConfig = <?= json_encode(
+            fuelauMapTileConfig(),
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        ) ?>;
+    </script>
     <main class="app-shell">
         <nav class="tabs" aria-label="Primary">
             <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab">Fuel Prices</button>
@@ -862,7 +891,7 @@ try {
 
                     <section class="surface-block">
                         <h2>Route Map</h2>
-                        <div id="route-map"></div>
+                        <div class="route-map-frame" id="route-map"></div>
                         <div class="route-map-legend" id="route-map-legend"></div>
                     </section>
 
@@ -892,6 +921,7 @@ try {
         </section>
     </main>
 
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <script>
         const tabs = document.querySelectorAll('.tab');
         const panels = document.querySelectorAll('.panel');
@@ -932,6 +962,7 @@ try {
         let selectedContainerRestartable = false;
         let fuelOptions = null;
         let routeDestinationCounter = 0;
+        let routeMapInstance = null;
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -946,6 +977,9 @@ try {
                 }
                 if (tab.id === 'fuel-prices-tab') {
                     loadFuelDashboard();
+                }
+                if (tab.id === 'route-planning-tab' && routeMapInstance) {
+                    window.setTimeout(() => routeMapInstance.resize(), 0);
                 }
             });
         });
@@ -1680,133 +1714,196 @@ try {
 
         function renderRouteMap(plan) {
             const segments = Array.isArray(plan.segments) ? plan.segments : [];
-            const points = [];
-            const markers = [];
+            const routeFeatures = [];
+            const markerFeatures = [];
+            const bounds = [];
             const palette = ['#0f766e', '#2563eb', '#7c3aed', '#b45309', '#c2410c'];
 
             segments.forEach((segment, segmentIndex) => {
                 const routePieces = segment.routePieces.filter((item) => item.type === 'route');
                 routePieces.forEach((piece, pieceIndex) => {
-                    piece.route.geometry.forEach((point) => points.push(point));
+                    const routePoints = Array.isArray(piece.route.geometry) ? piece.route.geometry : [];
+                    if (routePoints.length > 0) {
+                        const coordinates = routePoints.map((point) => [Number(point.lon), Number(point.lat)]);
+                        routeFeatures.push({
+                            type: 'Feature',
+                            properties: {
+                                color: palette[segmentIndex % palette.length],
+                                segment_index: segmentIndex + 1,
+                                piece_index: pieceIndex + 1,
+                            },
+                            geometry: {
+                                type: 'LineString',
+                                coordinates,
+                            },
+                        });
+                        routePoints.forEach((point) => bounds.push([Number(point.lat), Number(point.lon)]));
+                    }
                     if (pieceIndex === 0) {
-                        markers.push({
-                            type: 'origin',
-                            ...piece.route.from,
-                            label: `Leg ${segmentIndex + 1} start`,
+                        markerFeatures.push({
+                            type: 'Feature',
+                            properties: {
+                                kind: 'origin',
+                                label: `Leg ${segmentIndex + 1} start`,
+                                sublabel: piece.route.from.display_name || '',
+                                segment_index: segmentIndex + 1,
+                            },
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [Number(piece.route.from.lon), Number(piece.route.from.lat)],
+                            },
                         });
                     }
-                    markers.push({
-                        type: 'destination',
-                        ...piece.route.to,
-                        label: pieceIndex === routePieces.length - 1
-                            ? `Leg ${segmentIndex + 1} end`
-                            : `Fuel stop approach`,
+                    markerFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            kind: 'destination',
+                            label: pieceIndex === routePieces.length - 1
+                                ? `Leg ${segmentIndex + 1} end`
+                                : 'Fuel stop approach',
+                            sublabel: piece.route.to.display_name || '',
+                            segment_index: segmentIndex + 1,
+                        },
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [Number(piece.route.to.lon), Number(piece.route.to.lat)],
+                        },
                     });
                 });
                 segment.stops.forEach((stop, stopIndex) => {
-                    markers.push({
-                        type: 'fuel-stop',
-                        lon: stop.longitude,
-                        lat: stop.latitude,
-                        label: `${stop.station_name} ${routeFuelPriceText(stop.price)}`,
-                        sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L`,
-                        segmentIndex,
-                        stopIndex,
-                        price: stop.price,
+                    markerFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            kind: 'fuel-stop',
+                            label: `${stop.station_name} ${routeFuelPriceText(stop.price)}`,
+                            sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L, $${(Number(stop.purchaseCents || 0) / 100).toFixed(2)}`,
+                            segment_index: segmentIndex + 1,
+                            stop_index: stopIndex + 1,
+                            price: stop.price,
+                        },
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [Number(stop.longitude), Number(stop.latitude)],
+                        },
                     });
+                    bounds.push([Number(stop.latitude), Number(stop.longitude)]);
                 });
             });
 
-            if (points.length === 0) {
+            routeMap.innerHTML = '';
+            if (!window.maplibregl) {
+                routeMap.innerHTML = renderRouteEmpty('Route map unavailable in this browser.');
+                routeMapLegend.innerHTML = '';
+                return;
+            }
+
+            if (routeMapInstance) {
+                routeMapInstance.remove();
+                routeMapInstance = null;
+            }
+
+            if (bounds.length === 0) {
                 routeMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
                 routeMapLegend.innerHTML = '';
                 return;
             }
 
-            const allLon = points.map((point) => Number(point.lon));
-            const allLat = points.map((point) => Number(point.lat));
-            const minLon = Math.min(...allLon);
-            const maxLon = Math.max(...allLon);
-            const minLat = Math.min(...allLat);
-            const maxLat = Math.max(...allLat);
-            const lonSpan = Math.max(maxLon - minLon, 0.01);
-            const latSpan = Math.max(maxLat - minLat, 0.01);
-            const padding = 0.08;
-            const width = 1000;
-            const height = 1000;
+            const mapConfig = window.fuelauMapConfig || {};
+            const styleUrl = mapConfig.style_url;
+            if (!styleUrl) {
+                routeMap.innerHTML = renderRouteEmpty('Map style is not configured.');
+                routeMapLegend.innerHTML = '';
+                return;
+            }
 
-            const project = (point) => ({
-                x: ((Number(point.lon) - minLon) / lonSpan) * (width * (1 - padding * 2)) + width * padding,
-                y: height - (((Number(point.lat) - minLat) / latSpan) * (height * (1 - padding * 2)) + height * padding),
+            const map = new maplibregl.Map({
+                container: routeMap,
+                style: styleUrl,
+                center: [Number(segments[0]?.routePieces?.[0]?.route?.from?.lon || 133.7751), Number(segments[0]?.routePieces?.[0]?.route?.from?.lat || -25.2744)],
+                zoom: 4,
+                attributionControl: true,
+                preserveDrawingBuffer: false,
+            });
+            routeMapInstance = map;
+            map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
+
+            map.on('load', () => {
+                map.addSource('route-lines', {
+                    type: 'geojson',
+                    data: {
+                        type: 'FeatureCollection',
+                        features: routeFeatures,
+                    },
+                });
+                map.addSource('route-markers', {
+                    type: 'geojson',
+                    data: {
+                        type: 'FeatureCollection',
+                        features: markerFeatures,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-lines',
+                    type: 'line',
+                    source: 'route-lines',
+                    paint: {
+                        'line-color': ['get', 'color'],
+                        'line-width': 5,
+                        'line-opacity': 0.92,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-markers',
+                    type: 'circle',
+                    source: 'route-markers',
+                    paint: {
+                        'circle-radius': [
+                            'case',
+                            ['==', ['get', 'kind'], 'fuel-stop'], 7,
+                            ['==', ['get', 'kind'], 'origin'], 8,
+                            8,
+                        ],
+                        'circle-color': [
+                            'case',
+                            ['==', ['get', 'kind'], 'origin'], '#166534',
+                            ['==', ['get', 'kind'], 'fuel-stop'], '#b45309',
+                            '#0f766e',
+                        ],
+                        'circle-stroke-color': '#ffffff',
+                        'circle-stroke-width': 2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-labels',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    layout: {
+                        'text-field': ['get', 'label'],
+                        'text-size': 12,
+                        'text-offset': ['case', ['==', ['get', 'kind'], 'origin'], ['literal', [0, -1.3]], ['literal', [0, 1.2]]],
+                        'text-anchor': ['case', ['==', ['get', 'kind'], 'origin'], 'top', 'bottom'],
+                        'text-allow-overlap': true,
+                    },
+                    paint: {
+                        'text-color': '#16212d',
+                        'text-halo-color': '#ffffff',
+                        'text-halo-width': 1.2,
+                    },
+                });
+
+                const pointBounds = new maplibregl.LngLatBounds();
+                bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
+                map.fitBounds(pointBounds, { padding: 36, duration: 0 });
             });
 
-            const routePaths = segments.map((segment, segmentIndex) => {
-                const routePieces = segment.routePieces.filter((item) => item.type === 'route');
-                if (routePieces.length === 0) {
-                    return '';
-                }
-                const color = palette[segmentIndex % palette.length];
-                return routePieces.map((piece) => {
-                    const path = piece.route.geometry.map((point, index) => {
-                        const projected = project(point);
-                        return `${index === 0 ? 'M' : 'L'} ${projected.x.toFixed(2)} ${projected.y.toFixed(2)}`;
-                    }).join(' ');
-                    return `<path d="${path}" fill="none" stroke="${color}" stroke-width="6" class="route-map-line"></path>`;
-                }).join('');
-            }).join('');
-
-            const markerSvg = markers.map((marker) => {
-                const projected = project(marker);
-                if (marker.type === 'fuel-stop') {
-                    return `
-                        <g>
-                            <circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="11" fill="#b45309" stroke="#fff" stroke-width="4"></circle>
-                            <circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="4" fill="#fff"></circle>
-                        </g>
-                    `;
-                }
-                if (marker.type === 'origin') {
-                    return `<circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="12" fill="#166534" stroke="#fff" stroke-width="4"></circle>`;
-                }
-                return `<rect x="${(projected.x - 10).toFixed(2)}" y="${(projected.y - 10).toFixed(2)}" width="20" height="20" rx="5" fill="#0f766e" stroke="#fff" stroke-width="4"></rect>`;
-            }).join('');
-
-            const labels = markers.map((marker) => {
-                const projected = project(marker);
-                const textY = marker.type === 'origin' ? projected.y - 18 : projected.y + 26;
-                return `
-                    <g>
-                        <text x="${projected.x.toFixed(2)}" y="${textY.toFixed(2)}" text-anchor="middle" fill="#16212d" font-size="18" font-weight="700">${escapeHtml(marker.label || '')}</text>
-                        ${marker.sublabel ? `<text x="${projected.x.toFixed(2)}" y="${(textY + 18).toFixed(2)}" text-anchor="middle" fill="#5b6775" font-size="14">${escapeHtml(marker.sublabel)}</text>` : ''}
-                    </g>
-                `;
-            }).join('');
-
-            routeMap.innerHTML = `
-                <svg class="route-map" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Planned route map">
-                    <rect x="0" y="0" width="${width}" height="${height}" fill="#f8fbfb"></rect>
-                    ${Array.from({ length: 10 }, (_, index) => {
-                        const x = (width / 10) * index;
-                        const y = (height / 10) * index;
-                        return `
-                            <g opacity="0.45">
-                                <line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#dde7eb" stroke-width="1"></line>
-                                <line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#dde7eb" stroke-width="1"></line>
-                            </g>
-                        `;
-                    }).join('')}
-                    ${routePaths}
-                    ${markerSvg}
-                    ${labels}
-                </svg>
-            `;
-
-            const summary = [
+            routeMapLegend.innerHTML = [
                 '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
                 '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
                 '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
-            ];
-            routeMapLegend.innerHTML = summary.join('');
+            ].join('');
         }
 
         function renderRouteBreakdown(plan) {
@@ -2510,6 +2607,10 @@ try {
                 (($_GET['steps'] ?? '1') !== '0')
             )
         );
+    }
+
+    if ($path === '/api/map/config') {
+        fuelauJsonResponse(fuelauMapTileConfig());
     }
 
     if ($path === '/api/fuel/sources') {

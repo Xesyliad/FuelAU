@@ -58,6 +58,8 @@ Current application-level config keys include:
 - `NSW_FUEL_API_SECRET`
 - `NSW_FUEL_API_AUTHORIZATION_HEADER`
 - `VIC_SERVO_SAVER_API_KEY`
+- `MAP_TILE_SERVER_URL`
+- `MAP_TILE_STYLE`
 
 ## Local Runtime State
 
@@ -68,6 +70,7 @@ Project-owned runtime state is stored under `/opt/FuelAU/var/docker/`, which is 
 - `var/docker/nominatim-db`: Nominatim PostgreSQL data
 - `var/docker/nominatim-flatnode`: Nominatim flatnode data
 - `var/docker/osrm-data`: downloaded and processed OSRM routing data
+- `var/docker/map-tiles`: Australia basemap tiles for the local map stack
 
 Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or compatible external BuildKit builder.
 
@@ -290,6 +293,34 @@ docker compose --profile routing --profile routing-setup up -d
 ```
 
 Nominatim import for the Australia PBF is large and can take a long time. During import, `nominatim` may show `health: starting`.
+
+## Local Map Stack
+
+The local map stack is built from an Australia OpenStreetMap extract and stored under `var/docker/map-tiles`.
+
+Current services:
+
+- `map-build`: weekly Planetiler rebuild job that writes `australia.mbtiles`
+- `map-server`: local TileServer GL light instance that serves the rebuilt tiles and style JSON
+
+The app exposes the tile server config at `/api/map/config`. The default local settings are:
+
+- `MAP_TILE_SERVER_URL=http://127.0.0.1:18082`
+- `MAP_TILE_STYLE=basic-preview`
+
+Rebuild the basemap manually:
+
+```bash
+docker compose --profile map-setup run --rm map-build
+```
+
+Start the local tile server:
+
+```bash
+docker compose --profile map up -d map-server
+```
+
+The rebuild cadence should be weekly. The server is designed to read the latest `var/docker/map-tiles/australia.mbtiles` file without involving the app database.
 
 ## Dependency Order
 

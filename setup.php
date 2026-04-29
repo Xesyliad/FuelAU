@@ -18,6 +18,7 @@ function fuelauEnsureRuntimeDirectories(): void
         [__DIR__ . '/var/docker/nominatim-flatnode', 0777, null, null],
         [__DIR__ . '/var/docker/osrm-data', 0777, null, null],
         [__DIR__ . '/var/docker/vic-state', 0777, null, null],
+        [__DIR__ . '/var/docker/map-tiles', 0777, null, null],
     ];
 
     foreach ($directories as [$directory, $mode, $uid, $gid]) {

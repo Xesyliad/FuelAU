@@ -13,3 +13,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Victoria Servo Saver Open Data: refresh reference data daily and sync prices every 30 minutes.
 5,35 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all >> /var/log/fuelapi/vic_sync.log 2>&1
+
+# Local Australia basemap: rebuild weekly using Planetiler.
+10 3 * * 0 cd /var/www/html && docker compose --profile map-setup run --rm map-build >> /var/log/fuelapi/map_build.log 2>&1
