@@ -133,6 +133,9 @@ services:
     depends_on:
       app:
         condition: service_started
+      osrm-customize:
+        condition: service_completed_successfully
+        required: false
     command:
       - osrm-routed
       - --algorithm
@@ -171,6 +174,9 @@ services:
     depends_on:
       app:
         condition: service_started
+      map-build:
+        condition: service_completed_successfully
+        required: false
     command:
       - --public_url
       - /tiles/
@@ -190,6 +196,10 @@ services:
     image: docker:27-cli
     profiles:
       - map
+    depends_on:
+      map-server:
+        condition: service_healthy
+        required: false
     working_dir: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
     environment:
       FUELAU_HOST_PROJECT_ROOT: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"

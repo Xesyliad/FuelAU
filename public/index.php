@@ -231,6 +231,21 @@ try {
             color: #92400e;
         }
 
+        .badge.ok {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge.warn {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge.idle {
+            background: #e0f2fe;
+            color: #075985;
+        }
+
         .logs {
             min-height: 260px;
             max-height: 360px;
@@ -3689,6 +3704,9 @@ try {
                 const statusClass = service.display_badge || (container.state === 'running' ? 'running' : (container.state === 'exited' ? 'exited' : 'planned'));
                 const statusText = service.display_status || container.status || 'Not started';
                 const lifecycle = service.kind === 'setup_job' ? 'Setup job' : 'Runtime service';
+                const expectedBadge = service.expected_badge || 'idle';
+                const expectedState = service.expected_state || (service.kind === 'setup_job' ? 'prepared or exited' : 'running when enabled');
+                const expectedDetail = service.expected_detail || '';
                 const dataPaths = Array.isArray(service.data_paths) && service.data_paths.length > 0
                     ? service.data_paths.join(', ')
                     : 'None configured';
@@ -3706,11 +3724,13 @@ try {
                 card.innerHTML = `
                     <h2>${escapeHtml(service.title || service.service)}</h2>
                     <span class="badge ${statusClass}">${escapeHtml(state)}</span>
+                    <span class="badge ${escapeHtml(expectedBadge)}">Expected: ${escapeHtml(expectedState)}</span>
                     <div class="container-meta">
                         <span>Service: ${escapeHtml(service.service)}</span>
                         <span>Lifecycle: ${escapeHtml(lifecycle)}</span>
                         <span>Role: ${escapeHtml(service.role || '')}</span>
                         <span>Profile: ${escapeHtml(service.profile || 'default')}</span>
+                        ${expectedDetail !== '' ? `<span>Expected Detail: ${escapeHtml(expectedDetail)}</span>` : ''}
                         <span>Name: ${escapeHtml(container.name || 'No container created')}</span>
                         <span>Image: ${escapeHtml(container.image || 'Pending image pull/build')}</span>
                         <span>Status: ${escapeHtml(statusText)}</span>

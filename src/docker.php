@@ -162,6 +162,8 @@ function fuelauConfiguredServices(): array
             'role' => 'PHP web app, API, cron, and management UI.',
             'kind' => 'runtime',
             'profile' => 'default',
+            'expected_state' => 'running',
+            'expected_detail' => 'Expected to run whenever the base stack is up.',
             'start_command' => 'docker compose up -d app',
             'data_paths' => ['var/docker/app-logs'],
         ],
@@ -171,6 +173,8 @@ function fuelauConfiguredServices(): array
             'role' => 'FuelAU application database.',
             'kind' => 'runtime',
             'profile' => 'default',
+            'expected_state' => 'running',
+            'expected_detail' => 'Expected to run whenever the base stack is up.',
             'start_command' => 'docker compose up -d db',
             'data_paths' => ['var/docker/db-data'],
         ],
@@ -180,6 +184,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Australia geocoding service.',
             'kind' => 'runtime',
             'profile' => 'routing',
+            'expected_state' => 'running when routing profile is enabled',
+            'expected_detail' => 'Expected to run after app starts and Nominatim import is ready.',
             'start_command' => 'docker compose --profile routing up -d nominatim',
             'data_paths' => ['var/docker/nominatim-db', 'var/docker/nominatim-flatnode'],
             'source' => 'https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf',
@@ -191,6 +197,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Downloads the Australia OSM PBF before OSRM preprocessing.',
             'kind' => 'setup_job',
             'profile' => 'routing-setup',
+            'expected_state' => 'exited successfully or prepared',
+            'expected_detail' => 'One-shot job. Expected to exit after downloading the Australia PBF.',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-download',
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => ['var/docker/osrm-data/australia-latest.osm.pbf'],
@@ -202,6 +210,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Builds OSRM extract data from the Australia PBF.',
             'kind' => 'setup_job',
             'profile' => 'routing-setup',
+            'expected_state' => 'exited successfully or prepared',
+            'expected_detail' => 'One-shot job. Expected to exit after OSRM extract outputs exist.',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-extract',
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => [
@@ -215,6 +225,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Prepares MLD partitions for OSRM routing.',
             'kind' => 'setup_job',
             'profile' => 'routing-setup',
+            'expected_state' => 'exited successfully or prepared',
+            'expected_detail' => 'One-shot job. Expected to exit after MLD partition outputs exist.',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-partition',
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => [
@@ -228,6 +240,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Customizes MLD cells for OSRM routing.',
             'kind' => 'setup_job',
             'profile' => 'routing-setup',
+            'expected_state' => 'exited successfully or prepared',
+            'expected_detail' => 'One-shot job. Expected to exit after MLD customize output exists.',
             'start_command' => 'docker compose --profile routing-setup run --rm osrm-customize',
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => ['var/docker/osrm-data/australia-latest.osrm.mldgr'],
@@ -238,6 +252,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Australia routing API service.',
             'kind' => 'runtime',
             'profile' => 'routing',
+            'expected_state' => 'running when routing profile is enabled',
+            'expected_detail' => 'Expected to run after OSRM setup outputs are present.',
             'start_command' => 'docker compose --profile routing up -d osrm-routed',
             'data_paths' => ['var/docker/osrm-data'],
             'artifact_checks' => ['var/docker/osrm-data/australia-latest.osrm.mldgr'],
@@ -248,6 +264,8 @@ function fuelauConfiguredServices(): array
             'role' => 'One-shot Planetiler build for the local Australia vector basemap.',
             'kind' => 'setup_job',
             'profile' => 'map-setup',
+            'expected_state' => 'exited successfully or prepared',
+            'expected_detail' => 'One-shot job. Expected to exit after australia.mbtiles exists.',
             'start_command' => 'docker compose --profile map-setup run --rm map-build',
             'data_paths' => ['var/docker/map-tiles'],
             'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
@@ -259,6 +277,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Local TileServer GL service for Fuel Prices and Route Planning maps.',
             'kind' => 'runtime',
             'profile' => 'map',
+            'expected_state' => 'running when map profile is enabled',
+            'expected_detail' => 'Expected to run after australia.mbtiles exists.',
             'start_command' => 'docker compose --profile map up -d map-server',
             'data_paths' => ['var/docker/map-tiles'],
             'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
@@ -269,6 +289,8 @@ function fuelauConfiguredServices(): array
             'role' => 'Weekly Docker CLI scheduler for rebuilding the local Australia basemap.',
             'kind' => 'runtime',
             'profile' => 'map',
+            'expected_state' => 'running when map profile is enabled',
+            'expected_detail' => 'Expected to run after map-server is healthy.',
             'start_command' => 'docker compose --profile map up -d map-scheduler',
             'data_paths' => ['var/docker/app-logs', 'var/docker/map-tiles'],
             'artifact_checks' => ['var/docker/map-tiles/australia.mbtiles'],
@@ -369,6 +391,34 @@ function fuelauDockerDisplayState(array $metadata, ?array $container, array $art
     ];
 }
 
+function fuelauDockerExpectedBadge(array $metadata, ?array $container, array $artifacts): string
+{
+    $kind = (string) ($metadata['kind'] ?? 'runtime');
+    $profile = (string) ($metadata['profile'] ?? 'default');
+    $hasContainer = $container !== null && ($container['id'] ?? '') !== '';
+    $containerState = strtolower((string) ($container['state'] ?? ''));
+
+    if ($kind === 'setup_job') {
+        if (($artifacts['complete'] ?? false) || ($containerState === 'exited')) {
+            return 'ok';
+        }
+        if (($artifacts['ready'] ?? 0) > 0 || $containerState === 'running') {
+            return 'warn';
+        }
+        return 'idle';
+    }
+
+    if ($containerState === 'running') {
+        return 'ok';
+    }
+
+    if ($profile === 'default') {
+        return 'warn';
+    }
+
+    return $hasContainer ? 'warn' : 'idle';
+}
+
 function fuelauDockerServices(): array
 {
     $configured = fuelauConfiguredServices();
@@ -397,6 +447,7 @@ function fuelauDockerServices(): array
                 'display_state' => $display['state'],
                 'display_badge' => $display['badge'],
                 'display_status' => $display['status'],
+                'expected_badge' => fuelauDockerExpectedBadge($metadata, $container, $artifactStatus),
                 'allow_restart' => ($container !== null) && (($metadata['kind'] ?? 'runtime') === 'runtime'),
             ]
         );
@@ -420,6 +471,9 @@ function fuelauDockerServices(): array
             'display_state' => (string) ($container['state'] ?? 'unknown'),
             'display_badge' => ($container['state'] ?? '') === 'running' ? 'running' : (($container['state'] ?? '') === 'exited' ? 'exited' : 'planned'),
             'display_status' => (string) ($container['status'] ?? 'Container detected'),
+            'expected_state' => 'unknown',
+            'expected_detail' => 'Container was detected from Compose labels but is not in FuelAU metadata.',
+            'expected_badge' => 'warn',
             'allow_restart' => true,
         ];
     }

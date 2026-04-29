@@ -543,6 +543,7 @@ The Container Management tab uses the Docker socket mounted into the `app` conta
 It shows configured services even before a container exists, including app, database, Nominatim, OSRM setup/runtime services, and local map services. It currently supports:
 
 - service/container status
+- expected state for each service or one-shot job
 - container logs
 - container restart
 - project stopped-container pruning
@@ -554,6 +555,8 @@ The local map services are shown as:
 - `map-build`: one-shot Planetiler job.
 - `map-server`: TileServer GL runtime.
 - `map-scheduler`: weekly Docker CLI scheduler.
+
+Expected states distinguish always-on runtime services, optional profile runtime services, and one-shot setup jobs. For example, `app` and `db` are expected to be running in the base stack, OSRM setup jobs are expected to be exited successfully or prepared, and `map-server` is expected to run only when the map profile is enabled.
 
 Because this UI can control Docker on the host, only run it in a trusted local environment.
 
@@ -633,12 +636,13 @@ The rebuild cadence is weekly at Sunday 03:10 Australia/Brisbane time. The sched
 Compose health and dependency rules are configured so the core database becomes healthy before the app starts:
 
 ```text
-db -> app -> nominatim/osrm-routed
+db -> app -> nominatim
 osrm-download -> osrm-extract -> osrm-partition -> osrm-customize
-manual map-build -> map-server/map-scheduler
+osrm-customize -> osrm-routed when routing setup and routing profiles are started together
+map-build -> map-server -> map-scheduler when map setup and map profiles are started together
 ```
 
-`depends_on` controls startup ordering, not application readiness beyond configured health checks. Nominatim can still take hours to finish its import after the container starts.
+`depends_on` controls startup ordering, not application readiness beyond configured health checks. Optional dependencies are marked non-required so already-prepared artifacts can be used without rerunning one-shot jobs every time. Nominatim can still take hours to finish its import after the container starts.
 
 ## Common Commands
 
