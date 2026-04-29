@@ -1901,12 +1901,15 @@ try {
                 const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
                 const arrivalFuelL = Math.max(0, currentFuelL - routeFuel);
                 const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
+                const localDistanceKm = routeProgressKm + (candidate.routeDistanceFromCursorKm * 0.65);
                 return {
                     ...candidate,
                     routeProgressKm,
+                    localDistanceKm,
                     arrivalFuelL,
                     refillL,
                     safeStop: arrivalFuelL >= reserveL,
+                    effectiveCost: refillL * candidate.price + detourFuel * candidate.price * 0.25,
                 };
             });
 
@@ -1916,23 +1919,28 @@ try {
                 return null;
             }
 
-            pool.sort((left, right) => {
+            const nearestLocalDistanceKm = Math.min(...pool.map((candidate) => candidate.localDistanceKm));
+            const localDistanceLimitKm = nearestLocalDistanceKm + Math.max(2, nearestLocalDistanceKm * 0.25);
+            const shortlist = pool.filter((candidate) => candidate.localDistanceKm <= localDistanceLimitKm);
+            const ranked = shortlist.length > 0 ? shortlist : pool;
+
+            ranked.sort((left, right) => {
                 if (left.safeStop !== right.safeStop) {
                     return Number(right.safeStop) - Number(left.safeStop);
                 }
-                if (left.refillL !== right.refillL) {
-                    return right.refillL - left.refillL;
+                if (left.localDistanceKm !== right.localDistanceKm) {
+                    return left.localDistanceKm - right.localDistanceKm;
                 }
                 if (left.price !== right.price) {
                     return left.price - right.price;
                 }
-                if (left.routeDistanceFromCursorKm !== right.routeDistanceFromCursorKm) {
-                    return left.routeDistanceFromCursorKm - right.routeDistanceFromCursorKm;
+                if (left.effectiveCost !== right.effectiveCost) {
+                    return left.effectiveCost - right.effectiveCost;
                 }
                 return left.progressKm - right.progressKm;
             });
 
-            return pool[0];
+            return ranked[0];
         }
 
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
