@@ -1,5 +1,6 @@
 \#recycle/
 .codex
+node_modules/
 .env
 config/app.env
 config/mysql.env

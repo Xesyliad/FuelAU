@@ -22,7 +22,7 @@ try {
     <title>FuelAU</title>
     <link
         rel="stylesheet"
-        href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+        href="/resources/maplibre-gl.css"
     >
     <style>
         :root {
@@ -619,6 +619,76 @@ try {
             stroke-linejoin: round;
         }
 
+        .route-fuel-marker {
+            display: inline-flex;
+            align-items: stretch;
+            gap: 8px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 6px 18px rgba(22, 33, 45, 0.12);
+            color: var(--text);
+            max-width: 280px;
+            pointer-events: none;
+        }
+
+        .route-fuel-marker-icon {
+            width: 22px;
+            height: 22px;
+            margin-top: 2px;
+            border-radius: 6px;
+            background: var(--route-fuel-color, #b45309);
+            position: relative;
+            flex: 0 0 auto;
+        }
+
+        .route-fuel-marker-icon::before {
+            content: "";
+            position: absolute;
+            left: 5px;
+            top: 4px;
+            width: 8px;
+            height: 10px;
+            border: 2px solid #fff;
+            border-radius: 2px;
+            box-sizing: border-box;
+        }
+
+        .route-fuel-marker-icon::after {
+            content: "";
+            position: absolute;
+            right: -4px;
+            top: 8px;
+            width: 10px;
+            height: 2px;
+            background: #fff;
+            box-shadow: 4px 6px 0 0 #fff;
+            transform: rotate(24deg);
+            transform-origin: center;
+        }
+
+        .route-fuel-marker-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .route-fuel-marker-copy strong {
+            font-size: 12px;
+            line-height: 1.2;
+            font-weight: 700;
+            white-space: normal;
+        }
+
+        .route-fuel-marker-copy span {
+            font-size: 11px;
+            line-height: 1.2;
+            color: var(--muted);
+            white-space: normal;
+        }
+
         .route-breakdown-row td {
             vertical-align: top;
         }
@@ -932,7 +1002,7 @@ try {
         </section>
     </main>
 
-    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="/resources/maplibre-gl.js"></script>
     <script>
         const tabs = document.querySelectorAll('.tab');
         const panels = document.querySelectorAll('.panel');
@@ -975,6 +1045,7 @@ try {
         let fuelOptions = null;
         let routeDestinationCounter = 0;
         let routeMapInstance = null;
+        let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const activeTabKey = 'fuelau_active_tab_v1';
@@ -1509,78 +1580,34 @@ try {
             return lines.join('\n');
         }
 
-        function routeFuelStopIconKey(color) {
-            return `fuel-pump-${String(color || '#b45309').replace(/[^a-z0-9]+/gi, '').toLowerCase()}`;
+        function clearRouteFuelMarkers() {
+            routeFuelMarkers.forEach((marker) => {
+                try {
+                    marker.remove();
+                } catch (error) {
+                    void error;
+                }
+            });
+            routeFuelMarkers = [];
         }
 
-        function routeFuelPumpIconCanvas(color) {
-            const size = 64;
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const context = canvas.getContext('2d');
-            if (!context) {
-                return canvas;
-            }
-
-            context.clearRect(0, 0, size, size);
-            context.lineWidth = 4;
-            context.strokeStyle = '#ffffff';
-            context.fillStyle = color;
-
-            const bodyX = 18;
-            const bodyY = 14;
-            const bodyW = 24;
-            const bodyH = 34;
-
-            context.beginPath();
-            context.roundRect(bodyX, bodyY, bodyW, bodyH, 6);
-            context.fill();
-            context.stroke();
-
-            context.beginPath();
-            context.moveTo(bodyX + bodyW - 2, bodyY + 10);
-            context.lineTo(bodyX + bodyW + 12, bodyY + 6);
-            context.lineTo(bodyX + bodyW + 15, bodyY + 12);
-            context.lineTo(bodyX + bodyW + 1, bodyY + 17);
-            context.closePath();
-            context.fill();
-            context.stroke();
-
-            context.beginPath();
-            context.moveTo(bodyX + 2, bodyY + bodyH);
-            context.lineTo(bodyX + 2, bodyY + bodyH + 8);
-            context.lineTo(bodyX + bodyW + 6, bodyY + bodyH + 8);
-            context.lineTo(bodyX + bodyW + 6, bodyY + bodyH);
-            context.closePath();
-            context.fill();
-            context.stroke();
-
-            context.fillStyle = '#ffffff';
-            context.beginPath();
-            context.roundRect(bodyX + 6, bodyY + 8, 8, 10, 2);
-            context.fill();
-            context.beginPath();
-            context.roundRect(bodyX + 16, bodyY + 8, 4, 18, 2);
-            context.fill();
-
-            context.strokeStyle = color;
-            context.lineWidth = 3;
-            context.beginPath();
-            context.moveTo(bodyX + bodyW + 10, bodyY + 18);
-            context.lineTo(bodyX + bodyW + 18, bodyY + 18);
-            context.lineTo(bodyX + bodyW + 18, bodyY + 32);
-            context.stroke();
-
-            return canvas;
-        }
-
-        function routeFuelStopImage(map, color) {
-            const iconKey = routeFuelStopIconKey(color);
-            if (!map.hasImage(iconKey)) {
-                map.addImage(iconKey, routeFuelPumpIconCanvas(color), { pixelRatio: 2 });
-            }
-            return iconKey;
+        function createRouteFuelMarkerElement(feature) {
+            const color = String(feature?.properties?.color || '#b45309');
+            const station = String(feature?.properties?.station_name || '').trim();
+            const address = String(feature?.properties?.address || '').trim();
+            const price = String(feature?.properties?.price_text || '').trim();
+            const wrapper = document.createElement('div');
+            wrapper.className = 'route-fuel-marker';
+            wrapper.style.setProperty('--route-fuel-color', color);
+            wrapper.innerHTML = `
+                <span class="route-fuel-marker-icon" aria-hidden="true"></span>
+                <span class="route-fuel-marker-copy">
+                    <strong>${escapeHtml(station !== '' ? station : 'Fuel stop')}</strong>
+                    ${address !== '' ? `<span>${escapeHtml(address)}</span>` : ''}
+                    <span>${escapeHtml(price !== '' ? `${price}/L` : 'Price unavailable')}</span>
+                </span>
+            `;
+            return wrapper;
         }
 
         function haversineKm(left, right) {
@@ -2119,8 +2146,10 @@ try {
                             segment_index: segmentIndex + 1,
                             stop_index: stopIndex + 1,
                             price: stop.price,
+                            price_text: routeFuelPriceText(stop.price),
+                            station_name: stop.station_name || '',
+                            address: stop.address || '',
                             color: palette[segmentIndex % palette.length],
-                            icon_key: routeFuelStopIconKey(palette[segmentIndex % palette.length]),
                         },
                         geometry: {
                             type: 'Point',
@@ -2142,6 +2171,7 @@ try {
                 routeMapInstance.remove();
                 routeMapInstance = null;
             }
+            clearRouteFuelMarkers();
 
             if (bounds.length === 0) {
                 routeMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
@@ -2183,9 +2213,6 @@ try {
                         features: markerFeatures,
                     },
                 });
-                markerFeatures
-                    .filter((feature) => feature.properties.kind === 'fuel-stop')
-                    .forEach((feature) => routeFuelStopImage(map, feature.properties.color));
 
                 map.addLayer({
                     id: 'route-lines',
@@ -2225,47 +2252,13 @@ try {
                 });
 
                 map.addLayer({
-                    id: 'route-fuel-icons',
-                    type: 'symbol',
-                    source: 'route-markers',
-                    filter: ['==', ['get', 'kind'], 'fuel-stop'],
-                    layout: {
-                        'icon-image': ['get', 'icon_key'],
-                        'icon-size': 0.8,
-                        'icon-allow-overlap': true,
-                        'icon-ignore-placement': true,
-                    },
-                });
-
-                map.addLayer({
-                    id: 'route-fuel-labels',
-                    type: 'symbol',
-                    source: 'route-markers',
-                    filter: ['==', ['get', 'kind'], 'fuel-stop'],
-                    layout: {
-                        'text-field': ['get', 'label'],
-                        'text-size': 12,
-                        'text-offset': ['literal', [0, 1.9]],
-                        'text-anchor': 'top',
-                        'text-justify': 'center',
-                        'text-allow-overlap': true,
-                        'text-ignore-placement': true,
-                        'text-max-width': 18,
-                    },
-                    paint: {
-                        'text-color': ['get', 'color'],
-                        'text-halo-color': '#ffffff',
-                        'text-halo-width': 1.4,
-                    },
-                });
-
-                map.addLayer({
                     id: 'route-origin-label',
                     type: 'symbol',
                     source: 'route-markers',
                     filter: ['==', ['get', 'kind'], 'origin'],
                     layout: {
                         'text-field': ['get', 'label'],
+                        'text-font': ['Noto Sans Regular'],
                         'text-size': 12,
                         'text-offset': ['literal', [0, -1.3]],
                         'text-anchor': 'top',
@@ -2285,6 +2278,7 @@ try {
                     filter: ['==', ['get', 'kind'], 'destination'],
                     layout: {
                         'text-field': ['get', 'label'],
+                        'text-font': ['Noto Sans Regular'],
                         'text-size': 12,
                         'text-offset': ['literal', [0, 1.2]],
                         'text-anchor': 'bottom',
@@ -2300,6 +2294,18 @@ try {
                 const pointBounds = new maplibregl.LngLatBounds();
                 bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
                 map.fitBounds(pointBounds, { padding: 36, duration: 0 });
+
+                markerFeatures
+                    .filter((feature) => feature.properties.kind === 'fuel-stop')
+                    .forEach((feature) => {
+                        const marker = new maplibregl.Marker({
+                            element: createRouteFuelMarkerElement(feature),
+                            anchor: 'bottom',
+                        })
+                            .setLngLat(feature.geometry.coordinates)
+                            .addTo(map);
+                        routeFuelMarkers.push(marker);
+                    });
             });
 
             routeMapLegend.innerHTML = [
