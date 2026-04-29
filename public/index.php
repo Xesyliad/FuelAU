@@ -1272,6 +1272,11 @@ try {
             });
         }
 
+        async function handleFuelFilterChange() {
+            syncFuelSelectors();
+            await loadFuelDashboard();
+        }
+
         function renderFuelSummary(summary) {
             fuelSummary.innerHTML = '';
             const cards = [
@@ -1616,10 +1621,8 @@ try {
         routePlan.addEventListener('click', planRoute);
         routeReset.addEventListener('click', resetRoutePlanner);
 
-        [fuelState, fuelType].forEach((element) => {
-            element.addEventListener('change', loadFuelDashboard);
-        });
-        fuelState.addEventListener('change', syncFuelSelectors);
+        fuelState.addEventListener('change', handleFuelFilterChange);
+        fuelType.addEventListener('change', loadFuelDashboard);
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
         resetRoutePlanner();
         loadFuelDashboard();
