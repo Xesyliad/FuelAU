@@ -282,10 +282,13 @@ try {
 
         .route-autocomplete {
             position: relative;
+            width: 100%;
         }
 
         .field input[type="text"],
         .field input[type="number"] {
+            width: 100%;
+            box-sizing: border-box;
             min-height: 38px;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -301,6 +304,7 @@ try {
             right: 0;
             top: calc(100% + 4px);
             z-index: 10;
+            min-width: 100%;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: #fff;
@@ -409,8 +413,8 @@ try {
 
         .route-input-grid {
             display: grid;
-            grid-template-columns: 1.5fr 0.7fr 0.7fr;
-            gap: 10px;
+            grid-template-columns: minmax(320px, 2.2fr) minmax(180px, 1fr) minmax(180px, 1fr);
+            gap: 12px;
         }
 
         .route-destinations {
@@ -432,7 +436,7 @@ try {
 
         .route-stop-row {
             display: grid;
-            grid-template-columns: 1fr auto;
+            grid-template-columns: minmax(0, 1fr) auto;
             gap: 10px;
             align-items: end;
             border: 1px solid var(--border);
@@ -446,6 +450,7 @@ try {
             grid-auto-flow: column;
             gap: 6px;
             align-items: center;
+            justify-content: end;
         }
 
         .route-stop-actions .button {
@@ -1147,22 +1152,68 @@ try {
             panel.hidden = true;
         }
 
+        function routeGeocodeIsAdministrative(result) {
+            const kind = String(result?.type || '').toLowerCase();
+            const scope = String(result?.class || '').toLowerCase();
+            return kind === 'administrative' || scope === 'boundary';
+        }
+
+        function routeGeocodeAddressLine(address) {
+            if (!address || typeof address !== 'object') {
+                return '';
+            }
+
+            const houseNumber = String(address.house_number || '').trim();
+            const road = String(address.road || address.pedestrian || address.footway || '').trim();
+            const suburb = String(address.suburb || address.city_district || address.neighbourhood || address.city || address.town || address.village || '').trim();
+            const state = String(address.state || '').trim();
+            const postcode = String(address.postcode || '').trim();
+
+            const street = [houseNumber, road].filter(Boolean).join(' ').trim();
+            const locality = [suburb, state, postcode].filter(Boolean).join(' ').trim();
+
+            if (street && locality) {
+                return `${street}, ${locality}`;
+            }
+            if (street) {
+                return street;
+            }
+            if (locality) {
+                return locality;
+            }
+            return '';
+        }
+
+        function routeGeocodeLabel(result) {
+            const addressLine = routeGeocodeAddressLine(result?.address);
+            return addressLine !== '' ? addressLine : String(result?.display_name || '');
+        }
+
+        function routeGeocodeInputValue(result, fallback = '') {
+            const label = routeGeocodeLabel(result);
+            return label !== '' ? label : fallback;
+        }
+
         function renderRouteAutocompleteOptions(input, results) {
             const panel = routeAutocompletePanel(input);
             if (!panel) {
                 return;
             }
 
-            if (!Array.isArray(results) || results.length === 0) {
+            const filteredResults = Array.isArray(results)
+                ? results.filter((result) => !routeGeocodeIsAdministrative(result))
+                : [];
+
+            if (filteredResults.length === 0) {
                 panel.innerHTML = '<div class="route-autocomplete-empty">No matches found.</div>';
                 panel.hidden = false;
                 return;
             }
 
-            panel.innerHTML = results.map((result) => `
+            panel.innerHTML = filteredResults.map((result) => `
                 <button type="button" class="route-autocomplete-option" data-route-match="${escapeHtml(JSON.stringify(result))}">
-                    <strong>${escapeHtml(result.display_name || '')}</strong>
-                    <span>${escapeHtml([result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match')}</span>
+                    <strong>${escapeHtml(routeGeocodeLabel(result) || result.display_name || '')}</strong>
+                    <span>${escapeHtml(result.display_name || [result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match')}</span>
                 </button>
             `).join('');
 
@@ -1170,7 +1221,7 @@ try {
                 button.addEventListener('pointerdown', (event) => {
                     event.preventDefault();
                     const payload = JSON.parse(button.getAttribute('data-route-match') || '{}');
-                    input.value = payload.display_name || input.value;
+                    input.value = routeGeocodeInputValue(payload, input.value);
                     clearRouteAutocomplete(input);
                 });
             });
@@ -1222,9 +1273,9 @@ try {
                             return;
                         }
 
-                        const results = Array.isArray(payload.results) ? payload.results : [];
+                        const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
                         if (results.length === 1) {
-                            input.value = results[0].display_name || query;
+                            input.value = routeGeocodeInputValue(results[0], query);
                             clearRouteAutocomplete(input);
                             return;
                         }
@@ -2026,14 +2077,15 @@ try {
         }
 
         async function resolveRouteLocation(query) {
-            const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=1`);
-            const result = Array.isArray(payload.results) ? payload.results[0] : null;
+            const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=5`);
+            const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
+            const result = results[0] || null;
             if (!result) {
                 throw new Error(`No geocoding result for "${query}"`);
             }
             return {
                 query,
-                display_name: result.display_name || query,
+                display_name: routeGeocodeInputValue(result, result.display_name || query),
                 lat: Number(result.lat),
                 lon: Number(result.lon),
             };
