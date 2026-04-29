@@ -276,6 +276,10 @@ try {
             font: inherit;
         }
 
+        .route-autocomplete {
+            position: relative;
+        }
+
         .field input[type="text"],
         .field input[type="number"] {
             min-height: 38px;
@@ -285,6 +289,57 @@ try {
             color: var(--text);
             padding: 0 10px;
             font: inherit;
+        }
+
+        .route-autocomplete-panel {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: calc(100% + 4px);
+            z-index: 10;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }
+
+        .route-autocomplete-option {
+            display: block;
+            width: 100%;
+            border: 0;
+            border-bottom: 1px solid #edf2f7;
+            background: #fff;
+            color: var(--text);
+            padding: 10px 12px;
+            text-align: left;
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .route-autocomplete-option:last-child {
+            border-bottom: 0;
+        }
+
+        .route-autocomplete-option strong {
+            display: block;
+            font-size: 13px;
+            line-height: 1.3;
+        }
+
+        .route-autocomplete-option span {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.3;
+        }
+
+        .route-autocomplete-empty,
+        .route-autocomplete-loading {
+            padding: 10px 12px;
+            color: var(--muted);
+            font-size: 12px;
         }
 
         .fuel-grid {
@@ -693,7 +748,10 @@ try {
                         <div class="route-input-grid">
                             <div class="field">
                                 <label for="route-origin">Origin</label>
-                                <input type="text" id="route-origin" placeholder="Enter an origin">
+                                <div class="route-autocomplete">
+                                    <input type="text" id="route-origin" class="route-autocomplete-input" placeholder="Enter an origin" autocomplete="off">
+                                    <div class="route-autocomplete-panel" id="route-origin-results" hidden></div>
+                                </div>
                             </div>
                             <div class="field">
                                 <label for="route-fuel-fill">Fuel Fill (L)</label>
@@ -794,6 +852,7 @@ try {
         const fuelSnapshot = document.getElementById('fuel-snapshot');
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
         const routeOrigin = document.getElementById('route-origin');
+        const routeOriginResults = document.getElementById('route-origin-results');
         const routeFuelFill = document.getElementById('route-fuel-fill');
         const routeFuelEconomy = document.getElementById('route-fuel-economy');
         const routeDestinationList = document.getElementById('route-destination-list');
@@ -891,7 +950,10 @@ try {
             row.innerHTML = `
                 <div class="field">
                     <label for="route-destination-${routeDestinationCounter}">Destination</label>
-                    <input type="text" id="route-destination-${routeDestinationCounter}" class="route-destination-input" placeholder="Enter a destination" value="${escapeHtml(value)}">
+                    <div class="route-autocomplete">
+                        <input type="text" id="route-destination-${routeDestinationCounter}" class="route-destination-input route-autocomplete-input" placeholder="Enter a destination" value="${escapeHtml(value)}" autocomplete="off">
+                        <div class="route-autocomplete-panel" hidden></div>
+                    </div>
                 </div>
                 <div class="route-stop-actions">
                     <button class="button" type="button" data-action="up">Up</button>
@@ -899,6 +961,8 @@ try {
                     <button class="button danger" type="button" data-action="remove">Remove</button>
                 </div>
             `;
+
+            attachRouteAutocomplete(row.querySelector('.route-destination-input'));
 
             row.querySelector('[data-action="up"]').addEventListener('click', () => moveRouteDestination(row, -1));
             row.querySelector('[data-action="down"]').addEventListener('click', () => moveRouteDestination(row, 1));
@@ -967,6 +1031,126 @@ try {
             return Array.from(routeDestinationList.querySelectorAll('.route-destination-input'))
                 .map((input) => input.value.trim())
                 .filter((value) => value !== '');
+        }
+
+        const routeAutocompleteState = new WeakMap();
+
+        function routeAutocompletePanel(input) {
+            const host = input.closest('.route-autocomplete');
+            return host ? host.querySelector('.route-autocomplete-panel') : null;
+        }
+
+        function clearRouteAutocomplete(input) {
+            const panel = routeAutocompletePanel(input);
+            if (!panel) {
+                return;
+            }
+
+            panel.innerHTML = '';
+            panel.hidden = true;
+        }
+
+        function renderRouteAutocompleteOptions(input, results) {
+            const panel = routeAutocompletePanel(input);
+            if (!panel) {
+                return;
+            }
+
+            if (!Array.isArray(results) || results.length === 0) {
+                panel.innerHTML = '<div class="route-autocomplete-empty">No matches found.</div>';
+                panel.hidden = false;
+                return;
+            }
+
+            panel.innerHTML = results.map((result) => `
+                <button type="button" class="route-autocomplete-option" data-route-match="${escapeHtml(JSON.stringify(result))}">
+                    <strong>${escapeHtml(result.display_name || '')}</strong>
+                    <span>${escapeHtml([result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match')}</span>
+                </button>
+            `).join('');
+
+            panel.querySelectorAll('[data-route-match]').forEach((button) => {
+                button.addEventListener('pointerdown', (event) => {
+                    event.preventDefault();
+                    const payload = JSON.parse(button.getAttribute('data-route-match') || '{}');
+                    input.value = payload.display_name || input.value;
+                    clearRouteAutocomplete(input);
+                });
+            });
+
+            panel.hidden = false;
+        }
+
+        function attachRouteAutocomplete(input) {
+            if (!input || input.dataset.routeAutocompleteAttached === '1') {
+                return;
+            }
+
+            input.dataset.routeAutocompleteAttached = '1';
+            routeAutocompleteState.set(input, {
+                sequence: 0,
+                timer: null,
+            });
+
+            input.addEventListener('input', () => {
+                const state = routeAutocompleteState.get(input);
+                if (!state) {
+                    return;
+                }
+
+                if (state.timer) {
+                    window.clearTimeout(state.timer);
+                }
+
+                const query = input.value.trim();
+                if (query.length < 3) {
+                    clearRouteAutocomplete(input);
+                    return;
+                }
+
+                state.sequence += 1;
+                const currentSequence = state.sequence;
+                state.timer = window.setTimeout(async () => {
+                    const panel = routeAutocompletePanel(input);
+                    if (!panel) {
+                        return;
+                    }
+
+                    panel.innerHTML = '<div class="route-autocomplete-loading">Searching...</div>';
+                    panel.hidden = false;
+
+                    try {
+                        const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=5`);
+                        if (state.sequence !== currentSequence || input.value.trim() !== query) {
+                            return;
+                        }
+
+                        const results = Array.isArray(payload.results) ? payload.results : [];
+                        if (results.length === 1) {
+                            input.value = results[0].display_name || query;
+                            clearRouteAutocomplete(input);
+                            return;
+                        }
+
+                        renderRouteAutocompleteOptions(input, results);
+                    } catch (error) {
+                        if (state.sequence === currentSequence) {
+                            panel.innerHTML = `<div class="route-autocomplete-empty">${escapeHtml(error.message)}</div>`;
+                            panel.hidden = false;
+                        }
+                    }
+                }, 250);
+            });
+
+            input.addEventListener('focus', () => {
+                if (input.value.trim().length >= 3) {
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            });
+
+            input.addEventListener('blur', () => {
+                window.setTimeout(() => clearRouteAutocomplete(input), 150);
+            });
         }
 
         function setExclusiveRouteSwitch(changedInput) {
@@ -1624,6 +1808,7 @@ try {
         fuelState.addEventListener('change', handleFuelFilterChange);
         fuelType.addEventListener('change', loadFuelDashboard);
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
+        attachRouteAutocomplete(routeOrigin);
         resetRoutePlanner();
         loadFuelDashboard();
     </script>
