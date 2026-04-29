@@ -233,9 +233,10 @@ OSRM uses the same Australia PBF and stores generated files in `var/docker/osrm-
 
 Custom OSRM profile template:
 
-- `config/osrm/car.profile.template.lua` is a tracked scaffold for a custom OSRM Lua profile.
+- `config/osrm/fuelmiser.car.profile.template.lua` is a tracked scaffold for a custom OSRM Lua profile.
 - Copy or adapt it to the file you mount as `/opt/car.lua` for `osrm-extract`.
 - Fill in the `EDIT ME` sections with your access, speed, and penalty rules before rebuilding OSRM data.
+- The template includes short, long, and hybrid tuning blocks, but the exact 30 km switch still has to be selected outside OSRM because profiles are fixed at extraction time.
 
 Build OSRM data:
 
