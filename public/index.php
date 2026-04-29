@@ -551,6 +551,65 @@ try {
             font-size: 12px;
         }
 
+        .route-map {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            display: block;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background:
+                radial-gradient(circle at center, rgba(15, 118, 110, 0.02), rgba(15, 118, 110, 0.00)),
+                #fff;
+        }
+
+        .route-map-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .route-map-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .route-map-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .route-map-line {
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .route-breakdown-row td {
+            vertical-align: top;
+        }
+
+        .route-breakdown-step {
+            display: block;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .route-breakdown-subtext {
+            display: block;
+            color: var(--muted);
+            margin-top: 3px;
+            font-size: 11px;
+        }
+
+        .route-breakdown-stop {
+            color: #7c2d12;
+        }
+
         .route-table {
             width: 100%;
             border-collapse: collapse;
@@ -801,8 +860,9 @@ try {
                     </section>
 
                     <section class="surface-block">
-                        <h2>Resolved Stops</h2>
-                        <div id="route-resolved"></div>
+                        <h2>Route Map</h2>
+                        <div id="route-map"></div>
+                        <div class="route-map-legend" id="route-map-legend"></div>
                     </section>
 
                     <section class="surface-block">
@@ -863,7 +923,8 @@ try {
         const routeReset = document.getElementById('route-reset');
         const routeStatus = document.getElementById('route-status');
         const routeSummary = document.getElementById('route-summary');
-        const routeResolved = document.getElementById('route-resolved');
+        const routeMap = document.getElementById('route-map');
+        const routeMapLegend = document.getElementById('route-map-legend');
         const routeLegs = document.getElementById('route-legs');
         let selectedContainerId = null;
         let selectedContainerRestartable = false;
@@ -1157,17 +1218,403 @@ try {
             return routeReturnReverses.checked ? 'reverses' : 'direct';
         }
 
+        function routeFuelDefaultFillValue() {
+            const value = Number(routeFuelFill.value || 0);
+            return Number.isFinite(value) ? value : 0;
+        }
+
+        function routeFuelDefaultEconomyValue() {
+            const value = Number(routeFuelEconomy.value || 0);
+            return Number.isFinite(value) ? value : 0;
+        }
+
+        function routeFuelQueryLabel() {
+            return routeFuelQuery();
+        }
+
         function renderRouteEmpty(message) {
             return `<div class="route-empty">${escapeHtml(message)}</div>`;
         }
 
-        function renderRouteSummary(summary) {
+        function routeFuelQuery() {
+            const option = fuelType.options[fuelType.selectedIndex];
+            const label = option ? option.textContent.trim() : '';
+            if (label !== '' && label !== 'All Fuels') {
+                return label;
+            }
+            return 'Diesel';
+        }
+
+        function routeFuelPriceText(priceCents) {
+            const cents = Number(priceCents || 0);
+            return `$${(cents / 100).toFixed(2)}`;
+        }
+
+        function haversineKm(left, right) {
+            const toRad = Math.PI / 180;
+            const lat1 = Number(left.lat) * toRad;
+            const lon1 = Number(left.lon) * toRad;
+            const lat2 = Number(right.lat) * toRad;
+            const lon2 = Number(right.lon) * toRad;
+            const dLat = lat2 - lat1;
+            const dLon = lon2 - lon1;
+            const a = Math.sin(dLat / 2) ** 2
+                + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+            return 6371 * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        }
+
+        function routePoint(lon, lat, progressKm = 0) {
+            return {
+                lon: Number(lon),
+                lat: Number(lat),
+                progressKm: Number(progressKm),
+            };
+        }
+
+        function buildRouteProgress(points) {
+            const progress = [];
+            let total = 0;
+            points.forEach((point, index) => {
+                if (index > 0) {
+                    total += haversineKm(points[index - 1], point);
+                }
+                progress.push({
+                    lon: point[0],
+                    lat: point[1],
+                    progressKm: total,
+                });
+            });
+            return progress;
+        }
+
+        function sampleRoutePoints(points, limit = 7) {
+            if (!Array.isArray(points) || points.length === 0) {
+                return [];
+            }
+            if (points.length <= limit) {
+                return points;
+            }
+
+            const result = [];
+            const step = (points.length - 1) / Math.max(limit - 1, 1);
+            for (let index = 0; index < limit; index += 1) {
+                result.push(points[Math.round(index * step)]);
+            }
+            return result;
+        }
+
+        async function fetchRouteDetails(from, to, steps = true) {
+            const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`;
+            const payload = await apiRequest(`/api/route?coordinates=${encodeURIComponent(coordinates)}&steps=${steps ? '1' : '0'}`);
+            const route = Array.isArray(payload.routes) ? payload.routes[0] : null;
+            if (!route || !route.geometry || !Array.isArray(route.geometry.coordinates)) {
+                throw new Error('Route service returned no geometry.');
+            }
+
+            return {
+                from,
+                to,
+                distanceM: Number(route.distance || 0),
+                durationS: Number(route.duration || 0),
+                geometry: route.geometry.coordinates.map((coord) => routePoint(coord[0], coord[1])),
+                steps: Array.isArray(route.legs)
+                    ? route.legs.flatMap((leg) => Array.isArray(leg.steps) ? leg.steps : [])
+                    : [],
+            };
+        }
+
+        function routeStepInstruction(step) {
+            const maneuver = step.maneuver || {};
+            const type = String(maneuver.type || 'continue');
+            const modifier = String(maneuver.modifier || '').replace(/_/g, ' ');
+            const name = String(step.name || '').trim();
+
+            if (type === 'depart') {
+                return name !== '' ? `Depart onto ${name}` : 'Depart';
+            }
+            if (type === 'arrive') {
+                return name !== '' ? `Arrive at ${name}` : 'Arrive';
+            }
+            if (type === 'roundabout' || type === 'rotary') {
+                const exit = maneuver.exit ? `exit ${maneuver.exit}` : 'the roundabout';
+                return `Take ${exit}${name !== '' ? ` onto ${name}` : ''}`;
+            }
+            if (modifier !== '' && name !== '') {
+                return `Turn ${modifier} onto ${name}`;
+            }
+            if (modifier !== '') {
+                return `Turn ${modifier}`;
+            }
+            if (name !== '') {
+                return `Continue on ${name}`;
+            }
+            return type.replace(/_/g, ' ');
+        }
+
+        async function fetchRouteStations(point, fuelQuery) {
+            const payload = await apiRequest(`/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=8&limit=8`);
+            const rows = Array.isArray(payload.rows) ? payload.rows : [];
+            return rows.map((row) => ({
+                source: row.source,
+                state: row.state,
+                station_id: row.station_id,
+                station_name: row.station_name,
+                address: row.address,
+                brand_name: row.brand_name,
+                latitude: Number(row.latitude),
+                longitude: Number(row.longitude),
+                fuel_name: row.fuel_name,
+                price: Number(row.price),
+                updated_at: row.updated_at,
+                distance_km: Number(row.distance_km || 0),
+            }));
+        }
+
+        function dedupeRouteStations(rows) {
+            const unique = new Map();
+            rows.forEach((row) => {
+                const key = `${row.source}:${row.state}:${row.station_id}:${row.fuel_name}:${row.price}`;
+                if (!unique.has(key)) {
+                    unique.set(key, row);
+                }
+            });
+            return Array.from(unique.values());
+        }
+
+        function selectStationCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, requiredOnly = false) {
+            const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
+            const reachable = candidates
+                .filter((candidate) => candidate.progressKm > cursor.progressKm)
+                .filter((candidate) => (candidate.progressKm - cursor.progressKm) <= reachableRangeKm)
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= reachableRangeKm);
+
+            if (reachable.length === 0) {
+                return null;
+            }
+
+            const scored = reachable.map((candidate) => {
+                const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
+                const effectiveFuel = Math.max(0, tankCapacityL - Math.max(0, currentFuelL - detourFuel));
+                const effectiveCost = effectiveFuel * candidate.price + detourFuel * candidate.price * 0.25;
+                return {
+                    ...candidate,
+                    effectiveCost,
+                };
+            });
+
+            scored.sort((left, right) => {
+                if (left.effectiveCost !== right.effectiveCost) {
+                    return left.effectiveCost - right.effectiveCost;
+                }
+                if (left.price !== right.price) {
+                    return left.price - right.price;
+                }
+                if (left.progressKm !== right.progressKm) {
+                    return left.progressKm - right.progressKm;
+                }
+                return left.routeDistanceFromCursorKm - right.routeDistanceFromCursorKm;
+            });
+
+            if (requiredOnly) {
+                return scored[0].price === 0 ? null : scored[0];
+            }
+
+            return scored[0];
+        }
+
+        async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery, forceInitialStop = false) {
+            const chosenStops = [];
+            const routePieces = [];
+            let currentPoint = cursor;
+            let fuelInTank = currentFuelL;
+            let firstPass = true;
+
+            while (true) {
+                const route = await fetchRouteDetails(currentPoint, destination, true);
+                const routeKm = route.distanceM / 1000;
+                const fuelNeeded = routeKm * (economyLPer100km / 100);
+                const progress = buildRouteProgress(route.geometry);
+                const samplePoints = sampleRoutePoints(progress, 7);
+                const candidateBatches = await Promise.all(samplePoints.map((point) => fetchRouteStations(point, fuelQuery)));
+                const candidates = dedupeRouteStations(candidateBatches.flat()).map((candidate) => {
+                    let nearestProgress = progress[0] || routePoint(currentPoint.lon, currentPoint.lat, 0);
+                    let bestDistance = Number.POSITIVE_INFINITY;
+                    progress.forEach((point) => {
+                        const distance = haversineKm(point, candidate);
+                        if (distance < bestDistance) {
+                            bestDistance = distance;
+                            nearestProgress = point;
+                        }
+                    });
+
+                    return {
+                        ...candidate,
+                        routeDistanceFromCursorKm: bestDistance * 1.15,
+                        progressKm: nearestProgress.progressKm,
+                    };
+                }).filter((candidate) => candidate.routeDistanceFromCursorKm <= 8);
+
+                const destinationNode = {
+                    progressKm: routeKm,
+                    routeDistanceFromCursorKm: 0,
+                    price: 0,
+                    station_name: destination.display_name || destination.query,
+                    state: destination.state || '',
+                };
+                if (!forceInitialStop) {
+                    candidates.push(destinationNode);
+                }
+
+                if (!forceInitialStop && fuelInTank >= fuelNeeded) {
+                    routePieces.push({
+                        type: 'route',
+                        route,
+                    });
+                    fuelInTank -= fuelNeeded;
+                    break;
+                }
+
+                const chosen = selectStationCandidate(candidates, routePoint(currentPoint.lon, currentPoint.lat, 0), fuelInTank, tankCapacityL, economyLPer100km, forceInitialStop && firstPass);
+                if (!chosen) {
+                    if (fuelInTank < fuelNeeded) {
+                        throw new Error(`No fuel stop is reachable before running out of fuel on the way to ${destination.display_name || destination.query}.`);
+                    }
+                    routePieces.push({
+                        type: 'route',
+                        route,
+                    });
+                    fuelInTank -= fuelNeeded;
+                    break;
+                }
+
+                if (chosen.progressKm >= routeKm && chosen.price === 0) {
+                    routePieces.push({
+                        type: 'route',
+                        route,
+                    });
+                    fuelInTank -= fuelNeeded;
+                    break;
+                }
+
+                const stopPoint = { lon: chosen.longitude, lat: chosen.latitude };
+                const approach = await fetchRouteDetails(currentPoint, stopPoint, true);
+                const approachFuel = (approach.distanceM / 1000) * (economyLPer100km / 100);
+                if (fuelInTank < approachFuel) {
+                    throw new Error(`Fuel range is insufficient to reach ${chosen.station_name}.`);
+                }
+
+                routePieces.push({
+                    type: 'route',
+                    route: approach,
+                });
+
+                const fuelAfterArrival = Math.max(0, fuelInTank - approachFuel);
+                const litresToBuy = Math.max(0, tankCapacityL - fuelAfterArrival);
+                const purchaseCents = litresToBuy * chosen.price;
+                chosenStops.push({
+                    ...chosen,
+                    litresPurchased: litresToBuy,
+                    purchaseCents,
+                    fuelAfterArrival,
+                });
+
+                routePieces.push({
+                    type: 'fuel-stop',
+                    station: chosen,
+                    litresPurchased: litresToBuy,
+                    purchaseCents,
+                });
+
+                fuelInTank = tankCapacityL;
+                currentPoint = stopPoint;
+                firstPass = false;
+
+                if (chosen.progressKm >= routeKm - 0.01) {
+                    break;
+                }
+            }
+
+            return {
+                cursor,
+                destination,
+                routePieces,
+                stops: chosenStops,
+                remainingFuelL: fuelInTank,
+            };
+        }
+
+        async function buildRoutePlan(resolveStops, fuelQuery, tankCapacityL, economyLPer100km) {
+            const segments = [];
+            let currentFuel = tankCapacityL * 0.2;
+            let currentPoint = resolveStops[0];
+            let totalDistanceM = 0;
+            let totalDurationS = 0;
+            let totalFillCostCents = 0;
+            let totalFuelUsedL = 0;
+
+            for (let index = 1; index < resolveStops.length; index += 1) {
+                const destination = resolveStops[index];
+                const segment = await buildRouteFuelPlanSegment(
+                    currentPoint,
+                    destination,
+                    currentFuel,
+                    tankCapacityL,
+                    economyLPer100km,
+                    fuelQuery,
+                    index === 1
+                );
+
+                const routeItems = segment.routePieces.filter((item) => item.type === 'route');
+                routeItems.forEach((item) => {
+                    totalDistanceM += item.route.distanceM;
+                    totalDurationS += item.route.durationS;
+                    totalFuelUsedL += (item.route.distanceM / 1000) * (economyLPer100km / 100);
+                });
+
+                segment.stops.forEach((stop) => {
+                    totalFillCostCents += stop.purchaseCents;
+                });
+
+                segments.push(segment);
+                currentPoint = destination;
+                currentFuel = segment.remainingFuelL;
+            }
+
+            return {
+                fuelQuery,
+                tankCapacityL,
+                economyLPer100km,
+                segments,
+                totalDistanceM,
+                totalDurationS,
+                totalFuelUsedL,
+                totalFillCostCents,
+                fuelRemainingL: currentFuel,
+            };
+        }
+
+        function buildRouteSequence(origin, destinations) {
+            const nodes = [origin, ...destinations];
+            if (routeReturnMode() === 'reverses') {
+                if (destinations.length > 0) {
+                    nodes.push(...destinations.slice(0, -1).reverse());
+                }
+                nodes.push(origin);
+                return nodes;
+            }
+
+            nodes.push(origin);
+            return nodes;
+        }
+
+        function renderRouteSummary(plan) {
             const cards = [
-                ['Distance', formatRouteDistance(summary.distance_m || 0)],
-                ['Drive Time', formatRouteDuration(summary.duration_s || 0)],
-                ['Fuel Used', `${Number(summary.fuel_used_l || 0).toFixed(1)} L`],
-                ['Fuel Fill', `${Number(summary.fuel_fill_l || 0).toFixed(1)} L`],
-                ['Fuel Balance', `${Number(summary.fuel_balance_l || 0).toFixed(1)} L`],
+                ['Distance', formatRouteDistance(plan.totalDistanceM || 0)],
+                ['Drive Time', formatRouteDuration(plan.totalDurationS || 0)],
+                ['Fuel Used', `${Number(plan.totalFuelUsedL || 0).toFixed(1)} L`],
+                ['Fuel Fill', `${Number(plan.tankCapacityL || 0).toFixed(1)} L`],
+                ['Fuel Stops', String(plan.segments.reduce((count, segment) => count + segment.stops.length, 0))],
+                ['Total Fill Price', `$${(Number(plan.totalFillCostCents || 0) / 100).toFixed(2)}`],
             ];
             routeSummary.innerHTML = cards.map(([label, value]) => `
                 <article class="route-summary-card">
@@ -1177,36 +1624,166 @@ try {
             `).join('');
         }
 
-        function renderRouteResolved(stops) {
-            if (!Array.isArray(stops) || stops.length === 0) {
-                routeResolved.innerHTML = renderRouteEmpty('No resolved locations yet.');
+        function renderRouteMap(plan) {
+            const segments = Array.isArray(plan.segments) ? plan.segments : [];
+            const points = [];
+            const markers = [];
+            const palette = ['#0f766e', '#2563eb', '#7c3aed', '#b45309', '#c2410c'];
+
+            segments.forEach((segment, segmentIndex) => {
+                const routePieces = segment.routePieces.filter((item) => item.type === 'route');
+                routePieces.forEach((piece, pieceIndex) => {
+                    piece.route.geometry.forEach((point) => points.push(point));
+                    if (pieceIndex === 0) {
+                        markers.push({
+                            type: 'origin',
+                            ...piece.route.from,
+                            label: `Leg ${segmentIndex + 1} start`,
+                        });
+                    }
+                    markers.push({
+                        type: 'destination',
+                        ...piece.route.to,
+                        label: pieceIndex === routePieces.length - 1
+                            ? `Leg ${segmentIndex + 1} end`
+                            : `Fuel stop approach`,
+                    });
+                });
+                segment.stops.forEach((stop, stopIndex) => {
+                    markers.push({
+                        type: 'fuel-stop',
+                        lon: stop.longitude,
+                        lat: stop.latitude,
+                        label: `${stop.station_name} ${routeFuelPriceText(stop.price)}`,
+                        sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L`,
+                        segmentIndex,
+                        stopIndex,
+                        price: stop.price,
+                    });
+                });
+            });
+
+            if (points.length === 0) {
+                routeMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
+                routeMapLegend.innerHTML = '';
                 return;
             }
 
-            routeResolved.innerHTML = `
-                <table class="route-table">
-                    <thead>
-                        <tr>
-                            <th>Stop</th>
-                            <th>Query</th>
-                            <th>Resolved</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${stops.map((stop, index) => `
-                            <tr>
-                                <td>${escapeHtml(index === 0 ? 'Origin' : `Destination ${index}`)}</td>
-                                <td>${escapeHtml(stop.query || '')}</td>
-                                <td>${escapeHtml(stop.display_name || 'No match')}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+            const allLon = points.map((point) => Number(point.lon));
+            const allLat = points.map((point) => Number(point.lat));
+            const minLon = Math.min(...allLon);
+            const maxLon = Math.max(...allLon);
+            const minLat = Math.min(...allLat);
+            const maxLat = Math.max(...allLat);
+            const lonSpan = Math.max(maxLon - minLon, 0.01);
+            const latSpan = Math.max(maxLat - minLat, 0.01);
+            const padding = 0.08;
+            const width = 1000;
+            const height = 1000;
+
+            const project = (point) => ({
+                x: ((Number(point.lon) - minLon) / lonSpan) * (width * (1 - padding * 2)) + width * padding,
+                y: height - (((Number(point.lat) - minLat) / latSpan) * (height * (1 - padding * 2)) + height * padding),
+            });
+
+            const routePaths = segments.map((segment, segmentIndex) => {
+                const routePieces = segment.routePieces.filter((item) => item.type === 'route');
+                if (routePieces.length === 0) {
+                    return '';
+                }
+                const color = palette[segmentIndex % palette.length];
+                return routePieces.map((piece) => {
+                    const path = piece.route.geometry.map((point, index) => {
+                        const projected = project(point);
+                        return `${index === 0 ? 'M' : 'L'} ${projected.x.toFixed(2)} ${projected.y.toFixed(2)}`;
+                    }).join(' ');
+                    return `<path d="${path}" fill="none" stroke="${color}" stroke-width="6" class="route-map-line"></path>`;
+                }).join('');
+            }).join('');
+
+            const markerSvg = markers.map((marker) => {
+                const projected = project(marker);
+                if (marker.type === 'fuel-stop') {
+                    return `
+                        <g>
+                            <circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="11" fill="#b45309" stroke="#fff" stroke-width="4"></circle>
+                            <circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="4" fill="#fff"></circle>
+                        </g>
+                    `;
+                }
+                if (marker.type === 'origin') {
+                    return `<circle cx="${projected.x.toFixed(2)}" cy="${projected.y.toFixed(2)}" r="12" fill="#166534" stroke="#fff" stroke-width="4"></circle>`;
+                }
+                return `<rect x="${(projected.x - 10).toFixed(2)}" y="${(projected.y - 10).toFixed(2)}" width="20" height="20" rx="5" fill="#0f766e" stroke="#fff" stroke-width="4"></rect>`;
+            }).join('');
+
+            const labels = markers.map((marker) => {
+                const projected = project(marker);
+                const textY = marker.type === 'origin' ? projected.y - 18 : projected.y + 26;
+                return `
+                    <g>
+                        <text x="${projected.x.toFixed(2)}" y="${textY.toFixed(2)}" text-anchor="middle" fill="#16212d" font-size="18" font-weight="700">${escapeHtml(marker.label || '')}</text>
+                        ${marker.sublabel ? `<text x="${projected.x.toFixed(2)}" y="${(textY + 18).toFixed(2)}" text-anchor="middle" fill="#5b6775" font-size="14">${escapeHtml(marker.sublabel)}</text>` : ''}
+                    </g>
+                `;
+            }).join('');
+
+            routeMap.innerHTML = `
+                <svg class="route-map" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Planned route map">
+                    <rect x="0" y="0" width="${width}" height="${height}" fill="#f8fbfb"></rect>
+                    ${Array.from({ length: 10 }, (_, index) => {
+                        const x = (width / 10) * index;
+                        const y = (height / 10) * index;
+                        return `
+                            <g opacity="0.45">
+                                <line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#dde7eb" stroke-width="1"></line>
+                                <line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#dde7eb" stroke-width="1"></line>
+                            </g>
+                        `;
+                    }).join('')}
+                    ${routePaths}
+                    ${markerSvg}
+                    ${labels}
+                </svg>
             `;
+
+            const summary = [
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
+            ];
+            routeMapLegend.innerHTML = summary.join('');
         }
 
-        function renderRouteLegs(legs) {
-            if (!Array.isArray(legs) || legs.length === 0) {
+        function renderRouteBreakdown(plan) {
+            const rows = [];
+            plan.segments.forEach((segment, segmentIndex) => {
+                segment.routePieces.forEach((piece) => {
+                    if (piece.type === 'route') {
+                        (piece.route.steps || []).forEach((step, stepIndex) => {
+                            rows.push({
+                                leg: segmentIndex + 1,
+                                type: 'Turn',
+                                instruction: routeStepInstruction(step),
+                                distance: formatRouteDistance(step.distance || 0),
+                                duration: formatRouteDuration(step.duration || 0),
+                                details: `${stepIndex + 1} / ${piece.route.steps.length}`,
+                            });
+                        });
+                    } else if (piece.type === 'fuel-stop') {
+                        rows.push({
+                            leg: segmentIndex + 1,
+                            type: 'Fuel stop',
+                            instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
+                            distance: '-',
+                            duration: '-',
+                            details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}`,
+                        });
+                    }
+                });
+            });
+
+            if (rows.length === 0) {
                 routeLegs.innerHTML = renderRouteEmpty('Plan a route to see leg breakdowns.');
                 return;
             }
@@ -1216,20 +1793,26 @@ try {
                     <thead>
                         <tr>
                             <th>Leg</th>
-                            <th>From</th>
-                            <th>To</th>
+                            <th>Type</th>
+                            <th>Instruction</th>
                             <th>Distance</th>
                             <th>Duration</th>
+                            <th>Details</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${legs.map((leg, index) => `
-                            <tr>
-                                <td>${escapeHtml(String(index + 1))}</td>
-                                <td>${escapeHtml(leg.from?.display_name || leg.from?.query || '')}</td>
-                                <td>${escapeHtml(leg.to?.display_name || leg.to?.query || '')}</td>
-                                <td>${escapeHtml(formatRouteDistance(leg.distance_m || 0))}</td>
-                                <td>${escapeHtml(formatRouteDuration(leg.duration_s || 0))}</td>
+                        ${rows.map((row) => `
+                            <tr class="${row.type === 'Fuel stop' ? 'route-breakdown-row route-breakdown-stop' : 'route-breakdown-row'}">
+                                <td>${escapeHtml(String(row.leg))}</td>
+                                <td>${escapeHtml(row.type)}</td>
+                                <td>
+                                    <span class="route-breakdown-step">${escapeHtml(row.instruction)}</span>
+                                </td>
+                                <td>${escapeHtml(row.distance)}</td>
+                                <td>${escapeHtml(row.duration)}</td>
+                                <td>
+                                    <span class="route-breakdown-subtext">${escapeHtml(row.details)}</span>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1251,26 +1834,11 @@ try {
             };
         }
 
-        async function requestRouteLeg(from, to) {
-            const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`;
-            const payload = await apiRequest(`/api/route?coordinates=${encodeURIComponent(coordinates)}&steps=0`);
-            const route = Array.isArray(payload.routes) ? payload.routes[0] : null;
-            if (!route) {
-                throw new Error('Route service returned no route.');
-            }
-            return {
-                from,
-                to,
-                distance_m: Number(route.distance || 0),
-                duration_s: Number(route.duration || 0),
-            };
-        }
-
         async function planRoute() {
             const originValue = routeOrigin.value.trim();
             const destinationValues = routeDestinationValues();
-            const fuelFill = Number(routeFuelFill.value || 0);
-            const fuelEconomy = Number(routeFuelEconomy.value || 0);
+            const fuelFill = routeFuelDefaultFillValue();
+            const fuelEconomy = routeFuelDefaultEconomyValue();
 
             if (originValue === '') {
                 routeStatus.textContent = 'Origin is required.';
@@ -1280,54 +1848,36 @@ try {
                 routeStatus.textContent = 'At least one destination is required.';
                 return;
             }
+            if (fuelFill <= 0 || fuelEconomy <= 0) {
+                routeStatus.textContent = 'Fuel fill and fuel economy must be greater than zero.';
+                return;
+            }
 
             routePlan.disabled = true;
             routeStatus.textContent = 'Resolving locations and building route legs...';
             routeSummary.innerHTML = renderRouteEmpty('Planning route...');
-            routeResolved.innerHTML = renderRouteEmpty('Resolving locations...');
+            routeMap.innerHTML = renderRouteEmpty('Resolving locations...');
+            routeMapLegend.innerHTML = '';
             routeLegs.innerHTML = renderRouteEmpty('Building legs...');
 
             try {
                 const origin = await resolveRouteLocation(originValue);
                 const destinations = await Promise.all(destinationValues.map((value) => resolveRouteLocation(value)));
-                const forwardStops = [origin, ...destinations];
-                const legs = [];
-
-                for (let index = 0; index < forwardStops.length - 1; index += 1) {
-                    legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index + 1]));
-                }
-
-                if (routeReturnMode() === 'reverses') {
-                    for (let index = forwardStops.length - 1; index > 0; index -= 1) {
-                        legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index - 1]));
-                    }
-                } else {
-                    legs.push(await requestRouteLeg(forwardStops[forwardStops.length - 1], origin));
-                }
-
-                const totalDistance = legs.reduce((sum, leg) => sum + leg.distance_m, 0);
-                const totalDuration = legs.reduce((sum, leg) => sum + leg.duration_s, 0);
-                const fuelUsed = fuelEconomy > 0 ? (totalDistance / 1000) * (fuelEconomy / 100) : 0;
-                const fuelBalance = fuelFill > 0 ? fuelFill - fuelUsed : 0;
-
-                renderRouteSummary({
-                    distance_m: totalDistance,
-                    duration_s: totalDuration,
-                    fuel_used_l: fuelUsed,
-                    fuel_fill_l: fuelFill,
-                    fuel_balance_l: fuelFill > 0 ? fuelBalance : 0,
-                });
-                renderRouteResolved([origin, ...destinations]);
-                renderRouteLegs(legs);
+                const tripSequence = buildRouteSequence(origin, destinations);
+                const plan = await buildRoutePlan(tripSequence, routeFuelQueryLabel(), fuelFill, fuelEconomy);
+                renderRouteSummary(plan);
+                renderRouteMap(plan);
+                renderRouteBreakdown(plan);
 
                 const returnMode = routeReturnMode() === 'reverses'
                     ? 'Return reverses path'
                     : 'Return direct to origin';
-                routeStatus.textContent = `Planned ${legs.length} legs using ${returnMode}.`;
+                routeStatus.textContent = `Planned ${plan.segments.length} legs using ${returnMode}.`;
             } catch (error) {
                 routeStatus.textContent = error.message;
                 routeSummary.innerHTML = renderRouteEmpty(error.message);
-                routeResolved.innerHTML = renderRouteEmpty(error.message);
+                routeMap.innerHTML = renderRouteEmpty(error.message);
+                routeMapLegend.innerHTML = '';
                 routeLegs.innerHTML = renderRouteEmpty(error.message);
             } finally {
                 routePlan.disabled = false;
@@ -1345,7 +1895,8 @@ try {
             addRouteDestination('');
             routeStatus.textContent = 'Enter a trip to build a route.';
             routeSummary.innerHTML = renderRouteEmpty('No route planned yet.');
-            routeResolved.innerHTML = renderRouteEmpty('No route planned yet.');
+            routeMap.innerHTML = renderRouteEmpty('No route planned yet.');
+            routeMapLegend.innerHTML = '';
             routeLegs.innerHTML = renderRouteEmpty('No route planned yet.');
         }
 
