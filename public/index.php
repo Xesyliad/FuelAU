@@ -898,6 +898,10 @@ try {
                             <select id="fuel-state"></select>
                         </div>
                         <div class="field">
+                            <label for="fuel-region">Region</label>
+                            <select id="fuel-region"></select>
+                        </div>
+                        <div class="field">
                             <label for="fuel-type">Fuel</label>
                             <select id="fuel-type"></select>
                         </div>
@@ -1053,6 +1057,7 @@ try {
         const pruneStopped = document.getElementById('prune-stopped');
         const pruneImages = document.getElementById('prune-images');
         const fuelState = document.getElementById('fuel-state');
+        const fuelRegion = document.getElementById('fuel-region');
         const fuelType = document.getElementById('fuel-type');
         const fuelStatus = document.getElementById('fuel-status');
         const fuelSummary = document.getElementById('fuel-summary');
@@ -1092,8 +1097,61 @@ try {
         let routeMapInstance = null;
         let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
+        const fuelRegionCookieName = 'fuelau_selected_region';
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const activeTabKey = 'fuelau_active_tab_v1';
+
+        const fuelRegionCatalog = {
+            QLD: [
+                { key: 'brisbane', label: 'Brisbane', lat: -27.4698, lon: 153.0251, radius_km: 80 },
+                { key: 'gold-coast', label: 'Gold Coast', lat: -28.0167, lon: 153.4000, radius_km: 45 },
+                { key: 'sunshine-coast', label: 'Sunshine Coast', lat: -26.6500, lon: 153.0667, radius_km: 45 },
+                { key: 'ipswich', label: 'Ipswich', lat: -27.6170, lon: 152.7600, radius_km: 35 },
+                { key: 'toowoomba', label: 'Toowoomba', lat: -27.5606, lon: 151.9539, radius_km: 40 },
+                { key: 'cairns', label: 'Cairns', lat: -16.9186, lon: 145.7781, radius_km: 35 },
+                { key: 'townsville', label: 'Townsville', lat: -19.2589, lon: 146.8169, radius_km: 45 },
+                { key: 'mackay', label: 'Mackay', lat: -21.1411, lon: 149.1860, radius_km: 35 },
+                { key: 'rockhampton', label: 'Rockhampton', lat: -23.3781, lon: 150.5130, radius_km: 35 },
+                { key: 'bundaberg', label: 'Bundaberg', lat: -24.8662, lon: 152.3519, radius_km: 30 },
+                { key: 'hervey-bay', label: 'Hervey Bay', lat: -25.2875, lon: 152.8400, radius_km: 30 },
+                { key: 'gladstone', label: 'Gladstone', lat: -23.8489, lon: 151.2640, radius_km: 30 },
+            ],
+            NSW: [
+                { key: 'sydney', label: 'Sydney', lat: -33.8688, lon: 151.2093, radius_km: 80 },
+                { key: 'newcastle', label: 'Newcastle', lat: -32.9283, lon: 151.7817, radius_km: 45 },
+                { key: 'wollongong', label: 'Wollongong', lat: -34.4278, lon: 150.8931, radius_km: 45 },
+                { key: 'central-coast', label: 'Central Coast', lat: -33.4250, lon: 151.3430, radius_km: 50 },
+                { key: 'maitland', label: 'Maitland', lat: -32.7330, lon: 151.5560, radius_km: 35 },
+                { key: 'albury', label: 'Albury', lat: -36.0737, lon: 146.9135, radius_km: 30 },
+                { key: 'wagga-wagga', label: 'Wagga Wagga', lat: -35.1150, lon: 147.3670, radius_km: 35 },
+                { key: 'tamworth', label: 'Tamworth', lat: -31.0922, lon: 150.9291, radius_km: 35 },
+                { key: 'dubbo', label: 'Dubbo', lat: -32.2569, lon: 148.6011, radius_km: 35 },
+                { key: 'port-macquarie', label: 'Port Macquarie', lat: -31.4300, lon: 152.9080, radius_km: 35 },
+                { key: 'coffs-harbour', label: 'Coffs Harbour', lat: -30.2963, lon: 153.1140, radius_km: 35 },
+                { key: 'queanbeyan', label: 'Queanbeyan', lat: -35.3540, lon: 149.2320, radius_km: 25 },
+            ],
+            VIC: [
+                { key: 'melbourne', label: 'Melbourne', lat: -37.8136, lon: 144.9631, radius_km: 80 },
+                { key: 'geelong', label: 'Geelong', lat: -38.1499, lon: 144.3617, radius_km: 35 },
+                { key: 'ballarat', label: 'Ballarat', lat: -37.5622, lon: 143.8503, radius_km: 35 },
+                { key: 'bendigo', label: 'Bendigo', lat: -36.7570, lon: 144.2794, radius_km: 35 },
+                { key: 'shepparton', label: 'Shepparton', lat: -36.3805, lon: 145.3995, radius_km: 30 },
+                { key: 'mildura', label: 'Mildura', lat: -34.1850, lon: 142.1625, radius_km: 30 },
+                { key: 'wodonga', label: 'Wodonga', lat: -36.1248, lon: 146.8881, radius_km: 25 },
+                { key: 'warrnambool', label: 'Warrnambool', lat: -38.3800, lon: 142.4800, radius_km: 25 },
+                { key: 'traralgon', label: 'Traralgon', lat: -38.1951, lon: 146.5400, radius_km: 25 },
+                { key: 'wangaratta', label: 'Wangaratta', lat: -36.3588, lon: 146.3200, radius_km: 25 },
+                { key: 'sale', label: 'Sale', lat: -38.1106, lon: 147.0680, radius_km: 25 },
+                { key: 'morwell', label: 'Morwell', lat: -38.2346, lon: 146.3910, radius_km: 25 },
+            ],
+            TAS: [
+                { key: 'hobart', label: 'Hobart', lat: -42.8821, lon: 147.3272, radius_km: 50 },
+                { key: 'launceston', label: 'Launceston', lat: -41.4332, lon: 147.1441, radius_km: 35 },
+                { key: 'devonport', label: 'Devonport', lat: -41.1782, lon: 146.3513, radius_km: 30 },
+                { key: 'burnie', label: 'Burnie', lat: -41.0550, lon: 145.9150, radius_km: 25 },
+                { key: 'ulverstone', label: 'Ulverstone', lat: -41.1610, lon: 146.1810, radius_km: 25 },
+            ],
+        };
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -1197,10 +1255,21 @@ try {
             return decodeURIComponent(getCookie(fuelSelectionCookieName) || '').trim();
         }
 
+        function savedFuelRegionValue() {
+            return decodeURIComponent(getCookie(fuelRegionCookieName) || '').trim();
+        }
+
         function persistFuelLabel(label) {
             const value = String(label || '').trim();
             if (value !== '') {
                 setCookie(fuelSelectionCookieName, value);
+            }
+        }
+
+        function persistFuelRegion(value) {
+            const nextValue = String(value || '').trim();
+            if (nextValue !== '') {
+                setCookie(fuelRegionCookieName, nextValue);
             }
         }
 
@@ -2758,6 +2827,52 @@ try {
             });
         }
 
+        function fuelRegionChoices() {
+            const state = String(fuelState.value || '').trim().toUpperCase();
+            const states = state !== '' ? [state] : Object.keys(fuelRegionCatalog);
+            const options = [];
+            states.forEach((entryState) => {
+                (fuelRegionCatalog[entryState] || []).forEach((region) => {
+                    options.push({
+                        value: `${entryState}:${region.key}`,
+                        label: state === '' ? `${region.label}, ${entryState}` : region.label,
+                        state: entryState,
+                        key: region.key,
+                        lat: region.lat,
+                        lon: region.lon,
+                        radius_km: region.radius_km,
+                    });
+                });
+            });
+            return options;
+        }
+
+        function fuelRegionSelectedValue() {
+            const current = String(fuelRegion?.value || '').trim();
+            if (current !== '') {
+                return current;
+            }
+            const cookieValue = savedFuelRegionValue();
+            if (cookieValue !== '') {
+                return cookieValue;
+            }
+            return fuelRegionChoices()[0]?.value || '';
+        }
+
+        function fuelRegionSelectedOption() {
+            const value = fuelRegionSelectedValue();
+            return fuelRegionChoices().find((item) => item.value === value) || null;
+        }
+
+        function syncFuelRegions() {
+            if (!fuelRegion) {
+                return;
+            }
+            const options = fuelRegionChoices();
+            const current = options.find((item) => item.value === fuelRegionSelectedValue());
+            setSelectOptions(fuelRegion, options, current ? current.value : (options[0]?.value || ''));
+        }
+
         function syncFuelSelectors() {
             const currentLabel = selectedFuelLabel();
             const options = filteredFuelOptions();
@@ -2772,13 +2887,21 @@ try {
         }
 
         function selectedFuelFilters() {
-            return new URLSearchParams({
+            const params = new URLSearchParams({
                 state: fuelState.value || '',
                 fuel: fuelType.value || '',
             });
+            const region = fuelRegionSelectedOption();
+            if (region) {
+                params.set('lat', String(region.lat));
+                params.set('lon', String(region.lon));
+                params.set('radius_km', String(region.radius_km));
+            }
+            return params;
         }
 
         async function handleFuelFilterChange() {
+            syncFuelRegions();
             syncFuelSelectors();
             await loadFuelDashboard();
         }
@@ -2968,12 +3091,14 @@ try {
                 return;
             }
 
+            const region = fuelRegionSelectedOption();
             const stationCount = Array.isArray(rows) ? rows.length : 0;
             fuelMapLegend.innerHTML = `
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Cheaper</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#ca8a04"></span>Mid-range</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#b91c1c"></span>Higher</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#94a3b8"></span>No price</span>
+                <span class="route-map-chip">${escapeHtml(region ? `${region.label}, ${region.state}` : 'Selected region')}</span>
                 <span class="route-map-chip">${escapeHtml(selectedFuelLabel() || 'Selected fuel')}</span>
                 <span class="route-map-chip">${escapeHtml(`${stationCount} stations plotted`)}</span>
             `;
@@ -3168,8 +3293,9 @@ try {
                 const options = await loadFuelOptions();
                 if (!fuelState.options.length) {
                     setSelectOptions(fuelState, options.states, 'QLD');
-                    syncFuelSelectors();
                 }
+                syncFuelRegions();
+                syncFuelSelectors();
                 syncRouteFuelSelector();
 
                 const filters = selectedFuelFilters();
@@ -3355,6 +3481,11 @@ try {
         routeReset.addEventListener('click', resetRoutePlanner);
 
         fuelState.addEventListener('change', handleFuelFilterChange);
+        fuelRegion.addEventListener('change', async () => {
+            persistFuelRegion(fuelRegionSelectedValue());
+            syncFuelSelectors();
+            await loadFuelDashboard();
+        });
         fuelType.addEventListener('change', async () => {
             persistFuelLabel(fuelTypeSelectedLabel());
             syncRouteFuelSelector();
@@ -3370,6 +3501,7 @@ try {
         (async () => {
             const savedActiveTab = loadActiveTab();
             resetRoutePlanner({ clearStorage: false });
+            syncFuelRegions();
             await loadFuelDashboard();
 
             const savedRouteState = loadRoutePlannerState();
