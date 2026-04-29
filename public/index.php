@@ -1427,6 +1427,10 @@ try {
             return `$${(cents / 100).toFixed(2)}`;
         }
 
+        function routeFuelMinimumPurchaseL(tankCapacityL) {
+            return Math.max(5, Number(tankCapacityL || 0) * 0.1);
+        }
+
         function haversineKm(left, right) {
             const toRad = Math.PI / 180;
             const leftLat = Number(left?.lat ?? left?.latitude ?? 0);
@@ -1607,6 +1611,7 @@ try {
 
         function selectStationCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, visitedKeys = new Set(), visitedNames = new Set(), requiredOnly = false) {
             const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
+            const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
             const strictReachable = candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
@@ -1627,14 +1632,20 @@ try {
             const scored = reachable.map((candidate) => {
                 const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
                 const effectiveFuel = Math.max(0, tankCapacityL - Math.max(0, currentFuelL - detourFuel));
+                const predictedPurchaseL = Math.max(0, tankCapacityL - Math.max(0, currentFuelL - detourFuel));
                 const effectiveCost = effectiveFuel * candidate.price + detourFuel * candidate.price * 0.25;
                 return {
                     ...candidate,
+                    predictedPurchaseL,
+                    preferredPurchase: predictedPurchaseL >= minimumPurchaseL,
                     effectiveCost,
                 };
             });
 
-            scored.sort((left, right) => {
+            const preferred = scored.filter((candidate) => candidate.preferredPurchase);
+            const pool = preferred.length > 0 ? preferred : scored;
+
+            pool.sort((left, right) => {
                 if (left.effectiveCost !== right.effectiveCost) {
                     return left.effectiveCost - right.effectiveCost;
                 }
@@ -1648,15 +1659,16 @@ try {
             });
 
             if (requiredOnly) {
-                return scored[0].price === 0 ? null : scored[0];
+                return pool[0].price === 0 ? null : pool[0];
             }
 
-            return scored[0];
+            return pool[0];
         }
 
-        function selectInitialFuelCandidate(candidates, cursor, currentFuelL, economyLPer100km, visitedKeys = new Set(), visitedNames = new Set()) {
+        function selectInitialFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, visitedKeys = new Set(), visitedNames = new Set()) {
             const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
             const launchWindowKm = reachableRangeKm * 0.75;
+            const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
             const strictReachable = candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
@@ -1672,7 +1684,23 @@ try {
                 return null;
             }
 
-            reachable.sort((left, right) => {
+            const scored = reachable.map((candidate) => {
+                const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
+                const predictedPurchaseL = Math.max(0, tankCapacityL - Math.max(0, currentFuelL - detourFuel));
+                return {
+                    ...candidate,
+                    predictedPurchaseL,
+                    preferredPurchase: predictedPurchaseL >= minimumPurchaseL,
+                };
+            });
+
+            const preferred = scored.filter((candidate) => candidate.preferredPurchase);
+            const pool = preferred.length > 0 ? preferred : scored;
+
+            pool.sort((left, right) => {
+                if (left.preferredPurchase !== right.preferredPurchase) {
+                    return Number(right.preferredPurchase) - Number(left.preferredPurchase);
+                }
                 if (left.price !== right.price) {
                     return left.price - right.price;
                 }
@@ -1682,7 +1710,7 @@ try {
                 return left.progressKm - right.progressKm;
             });
 
-            return reachable[0];
+            return pool[0];
         }
 
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
@@ -1712,7 +1740,7 @@ try {
                     station_name: destination.display_name || destination.query,
                     state: destination.state || '',
                 };
-                const initialCandidate = firstPass ? selectInitialFuelCandidate(candidates, currentCursor, fuelInTank, economyLPer100km, visitedStationKeys, visitedStationNames) : null;
+                const initialCandidate = firstPass ? selectInitialFuelCandidate(candidates, currentCursor, fuelInTank, tankCapacityL, economyLPer100km, visitedStationKeys, visitedStationNames) : null;
                 if (initialCandidate) {
                     visitedStationKeys.add(stationKey(initialCandidate));
                     visitedStationNames.add(stationNameKey(initialCandidate));
