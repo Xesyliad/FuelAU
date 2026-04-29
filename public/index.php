@@ -1560,6 +1560,11 @@ try {
             return `$${(cents / 100).toFixed(2)}`;
         }
 
+        function routeFuelPriceIsReasonable(price) {
+            const value = Number(price);
+            return Number.isFinite(value) && value >= 0.5 && value <= 5;
+        }
+
         function routeFuelMinimumPurchaseL(tankCapacityL) {
             return Math.max(5, Number(tankCapacityL || 0) * 0.1);
         }
@@ -1733,7 +1738,7 @@ try {
                 price: Number(row.price),
                 updated_at: row.updated_at,
                 distance_km: Number(row.distance_km || 0),
-            }));
+            })).filter((row) => routeFuelPriceIsReasonable(row.price));
         }
 
         async function collectRouteFuelCandidates(progress, fuelQuery, sampleLimit = 7, radiusKm = 25) {
@@ -1791,16 +1796,23 @@ try {
         function selectStationCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, visitedKeys = new Set(), visitedNames = new Set(), requiredOnly = false) {
             const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
             const safeRangeKm = Math.max(0, (currentFuelL - reserveL) / (economyLPer100km / 100));
+            const minimumAdvanceKm = currentFuelL > tankCapacityL * 0.5
+                ? routeFuelMinimumPurchaseL(tankCapacityL) / (economyLPer100km / 100)
+                : 0;
+            const routeProgressFromCursorKm = (candidate) => Math.max(0, Number(candidate.progressKm || 0) - Number(cursor.progressKm || 0));
             const strictReachable = candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
                 .filter((candidate) => candidate.progressKm >= cursor.progressKm - 0.001)
-                .filter((candidate) => (candidate.progressKm - cursor.progressKm) <= safeRangeKm)
-                .filter((candidate) => candidate.routeDistanceFromCursorKm <= safeRangeKm);
+                .filter((candidate) => routeProgressFromCursorKm(candidate) >= minimumAdvanceKm)
+                .filter((candidate) => routeProgressFromCursorKm(candidate) <= safeRangeKm)
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= Math.max(25, safeRangeKm * 0.5));
             const looseReachable = strictReachable.length > 0 ? strictReachable : candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
-                .filter((candidate) => candidate.routeDistanceFromCursorKm <= reachableRangeKm * 1.5);
+                .filter((candidate) => routeProgressFromCursorKm(candidate) <= reachableRangeKm * 1.1)
+                .filter((candidate) => routeProgressFromCursorKm(candidate) >= Math.min(minimumAdvanceKm * 0.5, reachableRangeKm * 0.2))
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= Math.max(30, reachableRangeKm * 0.75));
 
             const reachable = looseReachable;
 
@@ -1809,12 +1821,15 @@ try {
             }
 
             const scored = reachable.map((candidate) => {
+                const routeProgressKm = routeProgressFromCursorKm(candidate);
+                const routeFuel = routeProgressKm * (economyLPer100km / 100);
                 const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
-                const arrivalFuelL = Math.max(0, currentFuelL - detourFuel);
+                const arrivalFuelL = Math.max(0, currentFuelL - routeFuel);
                 const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
                 const effectiveCost = refillL * candidate.price + detourFuel * candidate.price * 0.25;
                 return {
                     ...candidate,
+                    routeProgressKm,
                     arrivalFuelL,
                     refillL,
                     safeStop: arrivalFuelL >= reserveL,
@@ -1858,27 +1873,37 @@ try {
             const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
             const safeRangeKm = Math.max(0, (currentFuelL - reserveL) / (economyLPer100km / 100));
             const launchWindowKm = Math.max(0, Math.min(reachableRangeKm * 0.75, safeRangeKm || reachableRangeKm * 0.75));
+            const minimumAdvanceKm = currentFuelL > tankCapacityL * 0.5
+                ? routeFuelMinimumPurchaseL(tankCapacityL) / (economyLPer100km / 100)
+                : 0;
+            const routeProgressFromCursorKm = (candidate) => Math.max(0, Number(candidate.progressKm || 0) - Number(cursor.progressKm || 0));
             const strictReachable = candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
                 .filter((candidate) => candidate.progressKm >= cursor.progressKm - 0.001)
-                .filter((candidate) => (candidate.progressKm - cursor.progressKm) <= launchWindowKm)
-                .filter((candidate) => candidate.routeDistanceFromCursorKm <= launchWindowKm);
+                .filter((candidate) => routeProgressFromCursorKm(candidate) >= minimumAdvanceKm)
+                .filter((candidate) => routeProgressFromCursorKm(candidate) <= launchWindowKm)
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= Math.max(25, launchWindowKm * 0.5));
             const reachable = strictReachable.length > 0 ? strictReachable : candidates
                 .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
                 .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
-                .filter((candidate) => candidate.routeDistanceFromCursorKm <= launchWindowKm * 1.5);
+                .filter((candidate) => routeProgressFromCursorKm(candidate) <= launchWindowKm * 1.1)
+                .filter((candidate) => routeProgressFromCursorKm(candidate) >= Math.min(minimumAdvanceKm * 0.5, launchWindowKm * 0.2))
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= Math.max(30, launchWindowKm * 0.75));
 
             if (reachable.length === 0) {
                 return null;
             }
 
             const scored = reachable.map((candidate) => {
+                const routeProgressKm = routeProgressFromCursorKm(candidate);
+                const routeFuel = routeProgressKm * (economyLPer100km / 100);
                 const detourFuel = candidate.routeDistanceFromCursorKm * (economyLPer100km / 100);
-                const arrivalFuelL = Math.max(0, currentFuelL - detourFuel);
+                const arrivalFuelL = Math.max(0, currentFuelL - routeFuel);
                 const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
                 return {
                     ...candidate,
+                    routeProgressKm,
                     arrivalFuelL,
                     refillL,
                     safeStop: arrivalFuelL >= reserveL,
@@ -1924,9 +1949,11 @@ try {
                 const routeKm = route.distanceM / 1000;
                 const fuelNeeded = routeKm * (economyLPer100km / 100);
                 const progress = buildRouteProgress(route.geometry);
-                let candidates = await collectRouteFuelCandidates(progress, fuelQuery, 7, 25);
+                const sampleLimit = Math.max(7, Math.min(21, Math.ceil(routeKm / 180)));
+                const searchRadiusKm = routeKm > 750 ? 35 : 25;
+                let candidates = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm);
                 if (candidates.length === 0) {
-                    candidates = await collectRouteFuelCandidates(progress, fuelQuery, 11, 40);
+                    candidates = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(25, sampleLimit + 4), 45);
                 }
 
                 const currentCursor = routePoint(currentPoint.lon, currentPoint.lat, 0);
@@ -1939,7 +1966,36 @@ try {
                     break;
                 }
 
-                const chosen = selectStationCandidate(candidates, currentCursor, fuelInTank, tankCapacityL, economyLPer100km, reserveL, visitedStationKeys, visitedStationNames);
+                let chosen = null;
+                let approach = null;
+                while (candidates.length > 0) {
+                    const nextCandidate = selectStationCandidate(
+                        candidates,
+                        currentCursor,
+                        fuelInTank,
+                        tankCapacityL,
+                        economyLPer100km,
+                        reserveL,
+                        visitedStationKeys,
+                        visitedStationNames
+                    );
+                    if (!nextCandidate) {
+                        break;
+                    }
+
+                    const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
+                    const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true);
+                    const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
+                    if (fuelInTank >= nextApproachFuel) {
+                        chosen = nextCandidate;
+                        approach = nextApproach;
+                        break;
+                    }
+
+                    visitedStationKeys.add(stationKey(nextCandidate));
+                    visitedStationNames.add(stationNameKey(nextCandidate));
+                }
+
                 if (!chosen) {
                     if (fuelInTank >= fuelNeeded) {
                         routePieces.push({
@@ -1955,11 +2011,7 @@ try {
                 visitedStationKeys.add(stationKey(chosen));
                 visitedStationNames.add(stationNameKey(chosen));
                 const stopPoint = { lon: chosen.longitude, lat: chosen.latitude };
-                const approach = await fetchRouteDetails(currentPoint, stopPoint, true);
                 const approachFuel = (approach.distanceM / 1000) * (economyLPer100km / 100);
-                if (fuelInTank < approachFuel) {
-                    throw new Error(`Fuel range is insufficient to reach ${chosen.station_name}.`);
-                }
 
                 routePieces.push({
                     type: 'route',
