@@ -271,6 +271,8 @@ try {
         }
 
         .field select {
+            width: 100%;
+            box-sizing: border-box;
             min-height: 38px;
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -413,7 +415,7 @@ try {
 
         .route-input-grid {
             display: grid;
-            grid-template-columns: minmax(320px, 2.2fr) minmax(180px, 1fr) minmax(180px, 1fr);
+            grid-template-columns: minmax(320px, 2.2fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr);
             gap: 12px;
         }
 
@@ -847,6 +849,10 @@ try {
                                 </div>
                             </div>
                             <div class="field">
+                                <label for="route-fuel-type">Fuel</label>
+                                <select id="route-fuel-type"></select>
+                            </div>
+                            <div class="field">
                                 <label for="route-fuel-fill">Fuel Fill (L)</label>
                                 <input type="number" id="route-fuel-fill" min="0" step="0.1" inputmode="decimal" placeholder="0.0">
                             </div>
@@ -949,6 +955,7 @@ try {
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
         const routeOrigin = document.getElementById('route-origin');
         const routeOriginResults = document.getElementById('route-origin-results');
+        const routeFuelType = document.getElementById('route-fuel-type');
         const routeFuelFill = document.getElementById('route-fuel-fill');
         const routeFuelEconomy = document.getElementById('route-fuel-economy');
         const routeDestinationList = document.getElementById('route-destination-list');
@@ -1315,6 +1322,58 @@ try {
             return Number.isFinite(value) ? value : 0;
         }
 
+        function routeFuelChoices() {
+            if (!fuelOptions || !Array.isArray(fuelOptions.fuels)) {
+                return [{ value: 'Diesel', label: 'Diesel' }];
+            }
+
+            const choices = [];
+            const seen = new Set();
+            fuelOptions.fuels.forEach((item) => {
+                const label = String(item?.label || '').trim();
+                if (label === '' || label === 'All Fuels') {
+                    return;
+                }
+
+                const key = label.toLowerCase();
+                if (seen.has(key)) {
+                    return;
+                }
+
+                seen.add(key);
+                choices.push({
+                    value: label,
+                    label,
+                });
+            });
+
+            choices.sort((left, right) => left.label.localeCompare(right.label));
+            return choices.length > 0 ? choices : [{ value: 'Diesel', label: 'Diesel' }];
+        }
+
+        function routeFuelDefaultValue() {
+            const options = routeFuelChoices();
+            const current = String(routeFuelType?.value || '').trim();
+            if (current !== '' && options.some((item) => item.value === current)) {
+                return current;
+            }
+
+            const diesel = options.find((item) => item.value.toLowerCase() === 'diesel');
+            return diesel ? diesel.value : options[0].value;
+        }
+
+        function syncRouteFuelSelector() {
+            if (!routeFuelType) {
+                return;
+            }
+            setSelectOptions(routeFuelType, routeFuelChoices(), routeFuelDefaultValue());
+        }
+
+        function routeFuelSelectedValue() {
+            const value = String(routeFuelType?.value || '').trim();
+            return value !== '' ? value : routeFuelDefaultValue();
+        }
+
         function routeFuelQueryLabel() {
             return routeFuelQuery();
         }
@@ -1324,12 +1383,7 @@ try {
         }
 
         function routeFuelQuery() {
-            const option = fuelType.options[fuelType.selectedIndex];
-            const label = option ? option.textContent.trim() : '';
-            if (label !== '' && label !== 'All Fuels') {
-                return label;
-            }
-            return 'Diesel';
+            return routeFuelSelectedValue();
         }
 
         function routeFuelPriceText(priceCents) {
@@ -1804,6 +1858,7 @@ try {
             const cards = [
                 ['Distance', formatRouteDistance(plan.totalDistanceM || 0)],
                 ['Drive Time', formatRouteDuration(plan.totalDurationS || 0)],
+                ['Fuel Type', String(plan.fuelQuery || 'Diesel')],
                 ['Fuel Used', `${Number(plan.totalFuelUsedL || 0).toFixed(1)} L`],
                 ['Fuel Fill', `${Number(plan.tankCapacityL || 0).toFixed(1)} L`],
                 ['Fuel Stops', String(plan.segments.reduce((count, segment) => count + segment.stops.length, 0))],
@@ -2143,6 +2198,7 @@ try {
 
         function resetRoutePlanner() {
             routeOrigin.value = '';
+            syncRouteFuelSelector();
             routeFuelFill.value = '';
             routeFuelEconomy.value = '';
             routeReturnDirect.checked = true;
@@ -2160,6 +2216,7 @@ try {
         function loadRouteTestCities() {
             resetRoutePlanner();
             routeOrigin.value = 'Cairns';
+            syncRouteFuelSelector();
             const destinations = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
             if (destinations[0]) {
                 destinations[0].querySelector('.route-destination-input').value = 'Birdsville';
@@ -2446,6 +2503,7 @@ try {
                     setSelectOptions(fuelState, options.states, 'QLD');
                     syncFuelSelectors();
                 }
+                syncRouteFuelSelector();
 
                 const filters = selectedFuelFilters();
                 const [sources, current, weekly, monthly] = await Promise.all([
