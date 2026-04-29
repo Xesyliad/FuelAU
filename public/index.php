@@ -1757,6 +1757,26 @@ try {
             return Number.isFinite(value) && value >= 50 && value <= 500;
         }
 
+        function routeFuelSourceIsOfficial(source) {
+            return ['qld', 'nsw', 'tas', 'vic'].includes(String(source || '').trim().toLowerCase());
+        }
+
+        function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
+            const timestamp = Date.parse(String(updatedAt || '').trim().replace(' ', 'T'));
+            if (!Number.isFinite(timestamp)) {
+                return false;
+            }
+
+            const ageMs = Date.now() - timestamp;
+            return ageMs >= 0 && ageMs <= maximumAgeDays * 24 * 60 * 60 * 1000;
+        }
+
+        function routeFuelCandidateIsEligible(candidate) {
+            return routeFuelSourceIsOfficial(candidate?.source)
+                && routeFuelPriceIsReasonable(candidate?.price)
+                && routeFuelPriceIsFresh(candidate?.updated_at);
+        }
+
         function routeFuelMinimumPurchaseL(tankCapacityL) {
             return Math.max(15, Number(tankCapacityL || 0) * 0.5);
         }
@@ -2000,7 +2020,7 @@ try {
                 price: Number(row.price),
                 updated_at: row.updated_at,
                 distance_km: Number(row.distance_km || 0),
-            })).filter((row) => routeFuelPriceIsReasonable(row.price));
+            })).filter((row) => routeFuelCandidateIsEligible(row));
         }
 
         async function collectRouteFuelCandidates(progress, fuelQuery, sampleLimit = 7, radiusKm = 25) {
@@ -2010,7 +2030,7 @@ try {
             )));
 
             return dedupeRouteStations(candidateBatches.flatMap((payload) => Array.isArray(payload.rows) ? payload.rows : []))
-                .filter((candidate) => routeFuelPriceIsReasonable(candidate.price))
+                .filter((candidate) => routeFuelCandidateIsEligible(candidate))
                 .map((candidate) => {
                 let nearestProgress = progress[0] || routePoint(0, 0, 0);
                 let bestDistance = Number.POSITIVE_INFINITY;
