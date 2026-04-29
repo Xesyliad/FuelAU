@@ -1304,12 +1304,6 @@ try {
                         }
 
                         const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
-                        if (results.length === 1) {
-                            input.value = routeGeocodeInputValue(results[0], query);
-                            clearRouteAutocomplete(input);
-                            return;
-                        }
-
                         renderRouteAutocompleteOptions(input, results);
                     } catch (error) {
                         if (state.sequence === currentSequence) {
