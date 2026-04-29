@@ -976,26 +976,55 @@ try {
         let routeDestinationCounter = 0;
         let routeMapInstance = null;
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
+        const routePlannerStateKey = 'fuelau_route_planner_state_v1';
+        const activeTabKey = 'fuelau_active_tab_v1';
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
-                tabs.forEach((item) => item.setAttribute('aria-selected', 'false'));
-                panels.forEach((panel) => panel.classList.remove('active'));
-
-                tab.setAttribute('aria-selected', 'true');
-                document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
-
-                if (tab.id === 'container-management-tab') {
-                    loadContainers();
-                }
-                if (tab.id === 'fuel-prices-tab') {
-                    loadFuelDashboard();
-                }
-                if (tab.id === 'route-planning-tab' && routeMapInstance) {
-                    window.setTimeout(() => routeMapInstance.resize(), 0);
-                }
+                activateTab(tab.id);
             });
         });
+
+        function saveActiveTab(tabId) {
+            try {
+                window.localStorage.setItem(activeTabKey, tabId);
+            } catch (error) {
+                void error;
+            }
+        }
+
+        function loadActiveTab() {
+            try {
+                return window.localStorage.getItem(activeTabKey) || 'fuel-prices-tab';
+            } catch (error) {
+                void error;
+                return 'fuel-prices-tab';
+            }
+        }
+
+        function activateTab(tabId) {
+            const tab = document.getElementById(tabId);
+            if (!tab) {
+                return;
+            }
+
+            tabs.forEach((item) => item.setAttribute('aria-selected', 'false'));
+            panels.forEach((panel) => panel.classList.remove('active'));
+
+            tab.setAttribute('aria-selected', 'true');
+            document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
+            saveActiveTab(tab.id);
+
+            if (tab.id === 'container-management-tab') {
+                loadContainers();
+            }
+            if (tab.id === 'fuel-prices-tab') {
+                loadFuelDashboard();
+            }
+            if (tab.id === 'route-planning-tab' && routeMapInstance) {
+                window.setTimeout(() => routeMapInstance.resize(), 0);
+            }
+        }
 
         async function apiRequest(url, options = {}) {
             const response = await fetch(url, {
@@ -1053,6 +1082,39 @@ try {
             const value = String(label || '').trim();
             if (value !== '') {
                 setCookie(fuelSelectionCookieName, value);
+            }
+        }
+
+        function saveRoutePlannerState(planned = false) {
+            try {
+                window.localStorage.setItem(routePlannerStateKey, JSON.stringify({
+                    origin: routeOrigin.value.trim(),
+                    destinations: routeDestinationValues(),
+                    fuelFill: routeFuelFill.value.trim(),
+                    fuelEconomy: routeFuelEconomy.value.trim(),
+                    fuelValue: routeFuelSelectedValue(),
+                    returnMode: routeReturnMode(),
+                    planned: Boolean(planned),
+                }));
+            } catch (error) {
+                void error;
+            }
+        }
+
+        function loadRoutePlannerState() {
+            try {
+                const raw = window.localStorage.getItem(routePlannerStateKey);
+                return raw ? JSON.parse(raw) : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function clearRoutePlannerState() {
+            try {
+                window.localStorage.removeItem(routePlannerStateKey);
+            } catch (error) {
+                void error;
             }
         }
 
@@ -2216,6 +2278,30 @@ try {
             };
         }
 
+        function restoreRoutePlannerState(state) {
+            if (!state || typeof state !== 'object') {
+                return false;
+            }
+
+            resetRoutePlanner({ clearStorage: false });
+            routeOrigin.value = String(state.origin || '');
+            const destinations = Array.isArray(state.destinations) ? state.destinations : [];
+            routeDestinationList.innerHTML = '';
+            routeDestinationCounter = 0;
+            (destinations.length > 0 ? destinations : ['']).forEach((value) => addRouteDestination(String(value || '')));
+            routeFuelFill.value = String(state.fuelFill || '');
+            routeFuelEconomy.value = String(state.fuelEconomy || '');
+            routeReturnDirect.checked = String(state.returnMode || 'direct') !== 'reverses';
+            routeReturnReverses.checked = String(state.returnMode || 'direct') === 'reverses';
+            syncRouteFuelSelector();
+            if (String(state.fuelValue || '').trim() !== '') {
+                routeFuelType.value = String(state.fuelValue || '').trim();
+            }
+            persistFuelLabel(routeFuelSelectedLabel());
+            routeStatus.textContent = state.planned ? 'Restored last planned route.' : 'Restored saved route inputs.';
+            return true;
+        }
+
         async function planRoute() {
             const originValue = routeOrigin.value.trim();
             const destinationValues = routeDestinationValues();
@@ -2250,6 +2336,7 @@ try {
                 renderRouteSummary(plan);
                 renderRouteMap(plan);
                 renderRouteBreakdown(plan);
+                saveRoutePlannerState(true);
 
                 const returnMode = routeReturnMode() === 'reverses'
                     ? 'Return reverses path'
@@ -2266,7 +2353,8 @@ try {
             }
         }
 
-        function resetRoutePlanner() {
+        function resetRoutePlanner(options = {}) {
+            const clearStorage = options.clearStorage !== false;
             routeOrigin.value = '';
             syncRouteFuelSelector();
             routeFuelFill.value = '';
@@ -2281,6 +2369,9 @@ try {
             routeMap.innerHTML = renderRouteEmpty('No route planned yet.');
             routeMapLegend.innerHTML = '';
             routeLegs.innerHTML = renderRouteEmpty('No route planned yet.');
+            if (clearStorage) {
+                clearRoutePlannerState();
+            }
         }
 
         function loadRouteTestCities() {
@@ -2764,8 +2855,23 @@ try {
         });
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
         attachRouteAutocomplete(routeOrigin);
-        resetRoutePlanner();
-        loadFuelDashboard();
+        (async () => {
+            const savedActiveTab = loadActiveTab();
+            resetRoutePlanner({ clearStorage: false });
+            await loadFuelDashboard();
+
+            const savedRouteState = loadRoutePlannerState();
+            if (savedRouteState) {
+                restoreRoutePlannerState(savedRouteState);
+            }
+
+            if (savedActiveTab === 'route-planning-tab') {
+                activateTab('route-planning-tab');
+                if (savedRouteState && savedRouteState.planned) {
+                    await planRoute();
+                }
+            }
+        })();
     </script>
 </body>
 </html>
