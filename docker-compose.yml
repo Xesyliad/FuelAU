@@ -94,9 +94,10 @@ services:
     command:
       - osrm-extract
       - -p
-      - /opt/car.lua
+      - /opt/fuelmiser.car.lua
       - /data/australia-latest.osm.pbf
     volumes:
+      - ./config/osrm/fuelmiser.car.profile.template.lua:/opt/fuelmiser.car.lua:ro
       - ./var/docker/osrm-data:/data
 
   osrm-partition:
