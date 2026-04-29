@@ -14,6 +14,51 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 
 All services are managed from the single root `docker-compose.yml`.
 
+## Quick Start
+
+For a fresh clone, follow these steps in order:
+
+1. Copy the sample config files:
+
+```bash
+cp .env.sample .env
+cp config/app-sample.env config/app.env
+cp config/mysql-sample.env config/mysql.env
+```
+
+2. Edit `.env`, `config/app.env`, and `config/mysql.env`.
+
+3. Start the base stack:
+
+```bash
+docker compose up -d --build
+```
+
+4. Create the runtime folders and database tables:
+
+```bash
+docker compose exec app php setup.php
+```
+
+5. Open the web UI:
+
+```text
+http://localhost:18080/
+```
+
+6. If you want routing/geocoding, start the routing profile services:
+
+```bash
+docker compose --profile routing --profile routing-setup up -d
+```
+
+7. If you want the local Australia basemap, build it once and then start the map server:
+
+```bash
+docker compose --profile map-setup run --rm map-build
+docker compose --profile map up -d map-server
+```
+
 ## Services
 
 - `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
@@ -32,14 +77,6 @@ docker compose up -d --build app
 ```
 
 ## Configuration
-
-Create local runtime config from the tracked samples:
-
-```bash
-cp .env.sample .env
-cp config/app-sample.env config/app.env
-cp config/mysql-sample.env config/mysql.env
-```
 
 Edit these files before starting the stack:
 
@@ -60,6 +97,16 @@ Current application-level config keys include:
 - `VIC_SERVO_SAVER_API_KEY`
 - `MAP_TILE_SERVER_URL`
 - `MAP_TILE_STYLE`
+
+## First Run Details
+
+The `app` container copies config files into `/run/fuelapi` at startup. That means:
+
+- `config/app.env` is where non-MySQL credentials live.
+- `config/mysql.env` is only for database connection settings.
+- `setup.php` creates the project-local runtime directories required by later services.
+
+If you are on Synology or any NFS-backed share, the PostgreSQL ownership step may need to be done on the host before Nominatim can start.
 
 ## Local Runtime State
 
@@ -88,12 +135,14 @@ The `stat` output must show `100:103 700`. If it remains `65534:65534`, Synology
 
 ## Start
 
-Start the core app and database:
+The base stack starts with:
 
 ```bash
 docker compose up -d --build
 docker compose exec app php setup.php
 ```
+
+That gives you the app, database, and cron jobs. Routing and the local map stack are optional profiles and must be started separately if you want those features.
 
 Default local endpoints:
 
@@ -105,6 +154,28 @@ Nominatim:   http://localhost:18081/
 ```
 
 OSRM and Nominatim bind to `127.0.0.1` by default. Their ports are only active when those profile services are running.
+
+## Optional Services
+
+Start routing and geocoding:
+
+```bash
+docker compose --profile routing --profile routing-setup up -d
+```
+
+Build the local Australia basemap:
+
+```bash
+docker compose --profile map-setup run --rm map-build
+```
+
+Start the local basemap server:
+
+```bash
+docker compose --profile map up -d map-server
+```
+
+The basemap build runs weekly after the first manual build. The routing setup jobs are one-shot preprocessing services and do not stay running.
 
 ## App API
 
