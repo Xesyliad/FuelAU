@@ -1679,7 +1679,7 @@ try {
 
         function routeFuelPriceIsReasonable(price) {
             const value = Number(price);
-            return Number.isFinite(value) && value >= 0.5 && value <= 5;
+            return Number.isFinite(value) && value >= 50 && value <= 500;
         }
 
         function routeFuelMinimumPurchaseL(tankCapacityL) {
@@ -1934,7 +1934,9 @@ try {
                 `/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=${encodeURIComponent(radiusKm)}&limit=50`
             )));
 
-            return dedupeRouteStations(candidateBatches.flatMap((payload) => Array.isArray(payload.rows) ? payload.rows : [])).map((candidate) => {
+            return dedupeRouteStations(candidateBatches.flatMap((payload) => Array.isArray(payload.rows) ? payload.rows : []))
+                .filter((candidate) => routeFuelPriceIsReasonable(candidate.price))
+                .map((candidate) => {
                 let nearestProgress = progress[0] || routePoint(0, 0, 0);
                 let bestDistance = Number.POSITIVE_INFINITY;
                 progress.forEach((point) => {
@@ -2108,6 +2110,171 @@ try {
             return selectRouteFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, 'initial');
         }
 
+        function routeFuelGraphEdgeKm(fromNode, toNode) {
+            const progressKm = Math.max(0, Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0));
+            const fromOffRouteKm = fromNode.kind === 'station' ? routeFuelCandidateOffRouteKm(fromNode.station) : 0;
+            const toOffRouteKm = toNode.kind === 'station' ? routeFuelCandidateOffRouteKm(toNode.station) : 0;
+            return progressKm + (fromOffRouteKm * 0.8) + (toOffRouteKm * 1.15);
+        }
+
+        function routeFuelGraphStationNodes(candidates, routeKm, detourLimitKm, visitedKeys = new Set(), visitedNames = new Set()) {
+            const unique = new Map();
+            candidates
+                .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
+                .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
+                .filter((candidate) => Number(candidate.progressKm || 0) > 0.01)
+                .filter((candidate) => Number(candidate.progressKm || 0) < Number(routeKm || 0) - 0.01)
+                .filter((candidate) => routeFuelCandidateOffRouteKm(candidate) <= detourLimitKm)
+                .forEach((candidate) => {
+                    const key = stationKey(candidate);
+                    const existing = unique.get(key);
+                    if (!existing || Number(candidate.price || 0) < Number(existing.price || 0)) {
+                        unique.set(key, candidate);
+                    }
+                });
+
+            return Array.from(unique.values())
+                .sort((left, right) => {
+                    if (Number(left.progressKm || 0) !== Number(right.progressKm || 0)) {
+                        return Number(left.progressKm || 0) - Number(right.progressKm || 0);
+                    }
+                    return Number(left.price || 0) - Number(right.price || 0);
+                })
+                .slice(0, 240)
+                .map((candidate, index) => ({
+                    kind: 'station',
+                    index: index + 1,
+                    progressKm: Number(candidate.progressKm || 0),
+                    station: candidate,
+                }));
+        }
+
+        function buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set(), allowSafetyStops = false) {
+            const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
+            if (rateLPerKm <= 0) {
+                return null;
+            }
+
+            const fullTankSafeRangeKm = routeFuelSafeRangeKm(tankCapacityL, reserveL, economyLPer100km);
+            const currentSafeRangeKm = routeFuelSafeRangeKm(currentFuelL, reserveL, economyLPer100km);
+            const detourLimitKm = routeFuelDetourLimitKm(routeKm, Math.max(fullTankSafeRangeKm, currentSafeRangeKm));
+            const strictMinimumRefillL = routeFuelMinimumPurchaseL(tankCapacityL);
+            const safetyMinimumRefillL = Math.max(15, tankCapacityL * 0.25);
+            const launchFuelExemption = currentFuelL <= (tankCapacityL * 0.25);
+            const stationNodes = routeFuelGraphStationNodes(candidates, routeKm, detourLimitKm, visitedKeys, visitedNames);
+            const nodes = [
+                {
+                    kind: 'start',
+                    index: 0,
+                    progressKm: 0,
+                },
+                ...stationNodes,
+                {
+                    kind: 'destination',
+                    index: stationNodes.length + 1,
+                    progressKm: Number(routeKm || 0),
+                },
+            ];
+
+            const best = nodes.map(() => null);
+            best[0] = {
+                cost: 0,
+                previousIndex: -1,
+                arrivalFuelL: currentFuelL,
+                litresPurchased: 0,
+                safetyFallback: false,
+            };
+
+            for (let fromIndex = 0; fromIndex < nodes.length; fromIndex += 1) {
+                const fromBest = best[fromIndex];
+                if (!fromBest) {
+                    continue;
+                }
+
+                const fromNode = nodes[fromIndex];
+                const departureFuelL = fromNode.kind === 'start' ? currentFuelL : tankCapacityL;
+                for (let toIndex = fromIndex + 1; toIndex < nodes.length; toIndex += 1) {
+                    const toNode = nodes[toIndex];
+                    const edgeKm = routeFuelGraphEdgeKm(fromNode, toNode);
+                    const fuelUsedL = edgeKm * rateLPerKm;
+                    const arrivalFuelL = departureFuelL - fuelUsedL;
+                    if (arrivalFuelL < reserveL) {
+                        if ((Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0)) > fullTankSafeRangeKm + detourLimitKm) {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    let edgeCost = 0;
+                    let litresPurchased = 0;
+                    let safetyFallback = false;
+                    if (toNode.kind === 'station') {
+                        const station = toNode.station;
+                        litresPurchased = Math.max(0, tankCapacityL - arrivalFuelL);
+                        const minimumRefillL = allowSafetyStops ? safetyMinimumRefillL : strictMinimumRefillL;
+                        if (!(fromNode.kind === 'start' && launchFuelExemption) && litresPurchased < minimumRefillL) {
+                            continue;
+                        }
+                        safetyFallback = litresPurchased < strictMinimumRefillL;
+                        const offRouteKm = routeFuelCandidateOffRouteKm(station);
+                        const purchaseCost = litresPurchased * Number(station.price || 0);
+                        const detourCost = routeFuelDetourCostCents(offRouteKm, station.price, economyLPer100km);
+                        const reservePenalty = Math.max(0, (reserveL * 1.5) - arrivalFuelL) * 500;
+                        const cheapFuelCredit = routeFuelEarlyStopSavingCents(station, litresPurchased, candidates);
+                        edgeCost = purchaseCost + detourCost + routeFuelStopPenaltyCents(routeKm) + reservePenalty - cheapFuelCredit;
+                    } else {
+                        edgeCost = routeFuelDetourCostCents(routeFuelGraphEdgeKm(fromNode, toNode) - Math.max(0, Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0)), 250, economyLPer100km);
+                    }
+
+                    const nextCost = fromBest.cost + edgeCost;
+                    if (!best[toIndex] || nextCost < best[toIndex].cost) {
+                        best[toIndex] = {
+                            cost: nextCost,
+                            previousIndex: fromIndex,
+                            arrivalFuelL,
+                            litresPurchased,
+                            safetyFallback,
+                        };
+                    }
+                }
+            }
+
+            const destinationIndex = nodes.length - 1;
+            if (!best[destinationIndex]) {
+                return null;
+            }
+
+            const stops = [];
+            let cursorIndex = best[destinationIndex].previousIndex;
+            while (cursorIndex > 0) {
+                const node = nodes[cursorIndex];
+                const entry = best[cursorIndex];
+                if (node.kind === 'station') {
+                    stops.push({
+                        ...node.station,
+                        plannedRefillL: entry.litresPurchased,
+                        safetyFallback: entry.safetyFallback,
+                    });
+                }
+                cursorIndex = entry.previousIndex;
+            }
+            stops.reverse();
+
+            return {
+                cost: best[destinationIndex].cost,
+                stops,
+                safetyFallback: allowSafetyStops,
+            };
+        }
+
+        function selectRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
+            const strictPlan = buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, false);
+            if (strictPlan) {
+                return strictPlan;
+            }
+            return buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true);
+        }
+
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
             const chosenStops = [];
             const routePieces = [];
@@ -2144,30 +2311,43 @@ try {
                 let safetyFallback = false;
                 const shortSafetyCandidates = [];
                 const isFirstStop = routePieces.length === 0;
-                while (candidates.length > 0) {
-                    const nextCandidate = isFirstStop
-                        ? selectInitialFuelCandidate(
-                            candidates,
-                            currentCursor,
-                            fuelInTank,
-                            tankCapacityL,
-                            economyLPer100km,
-                            reserveL,
-                            routeKm,
-                            visitedStationKeys,
-                            visitedStationNames
-                        )
-                        : selectStationCandidate(
-                            candidates,
-                            currentCursor,
-                            fuelInTank,
-                            tankCapacityL,
-                            economyLPer100km,
-                            reserveL,
-                            routeKm,
-                            visitedStationKeys,
-                            visitedStationNames
-                        );
+                const graphPlan = selectRouteFuelGraphPlan(
+                    candidates,
+                    fuelInTank,
+                    tankCapacityL,
+                    economyLPer100km,
+                    reserveL,
+                    routeKm,
+                    visitedStationKeys,
+                    visitedStationNames
+                );
+                const graphCandidates = graphPlan ? graphPlan.stops.slice() : [];
+                while (graphCandidates.length > 0 || candidates.length > 0) {
+                    const nextCandidate = graphCandidates.length > 0
+                        ? graphCandidates.shift()
+                        : (isFirstStop
+                            ? selectInitialFuelCandidate(
+                                candidates,
+                                currentCursor,
+                                fuelInTank,
+                                tankCapacityL,
+                                economyLPer100km,
+                                reserveL,
+                                routeKm,
+                                visitedStationKeys,
+                                visitedStationNames
+                            )
+                            : selectStationCandidate(
+                                candidates,
+                                currentCursor,
+                                fuelInTank,
+                                tankCapacityL,
+                                economyLPer100km,
+                                reserveL,
+                                routeKm,
+                                visitedStationKeys,
+                                visitedStationNames
+                            ));
                     if (!nextCandidate) {
                         break;
                     }
@@ -2178,7 +2358,13 @@ try {
                     const nextArrivalFuel = Math.max(0, fuelInTank - nextApproachFuel);
                     const nextRefillL = Math.max(0, tankCapacityL - nextArrivalFuel);
                     if (!isFirstStop && nextRefillL < routeFuelMinimumPurchaseL(tankCapacityL)) {
-                        if (nextRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - nextApproachFuel) >= reserveL) {
+                        if ((nextCandidate.safetyFallback || graphPlan?.safetyFallback) && nextRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - nextApproachFuel) >= reserveL) {
+                            chosen = nextCandidate;
+                            approach = nextApproach;
+                            safetyFallback = true;
+                            break;
+                        }
+                        if (graphCandidates.length === 0 && nextRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - nextApproachFuel) >= reserveL) {
                             shortSafetyCandidates.push({
                                 candidate: nextCandidate,
                                 approach: nextApproach,
