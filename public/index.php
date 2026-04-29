@@ -775,6 +775,38 @@ try {
             font-size: 12px;
         }
 
+        .fuel-map-panel {
+            display: grid;
+            gap: 10px;
+        }
+
+        .fuel-map-frame {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            min-height: 420px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at center, rgba(15, 118, 110, 0.02), rgba(15, 118, 110, 0.00)),
+                #fff;
+        }
+
+        .fuel-map-frame > .route-empty {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            border-radius: 0;
+        }
+
+        .fuel-map-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
         .snapshot-table {
             width: 100%;
             border-collapse: collapse;
@@ -899,6 +931,13 @@ try {
                             <div id="fuel-snapshot"></div>
                         </section>
                     </div>
+
+                    <section class="surface-block fuel-map-panel">
+                        <h2>Station Map</h2>
+                        <p>Click a station to inspect the selected fuel price.</p>
+                        <div class="fuel-map-frame" id="fuel-map"></div>
+                        <div class="fuel-map-legend" id="fuel-map-legend"></div>
+                    </section>
                 </div>
             </div>
             <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab">
@@ -1023,6 +1062,8 @@ try {
         const fuelMonthlyMeta = document.getElementById('fuel-monthly-meta');
         const fuelSnapshot = document.getElementById('fuel-snapshot');
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
+        const fuelMap = document.getElementById('fuel-map');
+        const fuelMapLegend = document.getElementById('fuel-map-legend');
         const routeOrigin = document.getElementById('route-origin');
         const routeOriginResults = document.getElementById('route-origin-results');
         const routeFuelType = document.getElementById('route-fuel-type');
@@ -1044,6 +1085,10 @@ try {
         let selectedContainerRestartable = false;
         let fuelOptions = null;
         let routeDestinationCounter = 0;
+        let fuelMapInstance = null;
+        let fuelMapReady = false;
+        let fuelMapPopup = null;
+        let fuelMapPendingData = null;
         let routeMapInstance = null;
         let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
@@ -1091,6 +1136,9 @@ try {
             }
             if (tab.id === 'fuel-prices-tab') {
                 loadFuelDashboard();
+                if (fuelMapInstance) {
+                    window.setTimeout(() => fuelMapInstance.resize(), 0);
+                }
             }
             if (tab.id === 'route-planning-tab' && routeMapInstance) {
                 window.setTimeout(() => routeMapInstance.resize(), 0);
@@ -2894,6 +2942,226 @@ try {
             `;
         }
 
+        function fuelMapColor(price, minPrice, maxPrice) {
+            const value = Number(price);
+            if (!Number.isFinite(value)) {
+                return '#94a3b8';
+            }
+
+            const min = Number(minPrice);
+            const max = Number(maxPrice);
+            if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+                return '#0f766e';
+            }
+
+            const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)));
+            if (ratio <= 0.5) {
+                const local = ratio / 0.5;
+                return local <= 0.5 ? '#16a34a' : '#ca8a04';
+            }
+            const local = (ratio - 0.5) / 0.5;
+            return local <= 0.5 ? '#ca8a04' : '#b91c1c';
+        }
+
+        function renderFuelMapLegend(rows) {
+            if (!fuelMapLegend) {
+                return;
+            }
+
+            const stationCount = Array.isArray(rows) ? rows.length : 0;
+            fuelMapLegend.innerHTML = `
+                <span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Cheaper</span>
+                <span class="route-map-chip"><span class="route-map-dot" style="background:#ca8a04"></span>Mid-range</span>
+                <span class="route-map-chip"><span class="route-map-dot" style="background:#b91c1c"></span>Higher</span>
+                <span class="route-map-chip"><span class="route-map-dot" style="background:#94a3b8"></span>No price</span>
+                <span class="route-map-chip">${escapeHtml(selectedFuelLabel() || 'Selected fuel')}</span>
+                <span class="route-map-chip">${escapeHtml(`${stationCount} stations plotted`)}</span>
+            `;
+        }
+
+        function fuelMapPopupHtml(row) {
+            const station = escapeHtml(String(row.station_name || '').trim());
+            const address = escapeHtml(String(row.address || '').trim());
+            const fuelName = escapeHtml(selectedFuelLabel() || String(row.fuel_name || 'Fuel'));
+            const price = escapeHtml(formatPrice(row.price));
+            const updatedAt = escapeHtml(formatDateTime(row.updated_at));
+            const source = escapeHtml(`${String(row.state || '').trim()} · ${String(row.source || '').toUpperCase()}`);
+            return `
+                <div style="min-width:220px;max-width:280px;font:inherit;color:#16212d;">
+                    <strong style="display:block;font-size:13px;line-height:1.3;margin-bottom:4px;">${station}</strong>
+                    <div style="font-size:11px;color:#5b6775;line-height:1.3;margin-bottom:6px;">${address}</div>
+                    <div style="font-size:12px;line-height:1.35;margin-bottom:4px;"><strong>${fuelName}</strong></div>
+                    <div style="font-size:13px;line-height:1.35;margin-bottom:4px;">${price}</div>
+                    <div style="font-size:11px;color:#5b6775;line-height:1.3;">${source}</div>
+                    <div style="font-size:11px;color:#5b6775;line-height:1.3;">Updated ${updatedAt}</div>
+                </div>
+            `;
+        }
+
+        function fuelMapFeatureCollection(rows) {
+            const prices = rows
+                .map((row) => Number(row.price))
+                .filter((value) => Number.isFinite(value));
+            const minPrice = prices.length > 0 ? Math.min(...prices) : null;
+            const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
+            const features = rows
+                .filter((row) => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)))
+                .map((row) => ({
+                    type: 'Feature',
+                    properties: {
+                        station_name: String(row.station_name || ''),
+                        address: String(row.address || ''),
+                        price: String(row.price ?? ''),
+                        price_value: Number(row.price),
+                        price_text: formatPrice(row.price),
+                        fuel_name: String(row.fuel_name || ''),
+                        source: String(row.source || ''),
+                        state: String(row.state || ''),
+                        updated_at: String(row.updated_at || ''),
+                        color: fuelMapColor(row.price, minPrice, maxPrice),
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [Number(row.longitude), Number(row.latitude)],
+                    },
+                }));
+            return {
+                type: 'FeatureCollection',
+                features,
+                minPrice,
+                maxPrice,
+            };
+        }
+
+        function updateFuelMapSource(collection) {
+            if (!fuelMapInstance || !fuelMapReady) {
+                fuelMapPendingData = collection;
+                return;
+            }
+
+            const source = fuelMapInstance.getSource('fuel-stations');
+            if (source) {
+                source.setData(collection);
+            }
+
+            const features = Array.isArray(collection.features) ? collection.features : [];
+            if (features.length === 0) {
+                fuelMapLegend.innerHTML = '';
+                fuelMap.innerHTML = renderRouteEmpty('No fuel stations available for this filter.');
+                return;
+            }
+
+            const prices = features.map((feature) => Number(feature.properties?.price_value)).filter((value) => Number.isFinite(value));
+            const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+            const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+            const midPrice = prices.length > 0 ? (minPrice + maxPrice) / 2 : 0;
+            const colorExpression = prices.length > 0
+                ? ['interpolate', ['linear'], ['get', 'price_value'], minPrice, '#16a34a', midPrice, '#ca8a04', maxPrice, '#b91c1c']
+                : '#0f766e';
+            if (fuelMapInstance.getLayer('fuel-stations-circle')) {
+                fuelMapInstance.setPaintProperty('fuel-stations-circle', 'circle-color', colorExpression);
+            }
+
+            if (collection.features.length === 1) {
+                const only = collection.features[0];
+                fuelMapInstance.easeTo({
+                    center: only.geometry.coordinates,
+                    zoom: 12,
+                    duration: 400,
+                });
+            } else if (collection.features.length > 1) {
+                const bounds = new maplibregl.LngLatBounds();
+                collection.features.forEach((feature) => {
+                    bounds.extend(feature.geometry.coordinates);
+                });
+                fuelMapInstance.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 400 });
+            }
+
+            renderFuelMapLegend(features);
+        }
+
+        function renderFuelMap(rows) {
+            if (!fuelMap) {
+                return;
+            }
+
+            const collection = fuelMapFeatureCollection(Array.isArray(rows) ? rows : []);
+            if (!window.maplibregl) {
+                fuelMap.innerHTML = renderRouteEmpty('Fuel map unavailable in this browser.');
+                fuelMapLegend.innerHTML = '';
+                return;
+            }
+
+            if (!fuelMapInstance) {
+                fuelMap.innerHTML = '';
+                const mapConfig = window.fuelauMapConfig || {};
+                const styleUrl = mapConfig.style_url;
+                if (!styleUrl) {
+                    fuelMap.innerHTML = renderRouteEmpty('Map style is not configured.');
+                    fuelMapLegend.innerHTML = '';
+                    return;
+                }
+
+                fuelMapInstance = new maplibregl.Map({
+                    container: fuelMap,
+                    style: styleUrl,
+                    center: [134.0, -25.0],
+                    zoom: 4,
+                    attributionControl: true,
+                    preserveDrawingBuffer: false,
+                });
+                fuelMapInstance.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
+                fuelMapPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: 16 });
+
+                fuelMapInstance.on('load', () => {
+                    fuelMapReady = true;
+                    if (!fuelMapInstance.getSource('fuel-stations')) {
+                        fuelMapInstance.addSource('fuel-stations', {
+                            type: 'geojson',
+                            data: collection,
+                        });
+                    }
+                    if (!fuelMapInstance.getLayer('fuel-stations-circle')) {
+                        fuelMapInstance.addLayer({
+                            id: 'fuel-stations-circle',
+                            type: 'circle',
+                            source: 'fuel-stations',
+                            paint: {
+                                'circle-radius': 7,
+                                'circle-stroke-width': 2,
+                                'circle-stroke-color': '#ffffff',
+                                'circle-opacity': 0.95,
+                            },
+                        });
+                    }
+
+                    fuelMapInstance.on('mouseenter', 'fuel-stations-circle', () => {
+                        fuelMapInstance.getCanvas().style.cursor = 'pointer';
+                    });
+                    fuelMapInstance.on('mouseleave', 'fuel-stations-circle', () => {
+                        fuelMapInstance.getCanvas().style.cursor = '';
+                    });
+                    fuelMapInstance.on('click', 'fuel-stations-circle', (event) => {
+                        const feature = event.features && event.features[0];
+                        if (!feature || !fuelMapPopup) {
+                            return;
+                        }
+                        fuelMapPopup
+                            .setLngLat(feature.geometry.coordinates)
+                            .setHTML(fuelMapPopupHtml(feature.properties || {}))
+                            .addTo(fuelMapInstance);
+                    });
+
+                    updateFuelMapSource(fuelMapPendingData || collection);
+                    fuelMapPendingData = null;
+                });
+            } else if (fuelMapReady) {
+                updateFuelMapSource(collection);
+            } else {
+                fuelMapPendingData = collection;
+            }
+        }
+
         async function loadFuelDashboard() {
             fuelStatus.textContent = 'Loading fuel dashboard...';
             try {
@@ -2907,7 +3175,7 @@ try {
                 const filters = selectedFuelFilters();
                 const [sources, current, weekly, monthly] = await Promise.all([
                     apiRequest('/api/fuel/sources'),
-                    apiRequest(`/api/fuel/current?${filters.toString()}&limit=8`),
+                    apiRequest(`/api/fuel/current?${filters.toString()}&limit=500`),
                     apiRequest(`/api/fuel/history?${filters.toString()}&period=weekly`),
                     apiRequest(`/api/fuel/history?${filters.toString()}&period=monthly`),
                 ]);
@@ -2916,12 +3184,19 @@ try {
                 renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
                 renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
                 renderSnapshot(current.rows || []);
+                renderFuelMap(current.rows || []);
                 fuelStatus.textContent = `Loaded ${Array.isArray(current.rows) ? current.rows.length : 0} current records for the selected filter.`;
             } catch (error) {
                 fuelStatus.textContent = error.message;
                 fuelWeeklyChart.innerHTML = chartEmpty(error.message);
                 fuelMonthlyChart.innerHTML = chartEmpty(error.message);
                 fuelSnapshot.innerHTML = chartEmpty(error.message);
+                if (fuelMap) {
+                    fuelMap.innerHTML = renderRouteEmpty(error.message);
+                }
+                if (fuelMapLegend) {
+                    fuelMapLegend.innerHTML = '';
+                }
             }
         }
 
