@@ -1493,6 +1493,92 @@ try {
             return Math.max(5, Number(tankCapacityL || 0) * 0.1);
         }
 
+        function routeFuelStopLabel(stop) {
+            const station = String(stop?.station_name || '').trim();
+            const address = String(stop?.address || '').trim();
+            const price = routeFuelPriceText(stop?.price);
+            const lines = [station];
+            if (address !== '') {
+                lines.push(address);
+            }
+            lines.push(`${price}/L`);
+            return lines.join('\n');
+        }
+
+        function routeFuelStopIconKey(color) {
+            return `fuel-pump-${String(color || '#b45309').replace(/[^a-z0-9]+/gi, '').toLowerCase()}`;
+        }
+
+        function routeFuelPumpIconCanvas(color) {
+            const size = 64;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const context = canvas.getContext('2d');
+            if (!context) {
+                return canvas;
+            }
+
+            context.clearRect(0, 0, size, size);
+            context.lineWidth = 4;
+            context.strokeStyle = '#ffffff';
+            context.fillStyle = color;
+
+            const bodyX = 18;
+            const bodyY = 14;
+            const bodyW = 24;
+            const bodyH = 34;
+
+            context.beginPath();
+            context.roundRect(bodyX, bodyY, bodyW, bodyH, 6);
+            context.fill();
+            context.stroke();
+
+            context.beginPath();
+            context.moveTo(bodyX + bodyW - 2, bodyY + 10);
+            context.lineTo(bodyX + bodyW + 12, bodyY + 6);
+            context.lineTo(bodyX + bodyW + 15, bodyY + 12);
+            context.lineTo(bodyX + bodyW + 1, bodyY + 17);
+            context.closePath();
+            context.fill();
+            context.stroke();
+
+            context.beginPath();
+            context.moveTo(bodyX + 2, bodyY + bodyH);
+            context.lineTo(bodyX + 2, bodyY + bodyH + 8);
+            context.lineTo(bodyX + bodyW + 6, bodyY + bodyH + 8);
+            context.lineTo(bodyX + bodyW + 6, bodyY + bodyH);
+            context.closePath();
+            context.fill();
+            context.stroke();
+
+            context.fillStyle = '#ffffff';
+            context.beginPath();
+            context.roundRect(bodyX + 6, bodyY + 8, 8, 10, 2);
+            context.fill();
+            context.beginPath();
+            context.roundRect(bodyX + 16, bodyY + 8, 4, 18, 2);
+            context.fill();
+
+            context.strokeStyle = color;
+            context.lineWidth = 3;
+            context.beginPath();
+            context.moveTo(bodyX + bodyW + 10, bodyY + 18);
+            context.lineTo(bodyX + bodyW + 18, bodyY + 18);
+            context.lineTo(bodyX + bodyW + 18, bodyY + 32);
+            context.stroke();
+
+            return canvas;
+        }
+
+        function routeFuelStopImage(map, color) {
+            const iconKey = routeFuelStopIconKey(color);
+            if (!map.hasImage(iconKey)) {
+                map.addImage(iconKey, routeFuelPumpIconCanvas(color), { pixelRatio: 2 });
+            }
+            return iconKey;
+        }
+
         function haversineKm(left, right) {
             const toRad = Math.PI / 180;
             const leftLat = Number(left?.lat ?? left?.latitude ?? 0);
@@ -1706,6 +1792,9 @@ try {
 
             const preferred = scored.filter((candidate) => candidate.preferredPurchase);
             const pool = preferred.length > 0 ? preferred : scored;
+            if (pool.length === 0) {
+                return null;
+            }
 
             pool.sort((left, right) => {
                 if (left.effectiveCost !== right.effectiveCost) {
@@ -1724,7 +1813,7 @@ try {
                 return pool[0].price === 0 ? null : pool[0];
             }
 
-            return pool[0];
+            return preferred.length > 0 ? pool[0] : null;
         }
 
         function selectInitialFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, visitedKeys = new Set(), visitedNames = new Set()) {
@@ -1758,6 +1847,9 @@ try {
 
             const preferred = scored.filter((candidate) => candidate.preferredPurchase);
             const pool = preferred.length > 0 ? preferred : scored;
+            if (pool.length === 0) {
+                return null;
+            }
 
             pool.sort((left, right) => {
                 if (left.preferredPurchase !== right.preferredPurchase) {
@@ -1772,7 +1864,7 @@ try {
                 return left.progressKm - right.progressKm;
             });
 
-            return pool[0];
+            return preferred.length > 0 ? pool[0] : null;
         }
 
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
@@ -1783,6 +1875,7 @@ try {
             let currentPoint = cursor;
             let fuelInTank = currentFuelL;
             let firstPass = true;
+            const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
 
             while (true) {
                 const route = await fetchRouteDetails(currentPoint, destination, true);
@@ -1804,6 +1897,15 @@ try {
                 };
                 const initialCandidate = firstPass ? selectInitialFuelCandidate(candidates, currentCursor, fuelInTank, tankCapacityL, economyLPer100km, visitedStationKeys, visitedStationNames) : null;
                 if (initialCandidate) {
+                    if ((fuelNeeded - fuelInTank) <= minimumPurchaseL) {
+                        routePieces.push({
+                            type: 'route',
+                            route,
+                        });
+                        fuelInTank = Math.max(0, fuelInTank - fuelNeeded);
+                        break;
+                    }
+
                     visitedStationKeys.add(stationKey(initialCandidate));
                     visitedStationNames.add(stationNameKey(initialCandidate));
                     const stopPoint = { lon: initialCandidate.longitude, lat: initialCandidate.latitude };
@@ -1841,7 +1943,7 @@ try {
                     continue;
                 }
 
-                if (fuelInTank >= fuelNeeded) {
+                if (fuelInTank >= fuelNeeded || (fuelNeeded - fuelInTank) <= minimumPurchaseL) {
                     routePieces.push({
                         type: 'route',
                         route,
@@ -1854,7 +1956,7 @@ try {
 
                 const chosen = selectStationCandidate(candidates, currentCursor, fuelInTank, tankCapacityL, economyLPer100km, visitedStationKeys, visitedStationNames);
                 if (!chosen) {
-                    if (fuelInTank >= fuelNeeded) {
+                    if (fuelInTank >= fuelNeeded || (fuelNeeded - fuelInTank) <= minimumPurchaseL) {
                         routePieces.push({
                             type: 'route',
                             route,
@@ -1866,6 +1968,15 @@ try {
                 }
 
                 if (chosen.progressKm >= routeKm && chosen.price === 0) {
+                    routePieces.push({
+                        type: 'route',
+                        route,
+                    });
+                    fuelInTank = Math.max(0, fuelInTank - fuelNeeded);
+                    break;
+                }
+
+                if ((chosen.predictedPurchaseL || 0) < minimumPurchaseL && (fuelNeeded - fuelInTank) <= minimumPurchaseL) {
                     routePieces.push({
                         type: 'route',
                         route,
@@ -2067,11 +2178,13 @@ try {
                         type: 'Feature',
                         properties: {
                             kind: 'fuel-stop',
-                            label: `${stop.station_name} ${routeFuelPriceText(stop.price)}`,
-                            sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L, $${(Number(stop.purchaseCents || 0) / 100).toFixed(2)}`,
+                            label: routeFuelStopLabel(stop),
+                            sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L bought`,
                             segment_index: segmentIndex + 1,
                             stop_index: stopIndex + 1,
                             price: stop.price,
+                            color: palette[segmentIndex % palette.length],
+                            icon_key: routeFuelStopIconKey(palette[segmentIndex % palette.length]),
                         },
                         geometry: {
                             type: 'Point',
@@ -2134,6 +2247,9 @@ try {
                         features: markerFeatures,
                     },
                 });
+                markerFeatures
+                    .filter((feature) => feature.properties.kind === 'fuel-stop')
+                    .forEach((feature) => routeFuelStopImage(map, feature.properties.color));
 
                 map.addLayer({
                     id: 'route-lines',
@@ -2147,36 +2263,95 @@ try {
                 });
 
                 map.addLayer({
-                    id: 'route-markers',
+                    id: 'route-origin-marker',
                     type: 'circle',
                     source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'origin'],
                     paint: {
-                        'circle-radius': [
-                            'case',
-                            ['==', ['get', 'kind'], 'fuel-stop'], 7,
-                            ['==', ['get', 'kind'], 'origin'], 8,
-                            8,
-                        ],
-                        'circle-color': [
-                            'case',
-                            ['==', ['get', 'kind'], 'origin'], '#166534',
-                            ['==', ['get', 'kind'], 'fuel-stop'], '#b45309',
-                            '#0f766e',
-                        ],
+                        'circle-radius': 8,
+                        'circle-color': '#166534',
                         'circle-stroke-color': '#ffffff',
                         'circle-stroke-width': 2,
                     },
                 });
 
                 map.addLayer({
-                    id: 'route-labels',
+                    id: 'route-destination-marker',
+                    type: 'circle',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'destination'],
+                    paint: {
+                        'circle-radius': 8,
+                        'circle-color': '#0f766e',
+                        'circle-stroke-color': '#ffffff',
+                        'circle-stroke-width': 2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-fuel-icons',
                     type: 'symbol',
                     source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'fuel-stop'],
+                    layout: {
+                        'icon-image': ['get', 'icon_key'],
+                        'icon-size': 0.8,
+                        'icon-allow-overlap': true,
+                        'icon-ignore-placement': true,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-fuel-labels',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'fuel-stop'],
                     layout: {
                         'text-field': ['get', 'label'],
                         'text-size': 12,
-                        'text-offset': ['case', ['==', ['get', 'kind'], 'origin'], ['literal', [0, -1.3]], ['literal', [0, 1.2]]],
-                        'text-anchor': ['case', ['==', ['get', 'kind'], 'origin'], 'top', 'bottom'],
+                        'text-offset': ['literal', [0, 1.9]],
+                        'text-anchor': 'top',
+                        'text-justify': 'center',
+                        'text-allow-overlap': true,
+                        'text-ignore-placement': true,
+                        'text-max-width': 18,
+                    },
+                    paint: {
+                        'text-color': ['get', 'color'],
+                        'text-halo-color': '#ffffff',
+                        'text-halo-width': 1.4,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-origin-label',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'origin'],
+                    layout: {
+                        'text-field': ['get', 'label'],
+                        'text-size': 12,
+                        'text-offset': ['literal', [0, -1.3]],
+                        'text-anchor': 'top',
+                        'text-allow-overlap': true,
+                    },
+                    paint: {
+                        'text-color': '#16212d',
+                        'text-halo-color': '#ffffff',
+                        'text-halo-width': 1.2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-destination-label',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'destination'],
+                    layout: {
+                        'text-field': ['get', 'label'],
+                        'text-size': 12,
+                        'text-offset': ['literal', [0, 1.2]],
+                        'text-anchor': 'bottom',
                         'text-allow-overlap': true,
                     },
                     paint: {
