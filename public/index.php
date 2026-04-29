@@ -1354,7 +1354,7 @@ try {
         }
 
         async function fetchRouteStations(point, fuelQuery) {
-            const payload = await apiRequest(`/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=8&limit=8`);
+            const payload = await apiRequest(`/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=25&limit=20`);
             const rows = Array.isArray(payload.rows) ? payload.rows : [];
             return rows.map((row) => ({
                 source: row.source,
@@ -1424,7 +1424,32 @@ try {
             return scored[0];
         }
 
-        async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery, forceInitialStop = false) {
+        function selectInitialFuelCandidate(candidates, cursor, currentFuelL, economyLPer100km) {
+            const reachableRangeKm = currentFuelL / (economyLPer100km / 100);
+            const launchWindowKm = reachableRangeKm * 0.75;
+            const reachable = candidates
+                .filter((candidate) => candidate.progressKm > cursor.progressKm)
+                .filter((candidate) => (candidate.progressKm - cursor.progressKm) <= launchWindowKm)
+                .filter((candidate) => candidate.routeDistanceFromCursorKm <= launchWindowKm);
+
+            if (reachable.length === 0) {
+                return null;
+            }
+
+            reachable.sort((left, right) => {
+                if (left.price !== right.price) {
+                    return left.price - right.price;
+                }
+                if (left.routeDistanceFromCursorKm !== right.routeDistanceFromCursorKm) {
+                    return left.routeDistanceFromCursorKm - right.routeDistanceFromCursorKm;
+                }
+                return left.progressKm - right.progressKm;
+            });
+
+            return reachable[0];
+        }
+
+        async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
             const chosenStops = [];
             const routePieces = [];
             let currentPoint = cursor;
@@ -1454,8 +1479,9 @@ try {
                         routeDistanceFromCursorKm: bestDistance * 1.15,
                         progressKm: nearestProgress.progressKm,
                     };
-                }).filter((candidate) => candidate.routeDistanceFromCursorKm <= 8);
+                }).filter((candidate) => candidate.routeDistanceFromCursorKm <= 25);
 
+                const currentCursor = routePoint(currentPoint.lon, currentPoint.lat, 0);
                 const destinationNode = {
                     progressKm: routeKm,
                     routeDistanceFromCursorKm: 0,
@@ -1463,30 +1489,57 @@ try {
                     station_name: destination.display_name || destination.query,
                     state: destination.state || '',
                 };
-                if (!forceInitialStop) {
-                    candidates.push(destinationNode);
-                }
-
-                if (!forceInitialStop && fuelInTank >= fuelNeeded) {
-                    routePieces.push({
-                        type: 'route',
-                        route,
-                    });
-                    fuelInTank -= fuelNeeded;
-                    break;
-                }
-
-                const chosen = selectStationCandidate(candidates, routePoint(currentPoint.lon, currentPoint.lat, 0), fuelInTank, tankCapacityL, economyLPer100km, forceInitialStop && firstPass);
-                if (!chosen) {
-                    if (fuelInTank < fuelNeeded) {
-                        throw new Error(`No fuel stop is reachable before running out of fuel on the way to ${destination.display_name || destination.query}.`);
+                const initialCandidate = firstPass ? selectInitialFuelCandidate(candidates, currentCursor, fuelInTank, economyLPer100km) : null;
+                if (initialCandidate) {
+                    const stopPoint = { lon: initialCandidate.longitude, lat: initialCandidate.latitude };
+                    const approach = await fetchRouteDetails(currentPoint, stopPoint, true);
+                    const approachFuel = (approach.distanceM / 1000) * (economyLPer100km / 100);
+                    if (fuelInTank < approachFuel) {
+                        throw new Error(`Fuel range is insufficient to reach ${initialCandidate.station_name}.`);
                     }
+
+                    routePieces.push({
+                        type: 'route',
+                        route: approach,
+                    });
+
+                    const fuelAfterArrival = Math.max(0, fuelInTank - approachFuel);
+                    const litresToBuy = Math.max(0, tankCapacityL - fuelAfterArrival);
+                    const purchaseCents = litresToBuy * initialCandidate.price;
+                    chosenStops.push({
+                        ...initialCandidate,
+                        litresPurchased: litresToBuy,
+                        purchaseCents,
+                        fuelAfterArrival,
+                    });
+
+                    routePieces.push({
+                        type: 'fuel-stop',
+                        station: initialCandidate,
+                        litresPurchased: litresToBuy,
+                        purchaseCents,
+                    });
+
+                    fuelInTank = tankCapacityL;
+                    currentPoint = stopPoint;
+                    firstPass = false;
+                    continue;
+                }
+
+                if (fuelInTank >= fuelNeeded) {
                     routePieces.push({
                         type: 'route',
                         route,
                     });
                     fuelInTank -= fuelNeeded;
                     break;
+                }
+
+                candidates.push(destinationNode);
+
+                const chosen = selectStationCandidate(candidates, currentCursor, fuelInTank, tankCapacityL, economyLPer100km);
+                if (!chosen) {
+                    throw new Error(`No fuel stop is reachable before running out of fuel on the way to ${destination.display_name || destination.query}.`);
                 }
 
                 if (chosen.progressKm >= routeKm && chosen.price === 0) {
@@ -1562,8 +1615,7 @@ try {
                     currentFuel,
                     tankCapacityL,
                     economyLPer100km,
-                    fuelQuery,
-                    index === 1
+                    fuelQuery
                 );
 
                 const routeItems = segment.routePieces.filter((item) => item.type === 'route');
