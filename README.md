@@ -231,6 +231,12 @@ REPLICATION_URL=https://download.geofabrik.de/australia-oceania/australia-update
 
 OSRM uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
 
+Custom OSRM profile template:
+
+- `config/osrm/car.profile.template.lua` is a tracked scaffold for a custom OSRM Lua profile.
+- Copy or adapt it to the file you mount as `/opt/car.lua` for `osrm-extract`.
+- Fill in the `EDIT ME` sections with your access, speed, and penalty rules before rebuilding OSRM data.
+
 Build OSRM data:
 
 ```bash
