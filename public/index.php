@@ -1429,10 +1429,14 @@ try {
 
         function haversineKm(left, right) {
             const toRad = Math.PI / 180;
-            const lat1 = Number(left.lat) * toRad;
-            const lon1 = Number(left.lon) * toRad;
-            const lat2 = Number(right.lat) * toRad;
-            const lon2 = Number(right.lon) * toRad;
+            const leftLat = Number(left?.lat ?? left?.latitude ?? 0);
+            const leftLon = Number(left?.lon ?? left?.longitude ?? 0);
+            const rightLat = Number(right?.lat ?? right?.latitude ?? 0);
+            const rightLon = Number(right?.lon ?? right?.longitude ?? 0);
+            const lat1 = leftLat * toRad;
+            const lon1 = leftLon * toRad;
+            const lat2 = rightLat * toRad;
+            const lon2 = rightLon * toRad;
             const dLat = lat2 - lat1;
             const dLon = lon2 - lon1;
             const a = Math.sin(dLat / 2) ** 2
@@ -1455,9 +1459,11 @@ try {
                 if (index > 0) {
                     total += haversineKm(points[index - 1], point);
                 }
+                const lon = Number(Array.isArray(point) ? point[0] : point?.lon);
+                const lat = Number(Array.isArray(point) ? point[1] : point?.lat);
                 progress.push({
-                    lon: point[0],
-                    lat: point[1],
+                    lon,
+                    lat,
                     progressKm: total,
                 });
             });
