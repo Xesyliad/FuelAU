@@ -438,13 +438,17 @@ try {
 
         .route-stop-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: auto minmax(0, 1fr) auto;
             gap: 10px;
-            align-items: end;
+            align-items: center;
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 10px;
             background: #fbfcfd;
+        }
+
+        .route-stop-row.is-dragging {
+            opacity: 0.55;
         }
 
         .route-stop-actions {
@@ -459,6 +463,39 @@ try {
             min-width: 56px;
             padding: 0 10px;
             font-weight: 700;
+        }
+
+        .route-stop-handle,
+        .route-stop-remove {
+            width: 38px;
+            height: 38px;
+            min-width: 38px;
+            display: inline-grid;
+            place-items: center;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            color: var(--text);
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .route-stop-handle {
+            cursor: grab;
+        }
+
+        .route-stop-handle:active {
+            cursor: grabbing;
+        }
+
+        .route-stop-handle:disabled,
+        .route-stop-remove:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .route-stop-remove {
+            color: var(--danger);
         }
 
         .route-switches {
@@ -978,7 +1015,6 @@ try {
                         <div class="route-destinations">
                             <div class="route-destination-header">
                                 <div>
-                                    <h2 style="margin: 0;">Destination</h2>
                                     <p class="route-muted">Add one or more stops, then reorder them before planning.</p>
                                 </div>
                                 <button class="button primary" type="button" id="route-add-destination">+</button>
@@ -1090,6 +1126,7 @@ try {
         let selectedContainerRestartable = false;
         let fuelOptions = null;
         let routeDestinationCounter = 0;
+        let draggedRouteDestinationRow = null;
         let fuelMapInstance = null;
         let fuelMapReady = false;
         let fuelMapPopup = null;
@@ -1330,24 +1367,21 @@ try {
             row.className = 'route-stop-row';
             row.dataset.routeDestinationId = String(routeDestinationCounter);
             row.innerHTML = `
-                <div class="field">
-                    <label for="route-destination-${routeDestinationCounter}">Destination</label>
+                <button class="route-stop-handle" type="button" draggable="true" data-action="drag" aria-label="Drag to reorder destination">☰</button>
+                <div class="field route-destination-field">
                     <div class="route-autocomplete">
-                        <input type="text" id="route-destination-${routeDestinationCounter}" class="route-destination-input route-autocomplete-input" placeholder="Enter a destination" value="${escapeHtml(value)}" autocomplete="off">
+                        <input type="text" id="route-destination-${routeDestinationCounter}" class="route-destination-input route-autocomplete-input" placeholder="Enter a destination" value="${escapeHtml(value)}" autocomplete="off" aria-label="Destination">
                         <div class="route-autocomplete-panel" hidden></div>
                     </div>
                 </div>
                 <div class="route-stop-actions">
-                    <button class="button" type="button" data-action="up">Up</button>
-                    <button class="button" type="button" data-action="down">Down</button>
-                    <button class="button danger" type="button" data-action="remove">Remove</button>
+                    <button class="route-stop-remove" type="button" data-action="remove" aria-label="Remove destination">X</button>
                 </div>
             `;
 
             attachRouteAutocomplete(row.querySelector('.route-destination-input'));
 
-            row.querySelector('[data-action="up"]').addEventListener('click', () => moveRouteDestination(row, -1));
-            row.querySelector('[data-action="down"]').addEventListener('click', () => moveRouteDestination(row, 1));
+            attachRouteDestinationDrag(row);
             row.querySelector('[data-action="remove"]').addEventListener('click', () => removeRouteDestination(row));
             return row;
         }
@@ -1362,14 +1396,10 @@ try {
         function syncRouteDestinationControls() {
             const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
             rows.forEach((row, index) => {
-                const up = row.querySelector('[data-action="up"]');
-                const down = row.querySelector('[data-action="down"]');
+                const drag = row.querySelector('[data-action="drag"]');
                 const remove = row.querySelector('[data-action="remove"]');
-                if (up) {
-                    up.disabled = index === 0;
-                }
-                if (down) {
-                    down.disabled = index === rows.length - 1;
+                if (drag) {
+                    drag.disabled = rows.length === 1;
                 }
                 if (remove) {
                     remove.disabled = rows.length === 1;
@@ -1380,6 +1410,51 @@ try {
         function addRouteDestination(value = '') {
             routeDestinationList.appendChild(createRouteDestinationRow(value));
             syncRouteDestinationControls();
+        }
+
+        function attachRouteDestinationDrag(row) {
+            const handle = row.querySelector('[data-action="drag"]');
+            if (!handle) {
+                return;
+            }
+
+            handle.addEventListener('dragstart', (event) => {
+                if (handle.disabled) {
+                    event.preventDefault();
+                    return;
+                }
+                draggedRouteDestinationRow = row;
+                row.classList.add('is-dragging');
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', row.dataset.routeDestinationId || '');
+            });
+
+            handle.addEventListener('dragend', () => {
+                row.classList.remove('is-dragging');
+                draggedRouteDestinationRow = null;
+                syncRouteDestinationControls();
+            });
+
+            row.addEventListener('dragover', (event) => {
+                if (!draggedRouteDestinationRow || draggedRouteDestinationRow === row) {
+                    return;
+                }
+                event.preventDefault();
+                const rect = row.getBoundingClientRect();
+                const placeAfter = event.clientY > rect.top + (rect.height / 2);
+                routeDestinationList.insertBefore(
+                    draggedRouteDestinationRow,
+                    placeAfter ? row.nextSibling : row
+                );
+            });
+
+            row.addEventListener('drop', (event) => {
+                if (!draggedRouteDestinationRow) {
+                    return;
+                }
+                event.preventDefault();
+                syncRouteDestinationControls();
+            });
         }
 
         function moveRouteDestination(row, offset) {
