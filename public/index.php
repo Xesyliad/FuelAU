@@ -848,6 +848,7 @@ try {
 
                         <div class="route-actions">
                             <button class="button primary" type="button" id="route-plan">Plan Route</button>
+                            <button class="button" type="button" id="route-test">Load Test Cities</button>
                             <button class="button" type="button" id="route-reset">Reset</button>
                         </div>
 
@@ -920,6 +921,7 @@ try {
         const routeReturnReverses = document.getElementById('route-return-reverses');
         const routeReturnDirect = document.getElementById('route-return-direct');
         const routePlan = document.getElementById('route-plan');
+        const routeTest = document.getElementById('route-test');
         const routeReset = document.getElementById('route-reset');
         const routeStatus = document.getElementById('route-status');
         const routeSummary = document.getElementById('route-summary');
@@ -1900,6 +1902,20 @@ try {
             routeLegs.innerHTML = renderRouteEmpty('No route planned yet.');
         }
 
+        function loadRouteTestCities() {
+            resetRoutePlanner();
+            routeOrigin.value = 'Cairns';
+            const destinations = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
+            if (destinations[0]) {
+                destinations[0].querySelector('.route-destination-input').value = 'Birdsville';
+            }
+            addRouteDestination('Brisbane');
+            routeFuelFill.value = '60';
+            routeFuelEconomy.value = '12';
+            routeStatus.textContent = 'Loaded test cities: Cairns -> Birdsville -> Brisbane.';
+            planRoute();
+        }
+
         function formatBytes(bytes) {
             const value = Number(bytes || 0);
             if (value < 1024) {
@@ -2348,6 +2364,7 @@ try {
 
         routeAddDestination.addEventListener('click', () => addRouteDestination(''));
         routePlan.addEventListener('click', planRoute);
+        routeTest.addEventListener('click', loadRouteTestCities);
         routeReset.addEventListener('click', resetRoutePlanner);
 
         fuelState.addEventListener('change', handleFuelFilterChange);
