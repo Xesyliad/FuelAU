@@ -276,6 +276,17 @@ try {
             font: inherit;
         }
 
+        .field input[type="text"],
+        .field input[type="number"] {
+            min-height: 38px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--text);
+            padding: 0 10px;
+            font: inherit;
+        }
+
         .fuel-grid {
             display: grid;
             grid-template-columns: 1.2fr 1.2fr 0.9fr;
@@ -323,6 +334,199 @@ try {
 
         .summary-card span {
             display: block;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .route-layout {
+            display: grid;
+            gap: 14px;
+        }
+
+        .route-top {
+            display: grid;
+            gap: 14px;
+        }
+
+        .route-input-grid {
+            display: grid;
+            grid-template-columns: 1.5fr 0.7fr 0.7fr;
+            gap: 10px;
+        }
+
+        .route-destinations {
+            display: grid;
+            gap: 10px;
+        }
+
+        .route-destination-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .route-destination-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .route-stop-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            align-items: end;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            background: #fbfcfd;
+        }
+
+        .route-stop-actions {
+            display: grid;
+            grid-auto-flow: column;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .route-stop-actions .button {
+            min-width: 56px;
+            padding: 0 10px;
+            font-weight: 700;
+        }
+
+        .route-switches {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .switch-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 38px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0 12px 0 10px;
+            background: #fff;
+            color: var(--text);
+            cursor: pointer;
+            font: inherit;
+            font-weight: 700;
+        }
+
+        .switch-control input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .switch-track {
+            position: relative;
+            width: 34px;
+            height: 20px;
+            border-radius: 999px;
+            background: #cbd5e1;
+            flex: 0 0 auto;
+            transition: background 0.15s ease;
+        }
+
+        .switch-track::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #fff;
+            transition: transform 0.15s ease;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+        }
+
+        .switch-control input:checked + .switch-track {
+            background: var(--accent);
+        }
+
+        .switch-control input:checked + .switch-track::after {
+            transform: translateX(14px);
+        }
+
+        .switch-control:focus-within {
+            outline: 3px solid rgba(15, 118, 110, 0.25);
+            outline-offset: 2px;
+        }
+
+        .route-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .route-results {
+            display: grid;
+            gap: 14px;
+        }
+
+        .route-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .route-summary-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fbfcfd;
+            padding: 12px;
+        }
+
+        .route-summary-card strong {
+            display: block;
+            font-size: 20px;
+            line-height: 1.15;
+            margin-bottom: 6px;
+            color: var(--accent);
+        }
+
+        .route-summary-card span {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .route-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .route-table th,
+        .route-table td {
+            text-align: left;
+            padding: 8px 0;
+            border-bottom: 1px solid #e8edf2;
+            vertical-align: top;
+        }
+
+        .route-table th {
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .route-empty {
+            display: grid;
+            place-items: center;
+            min-height: 120px;
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .route-muted {
             color: var(--muted);
             font-size: 12px;
         }
@@ -406,6 +610,19 @@ try {
             .fuel-grid {
                 grid-template-columns: 1fr;
             }
+
+            .route-input-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .route-stop-row {
+                grid-template-columns: 1fr;
+            }
+
+            .route-stop-actions {
+                grid-auto-flow: row;
+                justify-content: start;
+            }
         }
     </style>
 </head>
@@ -466,7 +683,75 @@ try {
             </div>
             <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab">
                 <h1>Route Planning</h1>
-                <p>Route planning controls will be added here.</p>
+                <p>Plan routes through the app-owned geocoding and routing API. Add multiple destinations, reorder them, and choose how the return leg behaves.</p>
+
+                <div class="route-layout">
+                    <section class="surface-block route-top">
+                        <h2>Trip Inputs</h2>
+                        <p>Origin, destinations, fuel inputs, and return mode live here.</p>
+
+                        <div class="route-input-grid">
+                            <div class="field">
+                                <label for="route-origin">Origin</label>
+                                <input type="text" id="route-origin" placeholder="Enter an origin">
+                            </div>
+                            <div class="field">
+                                <label for="route-fuel-fill">Fuel Fill (L)</label>
+                                <input type="number" id="route-fuel-fill" min="0" step="0.1" inputmode="decimal" placeholder="0.0">
+                            </div>
+                            <div class="field">
+                                <label for="route-fuel-economy">Fuel Economy (L/100km)</label>
+                                <input type="number" id="route-fuel-economy" min="0.1" step="0.1" inputmode="decimal" placeholder="0.0">
+                            </div>
+                        </div>
+
+                        <div class="route-destinations">
+                            <div class="route-destination-header">
+                                <div>
+                                    <h2 style="margin: 0;">Destination</h2>
+                                    <p class="route-muted">Add one or more stops, then reorder them before planning.</p>
+                                </div>
+                                <button class="button primary" type="button" id="route-add-destination">+</button>
+                            </div>
+                            <div class="route-destination-list" id="route-destination-list"></div>
+                        </div>
+
+                        <div class="route-switches" role="group" aria-label="Return mode">
+                            <label class="switch-control">
+                                <input type="checkbox" id="route-return-reverses">
+                                <span class="switch-track" aria-hidden="true"></span>
+                                <span>Return reverses path</span>
+                            </label>
+                            <label class="switch-control">
+                                <input type="checkbox" id="route-return-direct">
+                                <span class="switch-track" aria-hidden="true"></span>
+                                <span>Return direct to origin</span>
+                            </label>
+                        </div>
+
+                        <div class="route-actions">
+                            <button class="button primary" type="button" id="route-plan">Plan Route</button>
+                            <button class="button" type="button" id="route-reset">Reset</button>
+                        </div>
+
+                        <div class="status-line" id="route-status">Enter a trip to build a route.</div>
+                    </section>
+
+                    <section class="surface-block route-results">
+                        <h2>Route Summary</h2>
+                        <div class="route-summary-grid" id="route-summary"></div>
+                    </section>
+
+                    <section class="surface-block">
+                        <h2>Resolved Stops</h2>
+                        <div id="route-resolved"></div>
+                    </section>
+
+                    <section class="surface-block">
+                        <h2>Leg Breakdown</h2>
+                        <div id="route-legs"></div>
+                    </section>
+                </div>
             </div>
             <div class="panel" role="tabpanel" id="container-management" aria-labelledby="container-management-tab">
                 <h1>Container Management</h1>
@@ -508,9 +793,23 @@ try {
         const fuelMonthlyMeta = document.getElementById('fuel-monthly-meta');
         const fuelSnapshot = document.getElementById('fuel-snapshot');
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
+        const routeOrigin = document.getElementById('route-origin');
+        const routeFuelFill = document.getElementById('route-fuel-fill');
+        const routeFuelEconomy = document.getElementById('route-fuel-economy');
+        const routeDestinationList = document.getElementById('route-destination-list');
+        const routeAddDestination = document.getElementById('route-add-destination');
+        const routeReturnReverses = document.getElementById('route-return-reverses');
+        const routeReturnDirect = document.getElementById('route-return-direct');
+        const routePlan = document.getElementById('route-plan');
+        const routeReset = document.getElementById('route-reset');
+        const routeStatus = document.getElementById('route-status');
+        const routeSummary = document.getElementById('route-summary');
+        const routeResolved = document.getElementById('route-resolved');
+        const routeLegs = document.getElementById('route-legs');
         let selectedContainerId = null;
         let selectedContainerRestartable = false;
         let fuelOptions = null;
+        let routeDestinationCounter = 0;
 
         tabs.forEach((tab) => {
             tab.addEventListener('click', () => {
@@ -564,6 +863,310 @@ try {
                 '"': '&quot;',
                 "'": '&#039;',
             }[character]));
+        }
+
+        function formatRouteDistance(meters) {
+            const distance = Number(meters || 0);
+            if (distance >= 1000) {
+                return `${(distance / 1000).toFixed(distance >= 10000 ? 0 : 1)} km`;
+            }
+            return `${distance.toFixed(0)} m`;
+        }
+
+        function formatRouteDuration(seconds) {
+            const duration = Math.max(0, Math.round(Number(seconds || 0)));
+            const hours = Math.floor(duration / 3600);
+            const minutes = Math.floor((duration % 3600) / 60);
+            if (hours > 0) {
+                return `${hours}h ${minutes}m`;
+            }
+            return `${minutes}m`;
+        }
+
+        function createRouteDestinationRow(value = '') {
+            routeDestinationCounter += 1;
+            const row = document.createElement('div');
+            row.className = 'route-stop-row';
+            row.dataset.routeDestinationId = String(routeDestinationCounter);
+            row.innerHTML = `
+                <div class="field">
+                    <label for="route-destination-${routeDestinationCounter}">Destination</label>
+                    <input type="text" id="route-destination-${routeDestinationCounter}" class="route-destination-input" placeholder="Enter a destination" value="${escapeHtml(value)}">
+                </div>
+                <div class="route-stop-actions">
+                    <button class="button" type="button" data-action="up">Up</button>
+                    <button class="button" type="button" data-action="down">Down</button>
+                    <button class="button danger" type="button" data-action="remove">Remove</button>
+                </div>
+            `;
+
+            row.querySelector('[data-action="up"]').addEventListener('click', () => moveRouteDestination(row, -1));
+            row.querySelector('[data-action="down"]').addEventListener('click', () => moveRouteDestination(row, 1));
+            row.querySelector('[data-action="remove"]').addEventListener('click', () => removeRouteDestination(row));
+            return row;
+        }
+
+        function ensureRouteDestinationRow() {
+            if (routeDestinationList.children.length === 0) {
+                routeDestinationList.appendChild(createRouteDestinationRow());
+            }
+            syncRouteDestinationControls();
+        }
+
+        function syncRouteDestinationControls() {
+            const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
+            rows.forEach((row, index) => {
+                const up = row.querySelector('[data-action="up"]');
+                const down = row.querySelector('[data-action="down"]');
+                const remove = row.querySelector('[data-action="remove"]');
+                if (up) {
+                    up.disabled = index === 0;
+                }
+                if (down) {
+                    down.disabled = index === rows.length - 1;
+                }
+                if (remove) {
+                    remove.disabled = rows.length === 1;
+                }
+            });
+        }
+
+        function addRouteDestination(value = '') {
+            routeDestinationList.appendChild(createRouteDestinationRow(value));
+            syncRouteDestinationControls();
+        }
+
+        function moveRouteDestination(row, offset) {
+            const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
+            const currentIndex = rows.indexOf(row);
+            const targetIndex = currentIndex + offset;
+            if (currentIndex < 0 || targetIndex < 0 || targetIndex >= rows.length) {
+                return;
+            }
+
+            const reference = offset > 0 ? rows[targetIndex].nextSibling : rows[targetIndex];
+            routeDestinationList.insertBefore(row, reference);
+            syncRouteDestinationControls();
+        }
+
+        function removeRouteDestination(row) {
+            const rows = routeDestinationList.querySelectorAll('.route-stop-row');
+            if (rows.length === 1) {
+                const input = row.querySelector('.route-destination-input');
+                if (input) {
+                    input.value = '';
+                }
+                return;
+            }
+
+            row.remove();
+            syncRouteDestinationControls();
+        }
+
+        function routeDestinationValues() {
+            return Array.from(routeDestinationList.querySelectorAll('.route-destination-input'))
+                .map((input) => input.value.trim())
+                .filter((value) => value !== '');
+        }
+
+        function setExclusiveRouteSwitch(changedInput) {
+            if (changedInput === routeReturnReverses && routeReturnReverses.checked) {
+                routeReturnDirect.checked = false;
+            } else if (changedInput === routeReturnDirect && routeReturnDirect.checked) {
+                routeReturnReverses.checked = false;
+            }
+        }
+
+        function renderRouteEmpty(message) {
+            return `<div class="route-empty">${escapeHtml(message)}</div>`;
+        }
+
+        function renderRouteSummary(summary) {
+            const cards = [
+                ['Distance', formatRouteDistance(summary.distance_m || 0)],
+                ['Drive Time', formatRouteDuration(summary.duration_s || 0)],
+                ['Fuel Used', `${Number(summary.fuel_used_l || 0).toFixed(1)} L`],
+                ['Fuel Fill', `${Number(summary.fuel_fill_l || 0).toFixed(1)} L`],
+                ['Fuel Balance', `${Number(summary.fuel_balance_l || 0).toFixed(1)} L`],
+            ];
+            routeSummary.innerHTML = cards.map(([label, value]) => `
+                <article class="route-summary-card">
+                    <strong>${escapeHtml(value)}</strong>
+                    <span>${escapeHtml(label)}</span>
+                </article>
+            `).join('');
+        }
+
+        function renderRouteResolved(stops) {
+            if (!Array.isArray(stops) || stops.length === 0) {
+                routeResolved.innerHTML = renderRouteEmpty('No resolved locations yet.');
+                return;
+            }
+
+            routeResolved.innerHTML = `
+                <table class="route-table">
+                    <thead>
+                        <tr>
+                            <th>Stop</th>
+                            <th>Query</th>
+                            <th>Resolved</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${stops.map((stop, index) => `
+                            <tr>
+                                <td>${escapeHtml(index === 0 ? 'Origin' : `Destination ${index}`)}</td>
+                                <td>${escapeHtml(stop.query || '')}</td>
+                                <td>${escapeHtml(stop.display_name || 'No match')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function renderRouteLegs(legs) {
+            if (!Array.isArray(legs) || legs.length === 0) {
+                routeLegs.innerHTML = renderRouteEmpty('Plan a route to see leg breakdowns.');
+                return;
+            }
+
+            routeLegs.innerHTML = `
+                <table class="route-table">
+                    <thead>
+                        <tr>
+                            <th>Leg</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Distance</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${legs.map((leg, index) => `
+                            <tr>
+                                <td>${escapeHtml(String(index + 1))}</td>
+                                <td>${escapeHtml(leg.from?.display_name || leg.from?.query || '')}</td>
+                                <td>${escapeHtml(leg.to?.display_name || leg.to?.query || '')}</td>
+                                <td>${escapeHtml(formatRouteDistance(leg.distance_m || 0))}</td>
+                                <td>${escapeHtml(formatRouteDuration(leg.duration_s || 0))}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        async function resolveRouteLocation(query) {
+            const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=1`);
+            const result = Array.isArray(payload.results) ? payload.results[0] : null;
+            if (!result) {
+                throw new Error(`No geocoding result for "${query}"`);
+            }
+            return {
+                query,
+                display_name: result.display_name || query,
+                lat: Number(result.lat),
+                lon: Number(result.lon),
+            };
+        }
+
+        async function requestRouteLeg(from, to) {
+            const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`;
+            const payload = await apiRequest(`/api/route?coordinates=${encodeURIComponent(coordinates)}&steps=0`);
+            const route = Array.isArray(payload.routes) ? payload.routes[0] : null;
+            if (!route) {
+                throw new Error('Route service returned no route.');
+            }
+            return {
+                from,
+                to,
+                distance_m: Number(route.distance || 0),
+                duration_s: Number(route.duration || 0),
+            };
+        }
+
+        async function planRoute() {
+            const originValue = routeOrigin.value.trim();
+            const destinationValues = routeDestinationValues();
+            const fuelFill = Number(routeFuelFill.value || 0);
+            const fuelEconomy = Number(routeFuelEconomy.value || 0);
+
+            if (originValue === '') {
+                routeStatus.textContent = 'Origin is required.';
+                return;
+            }
+            if (destinationValues.length === 0) {
+                routeStatus.textContent = 'At least one destination is required.';
+                return;
+            }
+
+            routePlan.disabled = true;
+            routeStatus.textContent = 'Resolving locations and building route legs...';
+            routeSummary.innerHTML = renderRouteEmpty('Planning route...');
+            routeResolved.innerHTML = renderRouteEmpty('Resolving locations...');
+            routeLegs.innerHTML = renderRouteEmpty('Building legs...');
+
+            try {
+                const origin = await resolveRouteLocation(originValue);
+                const destinations = await Promise.all(destinationValues.map((value) => resolveRouteLocation(value)));
+                const forwardStops = [origin, ...destinations];
+                const legs = [];
+
+                for (let index = 0; index < forwardStops.length - 1; index += 1) {
+                    legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index + 1]));
+                }
+
+                if (routeReturnReverses.checked) {
+                    for (let index = forwardStops.length - 1; index > 0; index -= 1) {
+                        legs.push(await requestRouteLeg(forwardStops[index], forwardStops[index - 1]));
+                    }
+                } else if (routeReturnDirect.checked) {
+                    legs.push(await requestRouteLeg(forwardStops[forwardStops.length - 1], origin));
+                }
+
+                const totalDistance = legs.reduce((sum, leg) => sum + leg.distance_m, 0);
+                const totalDuration = legs.reduce((sum, leg) => sum + leg.duration_s, 0);
+                const fuelUsed = fuelEconomy > 0 ? (totalDistance / 1000) * (fuelEconomy / 100) : 0;
+                const fuelBalance = fuelFill > 0 ? fuelFill - fuelUsed : 0;
+
+                renderRouteSummary({
+                    distance_m: totalDistance,
+                    duration_s: totalDuration,
+                    fuel_used_l: fuelUsed,
+                    fuel_fill_l: fuelFill,
+                    fuel_balance_l: fuelFill > 0 ? fuelBalance : 0,
+                });
+                renderRouteResolved([origin, ...destinations]);
+                renderRouteLegs(legs);
+
+                const returnMode = routeReturnReverses.checked
+                    ? 'Return reverses path'
+                    : (routeReturnDirect.checked ? 'Return direct to origin' : 'No return leg');
+                routeStatus.textContent = `Planned ${legs.length} legs using ${returnMode}.`;
+            } catch (error) {
+                routeStatus.textContent = error.message;
+                routeSummary.innerHTML = renderRouteEmpty(error.message);
+                routeResolved.innerHTML = renderRouteEmpty(error.message);
+                routeLegs.innerHTML = renderRouteEmpty(error.message);
+            } finally {
+                routePlan.disabled = false;
+            }
+        }
+
+        function resetRoutePlanner() {
+            routeOrigin.value = '';
+            routeFuelFill.value = '';
+            routeFuelEconomy.value = '';
+            routeReturnReverses.checked = false;
+            routeReturnDirect.checked = false;
+            routeDestinationList.innerHTML = '';
+            routeDestinationCounter = 0;
+            addRouteDestination('');
+            routeStatus.textContent = 'Enter a trip to build a route.';
+            routeSummary.innerHTML = renderRouteEmpty('No route planned yet.');
+            routeResolved.innerHTML = renderRouteEmpty('No route planned yet.');
+            routeLegs.innerHTML = renderRouteEmpty('No route planned yet.');
         }
 
         function formatBytes(bytes) {
@@ -1007,11 +1610,18 @@ try {
             'Remove dangling Docker images? This does not remove tagged images.'
         ));
 
+        routeAddDestination.addEventListener('click', () => addRouteDestination(''));
+        routeReturnReverses.addEventListener('change', () => setExclusiveRouteSwitch(routeReturnReverses));
+        routeReturnDirect.addEventListener('change', () => setExclusiveRouteSwitch(routeReturnDirect));
+        routePlan.addEventListener('click', planRoute);
+        routeReset.addEventListener('click', resetRoutePlanner);
+
         [fuelState, fuelType].forEach((element) => {
             element.addEventListener('change', loadFuelDashboard);
         });
         fuelState.addEventListener('change', syncFuelSelectors);
         refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
+        resetRoutePlanner();
         loadFuelDashboard();
     </script>
 </body>
