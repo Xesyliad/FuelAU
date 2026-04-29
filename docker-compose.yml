@@ -171,6 +171,9 @@ services:
     depends_on:
       app:
         condition: service_started
+    command:
+      - --public_url
+      - /tiles/
     ports:
       - "127.0.0.1:${MAP_TILE_PORT:-18082}:8080"
     volumes:

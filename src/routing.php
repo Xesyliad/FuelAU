@@ -14,10 +14,10 @@ function fuelauServiceBaseUrl(string $service): string
 function fuelauMapTileConfig(): array
 {
     $config = fuelauConfig();
-    $baseUrl = trim((string) ($config['MAP_TILE_SERVER_URL'] ?? 'http://127.0.0.1:18082'));
+    $baseUrl = trim((string) ($config['MAP_TILE_SERVER_URL'] ?? '/tiles'));
     $styleId = trim((string) ($config['MAP_TILE_STYLE'] ?? 'basic-preview'));
     if ($baseUrl === '') {
-        $baseUrl = 'http://127.0.0.1:18082';
+        $baseUrl = '/tiles';
     }
     if ($styleId === '') {
         $styleId = 'basic-preview';

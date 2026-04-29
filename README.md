@@ -376,8 +376,10 @@ Current services:
 
 The app exposes the tile server config at `/api/map/config`. The default local settings are:
 
-- `MAP_TILE_SERVER_URL=http://127.0.0.1:18082`
+- `MAP_TILE_SERVER_URL=/tiles`
 - `MAP_TILE_STYLE=basic-preview`
+
+The browser should load map assets from the app host at `/tiles/`, which Apache reverse proxies to the internal `map-server` container.
 
 Rebuild the basemap manually:
 
