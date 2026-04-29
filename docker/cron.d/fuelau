@@ -10,3 +10,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # NSW Fuel API: reuse cached OAuth token, refresh reference data daily, and sync prices every 30 minutes.
 15,45 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nsw_sync.cli all >> /var/log/fuelapi/nsw_sync.log 2>&1
+
+# Victoria Servo Saver Open Data: refresh reference data daily and sync prices every 30 minutes.
+5,35 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all >> /var/log/fuelapi/vic_sync.log 2>&1

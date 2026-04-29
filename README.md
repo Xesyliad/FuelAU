@@ -8,6 +8,7 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 - A PHP/Apache app container with cron.
 - MariaDB-backed Fuel Prices Queensland imports.
 - MariaDB-backed NSW Fuel API imports for NSW and Tasmania.
+- Victoria Servo Saver open-data imports.
 - Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
 - Optional Australia routing/geocoding services using OSRM and Nominatim.
 
@@ -121,7 +122,7 @@ Fuel response notes:
 
 - `price` is normalized to cents-per-litre across sources.
 - `price_raw` preserves the original stored source value.
-- `source` currently supports `qld`, `nsw`, `tas`, and `all`.
+- `source` currently supports `qld`, `nsw`, `tas`, `vic`, and `all`.
 
 ## Fuel Prices Queensland
 
@@ -181,6 +182,35 @@ View logs:
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 ```
 
+## Victoria Servo Saver Open Data
+
+The Victoria importer is in `src/vic_sync`. It uses the official Service Victoria open-data API with:
+
+- `/fuel/reference-data/brands`
+- `/fuel/reference-data/stations`
+- `/fuel/reference-data/types`
+- `/fuel/prices`
+
+The data is delayed by about 24 hours, but polling every 30 minutes is still fine. The official docs also note a limit of 10 requests per 60 seconds, so FuelAU keeps the VIC sync job compact.
+
+Manual sync:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
+```
+
+Diagnostics:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli diagnose
+```
+
+View logs:
+
+```bash
+docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
+```
+
 ## Cron
 
 Cron runs inside the `app` container from `docker/cron.d/fuelau`.
@@ -190,6 +220,7 @@ Current jobs:
 - Every 15 minutes: PHP heartbeat to `/var/log/fuelapi/cron-heartbeat.log`.
 - Every 30 minutes: Fuel Prices Queensland sync to `/var/log/fuelapi/fpq_sync.log`.
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
+- Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
 
 Useful checks:
 
@@ -198,6 +229,7 @@ docker compose exec app ps -ef | grep '[c]ron'
 docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
+docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
 ```
 
 ## Container Management
@@ -278,6 +310,7 @@ docker compose exec app php setup.php
 docker compose restart app
 docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
 docker compose --profile routing-setup up osrm-customize
 docker compose --profile routing up -d nominatim osrm-routed
 docker compose --profile routing ps
