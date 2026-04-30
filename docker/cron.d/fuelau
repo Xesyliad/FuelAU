@@ -8,6 +8,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Fuel Prices QLD: refresh reference data and current prices every 30 minutes.
 0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
 
+# South Australia Fuel Pricing Information Scheme: refresh reference data daily and sync prices every 30 minutes.
+20,50 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m sa_sync.cli all >> /var/log/fuelapi/sa_sync.log 2>&1
+
 # NSW Fuel API: reuse cached OAuth token, refresh reference data daily, and sync prices every 30 minutes.
 15,45 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nsw_sync.cli all >> /var/log/fuelapi/nsw_sync.log 2>&1
 

@@ -9,6 +9,7 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 - Route planning with Nominatim geocoding, OSRM routing, local map display, and fuel-stop planning.
 - A PHP/Apache app container with cron.
 - MariaDB-backed Fuel Prices Queensland imports.
+- MariaDB-backed South Australia fuel imports.
 - MariaDB-backed NSW Fuel API imports for NSW and Tasmania.
 - Victoria Servo Saver open-data imports.
 - Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
@@ -123,6 +124,7 @@ Use this stage to test the Fuel Prices tab, history graphs, station map markers,
 | Source | Covers | Config keys | Access/sign-up URL |
 | --- | --- | --- | --- |
 | Fuel Prices Queensland | QLD | `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` | https://www.fuelpricesqld.com.au/#developers |
+| South Australia Fuel Pricing Information Scheme | SA | `SA_FUEL_API_BASE_URL`, `SA_FUEL_SUBSCRIBER_TOKEN` | https://www.safuelpricinginformation.com.au/publishers.html |
 | NSW Fuel API | NSW and TAS | `NSW_FUEL_API_KEY`, `NSW_FUEL_API_SECRET`, `NSW_FUEL_API_AUTHORIZATION_HEADER` | https://api.nsw.gov.au/Product/Index/22 |
 | Victoria Servo Saver Public API | VIC | `VIC_SERVO_SAVER_API_KEY` | https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api |
 
@@ -131,12 +133,15 @@ Useful portal links:
 - API.NSW account/sign-up: https://api.nsw.gov.au/
 - API.NSW Fuel API product: https://api.nsw.gov.au/Product/Index/22
 - Fuel Prices Queensland developer information: https://www.fuelpricesqld.com.au/#developers
+- South Australia publishers page and outbound API guide: https://www.safuelpricinginformation.com.au/publishers.html
 - Servo Saver API information: https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api
 
 2. Put the credentials in `config/app.env`.
 
 ```env
 FUEL_PRICES_QLD_SUBSCRIBER_TOKEN=your_qld_token
+SA_FUEL_API_BASE_URL=https://fppdirectapi-prod.safuelpricinginformation.com.au
+SA_FUEL_SUBSCRIBER_TOKEN=your_sa_token
 NSW_FUEL_API_BASE_URL=https://api.onegov.nsw.gov.au
 NSW_FUEL_API_STATES=NSW|TAS
 NSW_FUEL_API_KEY=your_nsw_key
@@ -156,6 +161,7 @@ docker compose exec app php setup.php
 
 ```bash
 docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
 ```
@@ -164,6 +170,7 @@ docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
 
 ```bash
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
 ```
@@ -293,6 +300,8 @@ Set `FUELAU_HOST_PROJECT_ROOT` in `.env` when the project is not checked out at 
 Current application-level config keys include:
 
 - `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN`
+- `SA_FUEL_API_BASE_URL`
+- `SA_FUEL_SUBSCRIBER_TOKEN`
 - `NSW_FUEL_API_BASE_URL`
 - `NSW_FUEL_API_STATES`
 - `NSW_FUEL_API_KEY`
@@ -419,7 +428,7 @@ Fuel response notes:
 
 - `price` is normalized to cents-per-litre across sources.
 - `price_raw` preserves the original stored source value.
-- `source` currently supports `qld`, `nsw`, `tas`, `vic`, and `all`.
+- `source` currently supports `qld`, `sa`, `nsw`, `tas`, `vic`, and `all`.
 
 ## Fuel Prices Queensland
 
@@ -479,6 +488,45 @@ View logs:
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 ```
 
+## South Australia Fuel Pricing Information Scheme
+
+The SA importer is in `src/sa_sync`. It uses the official South Australia publisher API with:
+
+- Publishers page and outbound API guide: https://www.safuelpricinginformation.com.au/publishers.html
+- HTTP authorization header: `Authorization: FPDAPI SubscriberToken=<token>`
+
+Set these keys in `config/app.env`:
+
+```env
+SA_FUEL_API_BASE_URL=https://fppdirectapi-prod.safuelpricinginformation.com.au
+SA_FUEL_SUBSCRIBER_TOKEN=your_sa_token
+```
+
+Expected cadence:
+
+- Reference data: once per day
+- Prices: every 30 minutes
+
+If your SA token is newly issued, allow up to 24 hours before the first successful sync.
+
+Manual sync:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli all
+```
+
+Diagnostics:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli diagnose
+```
+
+View logs:
+
+```bash
+docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
+```
+
 ## Victoria Servo Saver Open Data
 
 The Victoria importer is in `src/vic_sync`. It uses the official Service Victoria open-data API with:
@@ -516,6 +564,7 @@ Current jobs:
 
 - Every 15 minutes: PHP heartbeat to `/var/log/fuelapi/cron-heartbeat.log`.
 - Every 30 minutes: Fuel Prices Queensland sync to `/var/log/fuelapi/fpq_sync.log`.
+- Every 30 minutes at `:20` and `:50`: South Australia sync to `/var/log/fuelapi/sa_sync.log`.
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
 - Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
 
@@ -527,6 +576,7 @@ Useful checks:
 docker compose exec app ps -ef | grep '[c]ron'
 docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
 docker compose --profile map logs -f map-scheduler
@@ -651,6 +701,7 @@ docker compose up -d --build
 docker compose exec app php setup.php
 docker compose restart app
 docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
 docker compose --profile routing-setup up osrm-customize

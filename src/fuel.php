@@ -22,6 +22,7 @@ function fuelauFuelRequestFilters(): array
     if ($source === '') {
         $source = match ($state) {
             'QLD' => 'qld',
+            'SA' => 'sa',
             'NSW' => 'nsw',
             'TAS' => 'tas',
             default => 'all',
@@ -116,6 +117,59 @@ function fuelauQldFuelRows(PDO $pdo, array $filters): array
         INNER JOIN fpq_fuel_types f ON f.fuel_id = c.fuel_id
         LEFT JOIN fpq_brands b ON b.brand_id = s.brand_id
         WHERE " . implode(' AND ', $where) . "
+        ORDER BY " . ($filters['lat'] !== null && $filters['lon'] !== null ? 'distance_km ASC,' : '') . " c.transaction_date_utc DESC
+        LIMIT :limit
+    ";
+
+    $statement = $pdo->prepare($sql);
+    fuelauBindFuelFilters($statement, $filters);
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
+function fuelauSaFuelRows(PDO $pdo, array $filters): array
+{
+    $distanceSelect = 'NULL AS distance_km';
+    $where = ['1=1'];
+    if ($filters['search'] !== '') {
+        $where[] = '(s.name LIKE :search OR s.address LIKE :search OR b.name LIKE :search)';
+    }
+    if ($filters['brand'] !== '') {
+        $where[] = 'b.name LIKE :brand';
+    }
+    if ($filters['fuel'] !== '') {
+        $where[] = '(CAST(c.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
+    }
+
+    $sql = "
+        SELECT
+            'sa' AS source,
+            'SA' AS state,
+            CAST(s.station_id AS CHAR) AS station_id,
+            s.name AS station_name,
+            s.address,
+            s.postcode,
+            b.name AS brand_name,
+            s.latitude,
+            s.longitude,
+            CAST(c.fuel_id AS CHAR) AS fuel_code,
+            f.name AS fuel_name,
+            c.price AS price_raw,
+            ROUND(c.price / 10, 1) AS price,
+            c.transaction_date_utc AS updated_at,
+            {$distanceSelect}
+        FROM sa_site_prices_current c
+        INNER JOIN sa_stations s ON s.station_id = c.station_id
+        INNER JOIN sa_fuel_types f ON f.fuel_id = c.fuel_id
+        LEFT JOIN sa_brands b ON b.brand_id = s.brand_id
+        WHERE c.price IS NOT NULL AND " . implode(' AND ', $where) . "
         ORDER BY " . ($filters['lat'] !== null && $filters['lon'] !== null ? 'distance_km ASC,' : '') . " c.transaction_date_utc DESC
         LIMIT :limit
     ";
@@ -246,6 +300,13 @@ function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
     if ($source === 'all' || $source === 'qld') {
         $rows = array_merge($rows, fuelauQldFuelRows($pdo, $filters));
     }
+    if ($source === 'all' || $source === 'sa') {
+        $saFilters = $filters;
+        if ($source === 'sa') {
+            $saFilters['state'] = 'SA';
+        }
+        $rows = array_merge($rows, fuelauSaFuelRows($pdo, $saFilters));
+    }
     if ($source === 'all' || $source === 'nsw' || $source === 'tas') {
         $nswFilters = $filters;
         if ($source === 'tas') {
@@ -292,6 +353,11 @@ function fuelauFuelSourceSummary(PDO $pdo): array
             'current_prices' => 'SELECT COUNT(*) FROM fpq_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(transaction_date_utc), "%Y-%m-%d %H:%i:%s") FROM fpq_site_prices_current',
         ],
+        'sa' => [
+            'stations' => 'SELECT COUNT(*) FROM sa_stations',
+            'current_prices' => 'SELECT COUNT(*) FROM sa_site_prices_current',
+            'latest_update' => 'SELECT DATE_FORMAT(MAX(transaction_date_utc), "%Y-%m-%d %H:%i:%s") FROM sa_site_prices_current',
+        ],
         'nsw' => [
             'stations' => 'SELECT COUNT(*) FROM nsw_stations WHERE state = "NSW"',
             'current_prices' => 'SELECT COUNT(*) FROM nsw_site_prices_current WHERE state = "NSW"',
@@ -332,6 +398,13 @@ function fuelauFuelOptionRows(PDO $pdo): array
         FROM fpq_fuel_types
         UNION ALL
         SELECT DISTINCT
+            CAST('sa' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS source,
+            CAST('SA' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS state,
+            CAST(fuel_id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
+            CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_name
+        FROM sa_fuel_types
+        UNION ALL
+        SELECT DISTINCT
             CAST('nsw' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS source,
             CAST(state AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS state,
             CAST(fuel_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
@@ -357,6 +430,7 @@ function fuelauFuelOptions(PDO $pdo): array
     $sources = [
         ['value' => 'all', 'label' => 'All Sources'],
         ['value' => 'qld', 'label' => 'QLD'],
+        ['value' => 'sa', 'label' => 'SA'],
         ['value' => 'nsw', 'label' => 'NSW'],
     ];
     if (($summary['tas']['stations'] ?? 0) > 0 || ($summary['tas']['current_prices'] ?? 0) > 0) {
@@ -373,6 +447,7 @@ function fuelauFuelOptions(PDO $pdo): array
     if (($summary['nsw']['stations'] ?? 0) > 0 || ($summary['nsw']['current_prices'] ?? 0) > 0) {
         $states[] = ['value' => 'NSW', 'label' => 'NSW'];
     }
+    $states[] = ['value' => 'SA', 'label' => 'SA'];
     if (($summary['tas']['stations'] ?? 0) > 0 || ($summary['tas']['current_prices'] ?? 0) > 0) {
         $states[] = ['value' => 'TAS', 'label' => 'TAS'];
     }
@@ -422,6 +497,7 @@ function fuelauHistoricalFilters(): array
         ? $requestedSource
         : match ($state) {
             'QLD' => 'qld',
+            'SA' => 'sa',
             'NSW' => 'nsw',
             'TAS' => 'tas',
             'VIC' => 'vic',
@@ -558,12 +634,59 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
     return $statement->fetchAll();
 }
 
+function fuelauSaHistoryRows(PDO $pdo, array $filters): array
+{
+    $where = ['1=1'];
+    if ($filters['fuel'] !== '') {
+        $where[] = '(h.fuel_id = :fuel OR f.name = :fuel)';
+    }
+
+    $selectPeriod = $filters['period'] === 'monthly'
+        ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
+        : "DATE(h.transaction_date_utc)";
+    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
+
+    $sql = "
+        SELECT
+            'sa' AS source,
+            'SA' AS state,
+            {$selectPeriod} AS bucket_date,
+            AVG(h.price / 10) AS average_price,
+            MIN(h.price / 10) AS minimum_price,
+            MAX(h.price / 10) AS maximum_price,
+            COUNT(*) AS sample_count
+        FROM sa_site_prices_history h
+        INNER JOIN sa_fuel_types f ON f.fuel_id = h.fuel_id
+        WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
+          AND h.price BETWEEN 500 AND 4000
+          AND " . implode(' AND ', $where) . "
+        GROUP BY bucket_date
+        ORDER BY bucket_date ASC
+    ";
+
+    $statement = $pdo->prepare($sql);
+    if ($filters['fuel'] !== '') {
+        $statement->bindValue(':fuel', $filters['fuel']);
+    }
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
 function fuelauHistoricalSeries(PDO $pdo, array $filters): array
 {
     $source = $filters['source'];
     $rows = [];
     if ($source === 'all' || $source === 'qld') {
         $rows = array_merge($rows, fuelauQldHistoryRows($pdo, $filters));
+    }
+    if ($source === 'all' || $source === 'sa') {
+        $saFilters = $filters;
+        if ($source === 'sa') {
+            $saFilters['state'] = 'SA';
+        } elseif ($filters['state'] === '') {
+            $saFilters['state'] = 'SA';
+        }
+        $rows = array_merge($rows, fuelauSaHistoryRows($pdo, $saFilters));
     }
     if ($source === 'all' || $source === 'nsw' || $source === 'tas') {
         $nswFilters = $filters;
