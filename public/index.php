@@ -3298,6 +3298,43 @@ try {
             return `<div class="chart-empty">${escapeHtml(message)}</div>`;
         }
 
+        function buildSmoothPath(points) {
+            if (!Array.isArray(points) || points.length === 0) {
+                return '';
+            }
+            if (points.length === 1) {
+                return `M ${points[0].x} ${points[0].y}`;
+            }
+
+            const path = [`M ${points[0].x} ${points[0].y}`];
+            for (let index = 0; index < points.length - 1; index += 1) {
+                const current = points[index];
+                const next = points[index + 1];
+                const previous = points[index - 1] || current;
+                const following = points[index + 2] || next;
+                const control1X = current.x + (next.x - previous.x) / 6;
+                const control1Y = current.y + (next.y - previous.y) / 6;
+                const control2X = next.x - (following.x - current.x) / 6;
+                const control2Y = next.y - (following.y - current.y) / 6;
+                path.push(`C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${next.x} ${next.y}`);
+            }
+            return path.join(' ');
+        }
+
+        function buildSmoothAreaPath(upperPoints, lowerPoints) {
+            if (!Array.isArray(upperPoints) || !Array.isArray(lowerPoints) || upperPoints.length === 0 || lowerPoints.length === 0) {
+                return '';
+            }
+
+            const upperPath = buildSmoothPath(upperPoints);
+            const lowerPath = buildSmoothPath(lowerPoints.slice().reverse()).replace(/^M\s+/, 'L ');
+            if (upperPath === '' || lowerPath === '') {
+                return '';
+            }
+
+            return `${upperPath} ${lowerPath} Z`;
+        }
+
         function renderLineChart(container, meta, series) {
             if (!Array.isArray(series) || series.length === 0) {
                 container.innerHTML = chartEmpty('No weekly data available for this filter.');
@@ -3305,9 +3342,10 @@ try {
                 return;
             }
 
-            const values = series.map((item) => Number(item.average_price));
-            const min = Math.min(...values);
-            const max = Math.max(...values);
+            const minimumValues = series.map((item) => Number(item.minimum_price ?? item.average_price));
+            const maximumValues = series.map((item) => Number(item.maximum_price ?? item.average_price));
+            const min = Math.min(...minimumValues);
+            const max = Math.max(...maximumValues);
             const spread = Math.max(max - min, 1);
             const width = 640;
             const height = 280;
@@ -3316,15 +3354,18 @@ try {
             const plotHeight = height - padding.top - padding.bottom;
             const points = series.map((item, index) => {
                 const x = padding.left + (plotWidth * index / Math.max(series.length - 1, 1));
-                const y = padding.top + ((max - Number(item.average_price)) / spread) * plotHeight;
-                return { x, y, item };
+                const averageY = padding.top + ((max - Number(item.average_price)) / spread) * plotHeight;
+                const minY = padding.top + ((max - Number(item.minimum_price ?? item.average_price)) / spread) * plotHeight;
+                const maxY = padding.top + ((max - Number(item.maximum_price ?? item.average_price)) / spread) * plotHeight;
+                return { x, y: averageY, minY, maxY, item };
             });
-            const polyline = points.map((point) => `${point.x},${point.y}`).join(' ');
-            const area = [
-                `${padding.left},${height - padding.bottom}`,
-                ...points.map((point) => `${point.x},${point.y}`),
-                `${points[points.length - 1].x},${height - padding.bottom}`,
-            ].join(' ');
+            const avgPath = buildSmoothPath(points.map((point) => ({ x: point.x, y: point.y })));
+            const minPath = buildSmoothPath(points.map((point) => ({ x: point.x, y: point.minY })));
+            const maxPath = buildSmoothPath(points.map((point) => ({ x: point.x, y: point.maxY })));
+            const bandPath = buildSmoothAreaPath(
+                points.map((point) => ({ x: point.x, y: point.maxY })),
+                points.map((point) => ({ x: point.x, y: point.minY }))
+            );
 
             const yTicks = [min, min + spread / 2, max];
             container.innerHTML = `
@@ -3337,12 +3378,16 @@ try {
                             <text x="${padding.left - 8}" y="${y + 4}" fill="#5b6775" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
                         </g>`;
                     }).join('')}
-                    <polygon points="${area}" fill="rgba(15,118,110,0.12)"></polygon>
-                    <polyline points="${polyline}" fill="none" stroke="#0f766e" stroke-width="3"></polyline>
+                    ${bandPath ? `<path d="${bandPath}" fill="rgba(15,118,110,0.22)" stroke="none"></path>` : ''}
+                    ${maxPath ? `<path d="${maxPath}" fill="none" stroke="rgba(15,118,110,0.38)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
+                    ${minPath ? `<path d="${minPath}" fill="none" stroke="rgba(15,118,110,0.38)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
+                    <path d="${avgPath}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
                     ${points.map((point) => `
                         <g>
+                            <circle cx="${point.x}" cy="${point.maxY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
+                            <circle cx="${point.x}" cy="${point.minY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
                             <circle cx="${point.x}" cy="${point.y}" r="4" fill="#0f766e"></circle>
-                            <title>${formatCompactDate(point.item.bucket_date)}: ${formatPrice(point.item.average_price)}</title>
+                            <title>${formatCompactDate(point.item.bucket_date)}: avg ${formatPrice(point.item.average_price)}, min ${formatPrice(point.item.minimum_price)}, max ${formatPrice(point.item.maximum_price)}</title>
                         </g>
                     `).join('')}
                     ${points.filter((_, index) => index % Math.ceil(series.length / 6) === 0 || index === points.length - 1).map((point) => `
