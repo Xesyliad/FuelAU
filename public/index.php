@@ -3273,17 +3273,22 @@ try {
             fuelSummary.innerHTML = '';
             const cards = [
                 ['QLD', summary.qld],
+                ['SA', summary.sa],
                 ['NSW', summary.nsw],
                 ['TAS', summary.tas],
+                ['VIC', summary.vic],
             ];
             cards.forEach(([label, item]) => {
+                const currentPrices = Number(item?.current_prices || 0);
+                const stations = Number(item?.stations || 0);
+                const latestUpdate = item?.latest_update || 'No data yet';
                 const card = document.createElement('article');
                 card.className = 'summary-card';
                 card.innerHTML = `
-                    <strong>${escapeHtml(String(item.current_prices || 0))}</strong>
+                    <strong>${escapeHtml(String(currentPrices))}</strong>
                     <span>${escapeHtml(label)} current prices</span>
-                    <span>${escapeHtml(String(item.stations || 0))} stations</span>
-                    <span>${escapeHtml(item.latest_update || 'No data yet')}</span>
+                    <span>${escapeHtml(String(stations))} stations</span>
+                    <span>${escapeHtml(latestUpdate)}</span>
                 `;
                 fuelSummary.appendChild(card);
             });
