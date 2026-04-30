@@ -3690,12 +3690,18 @@ try {
                 return;
             }
 
+            const highlightCollection = fuelMapHighlightCollection(highlight);
+            const highlightFeatures = Array.isArray(highlightCollection.features) ? highlightCollection.features : [];
+            const hasHighlight = highlightFeatures.length > 0;
+            const visibleCollection = hasHighlight
+                ? { type: 'FeatureCollection', features: [] }
+                : collection;
+
             const source = fuelMapInstance.getSource('fuel-stations');
             if (source) {
-                source.setData(collection);
+                source.setData(visibleCollection);
             }
             const highlightSource = fuelMapInstance.getSource('fuel-station-highlights');
-            const highlightCollection = fuelMapHighlightCollection(highlight);
             if (highlightSource) {
                 highlightSource.setData(highlightCollection);
             }
@@ -3707,7 +3713,6 @@ try {
                 return;
             }
 
-            const highlightFeatures = Array.isArray(highlightCollection.features) ? highlightCollection.features : [];
             const prices = features.map((feature) => Number(feature.properties?.price_value)).filter((value) => Number.isFinite(value));
             const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
             const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
@@ -3719,7 +3724,7 @@ try {
                 fuelMapInstance.setPaintProperty('fuel-stations-circle', 'circle-color', colorExpression);
             }
 
-            const focusFeatures = highlightFeatures.length > 0 ? highlightFeatures : features;
+            const focusFeatures = hasHighlight ? highlightFeatures : features;
             if (focusFeatures.length === 1) {
                 const only = focusFeatures[0];
                 fuelMapInstance.easeTo({
