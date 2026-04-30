@@ -1160,6 +1160,10 @@ try {
         let fuelMapPopup = null;
         let fuelMapPendingData = null;
         let fuelCurrentRows = [];
+        let fuelMapRows = [];
+        let fuelMapAutoRefreshTimer = null;
+        let fuelMapAutoRefreshSuppressed = false;
+        let fuelMapLegendContext = '';
         let routeMapInstance = null;
         let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
@@ -3572,12 +3576,13 @@ try {
             const maxCount = Array.isArray(highlight?.maxStations) ? highlight.maxStations.length : 0;
             const minLabel = Number.isFinite(Number(highlight?.minPrice)) ? formatPrice(highlight.minPrice) : null;
             const maxLabel = Number.isFinite(Number(highlight?.maxPrice)) ? formatPrice(highlight.maxPrice) : null;
+            const mapScope = String(highlight?.mapLabel || fuelMapLegendContext || (region ? `${region.label}, ${region.state}` : 'Selected region'));
             fuelMapLegend.innerHTML = `
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Cheaper</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#ca8a04"></span>Mid-range</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#b91c1c"></span>Higher</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#94a3b8"></span>No price</span>
-                <span class="route-map-chip">${escapeHtml(region ? `${region.label}, ${region.state}` : 'Selected region')}</span>
+                <span class="route-map-chip">${escapeHtml(mapScope)}</span>
                 <span class="route-map-chip">${escapeHtml(selectedFuelLabel() || 'Selected fuel')}</span>
                 <span class="route-map-chip">${escapeHtml(`${stationCount} stations plotted`)}</span>
                 ${minCount > 0 ? `<span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Min ${escapeHtml(minLabel || '')} (${minCount})</span>` : ''}
@@ -3692,9 +3697,9 @@ try {
             };
         }
 
-        function updateFuelMapSource(collection, highlight = null) {
+        function updateFuelMapSource(collection, highlight = null, preserveViewport = false) {
             if (!fuelMapInstance || !fuelMapReady) {
-                fuelMapPendingData = { collection, highlight };
+                fuelMapPendingData = { collection, highlight, preserveViewport };
                 return;
             }
 
@@ -3716,8 +3721,7 @@ try {
 
             const features = Array.isArray(collection.features) ? collection.features : [];
             if (features.length === 0) {
-                fuelMapLegend.innerHTML = '';
-                fuelMap.innerHTML = renderRouteEmpty('No fuel stations available for this filter.');
+                renderFuelMapLegend([], highlight);
                 return;
             }
 
@@ -3733,25 +3737,106 @@ try {
             }
 
             const focusFeatures = hasHighlight ? highlightFeatures : features;
-            if (focusFeatures.length === 1) {
+            if (!preserveViewport && focusFeatures.length === 1) {
                 const only = focusFeatures[0];
+                fuelMapAutoRefreshSuppressed = true;
                 fuelMapInstance.easeTo({
                     center: only.geometry.coordinates,
                     zoom: 12,
                     duration: 400,
                 });
-            } else if (focusFeatures.length > 1) {
+                window.setTimeout(() => {
+                    fuelMapAutoRefreshSuppressed = false;
+                }, 700);
+            } else if (!preserveViewport && focusFeatures.length > 1) {
                 const bounds = new maplibregl.LngLatBounds();
                 focusFeatures.forEach((feature) => {
                     bounds.extend(feature.geometry.coordinates);
                 });
+                fuelMapAutoRefreshSuppressed = true;
                 fuelMapInstance.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 400 });
+                window.setTimeout(() => {
+                    fuelMapAutoRefreshSuppressed = false;
+                }, 700);
             }
 
             renderFuelMapLegend(features, highlight);
         }
 
-        function renderFuelMap(rows, highlight = null) {
+        function fuelMapViewportRequestParams() {
+            if (!fuelMapInstance || !fuelMapReady) {
+                return null;
+            }
+
+            const bounds = fuelMapInstance.getBounds();
+            const center = bounds.getCenter();
+            const northEast = bounds.getNorthEast();
+            const southWest = bounds.getSouthWest();
+            const radiusKm = Math.max(5, Math.min(300, haversineKm(
+                { lat: center.lat, lon: center.lng },
+                { lat: northEast.lat, lon: northEast.lng }
+            ) * 1.15));
+            const params = new URLSearchParams({
+                state: fuelState.value || '',
+                fuel: fuelType.value || '',
+                lat: String(center.lat),
+                lon: String(center.lng),
+                radius_km: radiusKm.toFixed(1),
+            });
+            return { params, bounds, center, northEast, southWest };
+        }
+
+        function fuelMapRowsInsideBounds(rows, bounds) {
+            if (!bounds || !Array.isArray(rows)) {
+                return [];
+            }
+
+            return rows.filter((row) => {
+                const latitude = Number(row.latitude);
+                const longitude = Number(row.longitude);
+                return Number.isFinite(latitude)
+                    && Number.isFinite(longitude)
+                    && bounds.contains([longitude, latitude]);
+            });
+        }
+
+        async function refreshFuelMapForViewport() {
+            const request = fuelMapViewportRequestParams();
+            if (!request) {
+                return;
+            }
+
+            try {
+                const payload = await apiRequest(`/api/fuel/current?${request.params.toString()}&limit=500`);
+                const rows = fuelMapRowsInsideBounds(Array.isArray(payload.rows) ? payload.rows : [], request.bounds);
+                fuelMapRows = rows;
+                fuelMapLegendContext = 'Visible map area';
+                renderFuelMap(fuelMapRows, null, true);
+                if (fuelStatus) {
+                    fuelStatus.textContent = `Loaded ${rows.length} current records for the visible map area.`;
+                }
+            } catch (error) {
+                if (fuelStatus) {
+                    fuelStatus.textContent = error.message;
+                }
+            }
+        }
+
+        function scheduleFuelMapViewportRefresh() {
+            if (fuelMapAutoRefreshSuppressed) {
+                return;
+            }
+
+            if (fuelMapAutoRefreshTimer) {
+                window.clearTimeout(fuelMapAutoRefreshTimer);
+            }
+            fuelMapAutoRefreshTimer = window.setTimeout(() => {
+                fuelMapAutoRefreshTimer = null;
+                refreshFuelMapForViewport();
+            }, 1500);
+        }
+
+        function renderFuelMap(rows, highlight = null, preserveViewport = false) {
             if (!fuelMap) {
                 return;
             }
@@ -3879,17 +3964,19 @@ try {
                                 .addTo(fuelMapInstance);
                         });
                     });
+                    fuelMapInstance.on('moveend', scheduleFuelMapViewportRefresh);
 
                     updateFuelMapSource(
                         (fuelMapPendingData && fuelMapPendingData.collection) || collection,
-                        (fuelMapPendingData && fuelMapPendingData.highlight) || highlight
+                        (fuelMapPendingData && fuelMapPendingData.highlight) || highlight,
+                        Boolean(fuelMapPendingData && fuelMapPendingData.preserveViewport) || preserveViewport
                     );
                     fuelMapPendingData = null;
                 });
             } else if (fuelMapReady) {
-                updateFuelMapSource(collection, highlight);
+                updateFuelMapSource(collection, highlight, preserveViewport);
             } else {
-                fuelMapPendingData = { collection, highlight };
+                fuelMapPendingData = { collection, highlight, preserveViewport };
             }
         }
 
@@ -3913,11 +4000,17 @@ try {
                 ]);
 
                 fuelCurrentRows = Array.isArray(current.rows) ? current.rows : [];
+                fuelMapRows = fuelCurrentRows;
+                fuelMapLegendContext = '';
+                if (fuelMapAutoRefreshTimer) {
+                    window.clearTimeout(fuelMapAutoRefreshTimer);
+                    fuelMapAutoRefreshTimer = null;
+                }
                 renderFuelSummary(sources.sources || {});
                 renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
                 renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
                 renderSnapshot(fuelCurrentRows);
-                renderFuelMap(fuelCurrentRows);
+                renderFuelMap(fuelMapRows);
                 fuelStatus.textContent = `Loaded ${Array.isArray(current.rows) ? current.rows.length : 0} current records for the selected filter.`;
             } catch (error) {
                 fuelStatus.textContent = error.message;

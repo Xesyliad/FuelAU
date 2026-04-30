@@ -570,9 +570,6 @@ function fuelauQldHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['state'] !== '') {
-        $statement->bindValue(':state', $filters['state']);
-    }
     fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
@@ -623,6 +620,9 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
+    if ($filters['state'] !== '') {
+        $statement->bindValue(':state', $filters['state']);
+    }
     fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
