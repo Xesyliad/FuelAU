@@ -1168,6 +1168,18 @@ try {
                 { key: 'hervey-bay', label: 'Hervey Bay', lat: -25.2875, lon: 152.8400, radius_km: 30 },
                 { key: 'gladstone', label: 'Gladstone', lat: -23.8489, lon: 151.2640, radius_km: 30 },
             ],
+            SA: [
+                { key: 'adelaide', label: 'Adelaide', lat: -34.9285, lon: 138.6007, radius_km: 80 },
+                { key: 'mount-gambier', label: 'Mount Gambier', lat: -37.8318, lon: 140.7792, radius_km: 35 },
+                { key: 'whyalla', label: 'Whyalla', lat: -33.0369, lon: 137.5648, radius_km: 30 },
+                { key: 'port-augusta', label: 'Port Augusta', lat: -32.4907, lon: 137.7655, radius_km: 30 },
+                { key: 'port-pirie', label: 'Port Pirie', lat: -33.1799, lon: 138.0058, radius_km: 25 },
+                { key: 'murray-bridge', label: 'Murray Bridge', lat: -35.1209, lon: 139.2734, radius_km: 25 },
+                { key: 'gawler', label: 'Gawler', lat: -34.5984, lon: 138.7454, radius_km: 25 },
+                { key: 'port-lincoln', label: 'Port Lincoln', lat: -34.7215, lon: 135.8586, radius_km: 25 },
+                { key: 'victor-harbor', label: 'Victor Harbor', lat: -35.5513, lon: 138.6219, radius_km: 25 },
+                { key: 'mount-barker', label: 'Mount Barker', lat: -35.0664, lon: 138.8604, radius_km: 20 },
+            ],
             NSW: [
                 { key: 'sydney', label: 'Sydney', lat: -33.8688, lon: 151.2093, radius_km: 80 },
                 { key: 'newcastle', label: 'Newcastle', lat: -32.9283, lon: 151.7817, radius_km: 45 },
