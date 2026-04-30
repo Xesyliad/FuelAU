@@ -360,6 +360,19 @@ try {
             line-height: 1.3;
         }
 
+        .route-autocomplete-option.is-fallback strong::after {
+            content: 'Fallback';
+            display: inline-block;
+            margin-left: 8px;
+            padding: 1px 6px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #4f46e5;
+            font-size: 10px;
+            font-weight: 600;
+            vertical-align: middle;
+        }
+
         .route-autocomplete-empty,
         .route-autocomplete-loading {
             padding: 10px 12px;
@@ -1535,12 +1548,6 @@ try {
             panel.hidden = true;
         }
 
-        function routeGeocodeIsAdministrative(result) {
-            const kind = String(result?.type || '').toLowerCase();
-            const scope = String(result?.class || '').toLowerCase();
-            return kind === 'administrative' || scope === 'boundary';
-        }
-
         function routeGeocodeAddressLine(address) {
             if (!address || typeof address !== 'object') {
                 return '';
@@ -1583,22 +1590,23 @@ try {
                 return;
             }
 
-            const filteredResults = Array.isArray(results)
-                ? results.filter((result) => !routeGeocodeIsAdministrative(result))
-                : [];
-
-            if (filteredResults.length === 0) {
+            if (!Array.isArray(results) || results.length === 0) {
                 panel.innerHTML = '<div class="route-autocomplete-empty">No matches found.</div>';
                 panel.hidden = false;
                 return;
             }
 
-            panel.innerHTML = filteredResults.map((result) => `
-                <button type="button" class="route-autocomplete-option" data-route-match="${escapeHtml(JSON.stringify(result))}">
-                    <strong>${escapeHtml(routeGeocodeLabel(result) || result.display_name || '')}</strong>
-                    <span>${escapeHtml(result.display_name || [result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match')}</span>
+            panel.innerHTML = results.map((result) => {
+                const fallback = Number(result?.tier || 3) >= 3 || Boolean(result?.is_fallback);
+                const label = routeGeocodeLabel(result) || result.label || result.display_name || '';
+                const secondary = result.display_name || [result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match';
+                const fallbackLabel = fallback ? '<span class="route-autocomplete-fallback">Fallback</span>' : '';
+                return `
+                <button type="button" class="route-autocomplete-option${fallback ? ' is-fallback' : ''}" data-route-match="${escapeHtml(JSON.stringify(result))}">
+                    <strong>${escapeHtml(label)}</strong>
+                    <span>${escapeHtml(secondary)}${fallbackLabel}</span>
                 </button>
-            `).join('');
+            `;}).join('');
 
             panel.querySelectorAll('[data-route-match]').forEach((button) => {
                 button.addEventListener('pointerdown', (event) => {
@@ -1656,7 +1664,7 @@ try {
                             return;
                         }
 
-                        const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
+                        const results = Array.isArray(payload.results) ? payload.results : [];
                         renderRouteAutocompleteOptions(input, results);
                     } catch (error) {
                         if (state.sequence === currentSequence) {
@@ -2982,8 +2990,8 @@ try {
         }
 
         async function resolveRouteLocation(query) {
-                        const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=10`);
-            const results = Array.isArray(payload.results) ? payload.results.filter((result) => !routeGeocodeIsAdministrative(result)) : [];
+            const payload = await apiRequest(`/api/geo/search?q=${encodeURIComponent(query)}&limit=10`);
+            const results = Array.isArray(payload.results) ? payload.results : [];
             const result = results[0] || null;
             if (!result) {
                 throw new Error(`No geocoding result for "${query}"`);
