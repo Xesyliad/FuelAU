@@ -1146,6 +1146,7 @@ try {
         let fuelMapReady = false;
         let fuelMapPopup = null;
         let fuelMapPendingData = null;
+        let fuelCurrentRows = [];
         let routeMapInstance = null;
         let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
@@ -3335,6 +3336,35 @@ try {
             return `${upperPath} ${lowerPath} Z`;
         }
 
+        function focusFuelStationsFromPriceRange(minimumPrice, maximumPrice, periodLabel, bucketDate) {
+            const minTarget = Number(minimumPrice);
+            const maxTarget = Number(maximumPrice);
+            if (!Number.isFinite(minTarget) && !Number.isFinite(maxTarget)) {
+                renderFuelMap(fuelCurrentRows || []);
+                return;
+            }
+
+            const priceMatches = (rowPrice, target) => Number.isFinite(target) && Math.abs(Number(rowPrice) - target) <= 0.05;
+            const minStations = Number.isFinite(minTarget)
+                ? (fuelCurrentRows || []).filter((row) => priceMatches(row.price, minTarget))
+                : [];
+            const maxStations = Number.isFinite(maxTarget)
+                ? (fuelCurrentRows || []).filter((row) => priceMatches(row.price, maxTarget))
+                : [];
+
+            renderFuelMap(fuelCurrentRows || [], {
+                minStations,
+                maxStations,
+                minPrice: minTarget,
+                maxPrice: maxTarget,
+                periodLabel,
+                bucketDate,
+            });
+            if (fuelStatus) {
+                fuelStatus.textContent = `${periodLabel} sample ${bucketDate}: showing ${minStations.length} min-price station(s) and ${maxStations.length} max-price station(s).`;
+            }
+        }
+
         function renderLineChart(container, meta, series) {
             if (!Array.isArray(series) || series.length === 0) {
                 container.innerHTML = chartEmpty('No weekly data available for this filter.');
@@ -3383,7 +3413,7 @@ try {
                     ${minPath ? `<path d="${minPath}" fill="none" stroke="rgba(15,118,110,0.38)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
                     <path d="${avgPath}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
                     ${points.map((point) => `
-                        <g>
+                        <g class="fuel-chart-node" data-bucket-date="${escapeHtml(String(point.item.bucket_date))}" data-min-price="${escapeHtml(String(point.item.minimum_price))}" data-max-price="${escapeHtml(String(point.item.maximum_price))}">
                             <circle cx="${point.x}" cy="${point.maxY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
                             <circle cx="${point.x}" cy="${point.minY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
                             <circle cx="${point.x}" cy="${point.y}" r="4" fill="#0f766e"></circle>
@@ -3400,6 +3430,18 @@ try {
                 <span>High: ${formatPrice(max)}</span>
                 <span>Points: ${series.length}</span>
             `;
+
+            container.querySelectorAll('.fuel-chart-node').forEach((node) => {
+                node.style.cursor = 'pointer';
+                node.addEventListener('click', () => {
+                    focusFuelStationsFromPriceRange(
+                        node.getAttribute('data-min-price'),
+                        node.getAttribute('data-max-price'),
+                        'Weekly',
+                        node.getAttribute('data-bucket-date')
+                    );
+                });
+            });
         }
 
         function renderBarChart(container, meta, series) {
@@ -3434,9 +3476,9 @@ try {
                         const barHeight = ((Number(item.average_price) - min) / spread) * plotHeight;
                         const y = height - padding.bottom - barHeight;
                         return `
-                            <g>
+                            <g class="fuel-chart-bar" data-bucket-date="${escapeHtml(String(item.bucket_date))}" data-min-price="${escapeHtml(String(item.minimum_price))}" data-max-price="${escapeHtml(String(item.maximum_price))}">
                                 <rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(barHeight, 2)}" rx="4" fill="#0f766e"></rect>
-                                <title>${formatCompactDate(item.bucket_date)}: ${formatPrice(item.average_price)}</title>
+                                <title>${formatCompactDate(item.bucket_date)}: avg ${formatPrice(item.average_price)}, min ${formatPrice(item.minimum_price)}, max ${formatPrice(item.maximum_price)}</title>
                                 <text x="${x + barWidth / 2}" y="${height - 12}" fill="#5b6775" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(item.bucket_date))}</text>
                             </g>
                         `;
@@ -3448,6 +3490,18 @@ try {
                 <span>High: ${formatPrice(max)}</span>
                 <span>Months: ${series.length}</span>
             `;
+
+            container.querySelectorAll('.fuel-chart-bar').forEach((node) => {
+                node.style.cursor = 'pointer';
+                node.addEventListener('click', () => {
+                    focusFuelStationsFromPriceRange(
+                        node.getAttribute('data-min-price'),
+                        node.getAttribute('data-max-price'),
+                        'Monthly',
+                        node.getAttribute('data-bucket-date')
+                    );
+                });
+            });
         }
 
         function renderSnapshot(rows) {
@@ -3499,13 +3553,17 @@ try {
             return local <= 0.5 ? '#ca8a04' : '#b91c1c';
         }
 
-        function renderFuelMapLegend(rows) {
+        function renderFuelMapLegend(rows, highlight = null) {
             if (!fuelMapLegend) {
                 return;
             }
 
             const region = fuelRegionSelectedOption();
             const stationCount = Array.isArray(rows) ? rows.length : 0;
+            const minCount = Array.isArray(highlight?.minStations) ? highlight.minStations.length : 0;
+            const maxCount = Array.isArray(highlight?.maxStations) ? highlight.maxStations.length : 0;
+            const minLabel = Number.isFinite(Number(highlight?.minPrice)) ? formatPrice(highlight.minPrice) : null;
+            const maxLabel = Number.isFinite(Number(highlight?.maxPrice)) ? formatPrice(highlight.maxPrice) : null;
             fuelMapLegend.innerHTML = `
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Cheaper</span>
                 <span class="route-map-chip"><span class="route-map-dot" style="background:#ca8a04"></span>Mid-range</span>
@@ -3514,6 +3572,8 @@ try {
                 <span class="route-map-chip">${escapeHtml(region ? `${region.label}, ${region.state}` : 'Selected region')}</span>
                 <span class="route-map-chip">${escapeHtml(selectedFuelLabel() || 'Selected fuel')}</span>
                 <span class="route-map-chip">${escapeHtml(`${stationCount} stations plotted`)}</span>
+                ${minCount > 0 ? `<span class="route-map-chip"><span class="route-map-dot" style="background:#16a34a"></span>Min ${escapeHtml(minLabel || '')} (${minCount})</span>` : ''}
+                ${maxCount > 0 ? `<span class="route-map-chip"><span class="route-map-dot" style="background:#b91c1c"></span>Max ${escapeHtml(maxLabel || '')} (${maxCount})</span>` : ''}
             `;
         }
 
@@ -3521,7 +3581,7 @@ try {
             const station = escapeHtml(String(row.station_name || '').trim());
             const address = escapeHtml(String(row.address || '').trim());
             const fuelName = escapeHtml(selectedFuelLabel() || String(row.fuel_name || 'Fuel'));
-            const price = escapeHtml(formatPrice(row.price));
+            const price = escapeHtml(String(row.price_text || formatPrice(row.price)));
             const updatedAt = escapeHtml(formatDateTime(row.updated_at));
             const source = escapeHtml(`${String(row.state || '').trim()} · ${String(row.source || '').toUpperCase()}`);
             return `
@@ -3571,15 +3631,73 @@ try {
             };
         }
 
-        function updateFuelMapSource(collection) {
+        function fuelMapHighlightCollection(highlight) {
+            const minStations = Array.isArray(highlight?.minStations) ? highlight.minStations : [];
+            const maxStations = Array.isArray(highlight?.maxStations) ? highlight.maxStations : [];
+            const features = [];
+
+            minStations.forEach((row) => {
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        station_name: String(row.station_name || ''),
+                        address: String(row.address || ''),
+                        price: String(row.price ?? ''),
+                        price_text: formatPrice(row.price),
+                        fuel_name: String(row.fuel_name || ''),
+                        source: String(row.source || ''),
+                        state: String(row.state || ''),
+                        updated_at: String(row.updated_at || ''),
+                        kind: 'min',
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [Number(row.longitude), Number(row.latitude)],
+                    },
+                });
+            });
+
+            maxStations.forEach((row) => {
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        station_name: String(row.station_name || ''),
+                        address: String(row.address || ''),
+                        price: String(row.price ?? ''),
+                        price_text: formatPrice(row.price),
+                        fuel_name: String(row.fuel_name || ''),
+                        source: String(row.source || ''),
+                        state: String(row.state || ''),
+                        updated_at: String(row.updated_at || ''),
+                        kind: 'max',
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [Number(row.longitude), Number(row.latitude)],
+                    },
+                });
+            });
+
+            return {
+                type: 'FeatureCollection',
+                features,
+            };
+        }
+
+        function updateFuelMapSource(collection, highlight = null) {
             if (!fuelMapInstance || !fuelMapReady) {
-                fuelMapPendingData = collection;
+                fuelMapPendingData = { collection, highlight };
                 return;
             }
 
             const source = fuelMapInstance.getSource('fuel-stations');
             if (source) {
                 source.setData(collection);
+            }
+            const highlightSource = fuelMapInstance.getSource('fuel-station-highlights');
+            const highlightCollection = fuelMapHighlightCollection(highlight);
+            if (highlightSource) {
+                highlightSource.setData(highlightCollection);
             }
 
             const features = Array.isArray(collection.features) ? collection.features : [];
@@ -3589,6 +3707,7 @@ try {
                 return;
             }
 
+            const highlightFeatures = Array.isArray(highlightCollection.features) ? highlightCollection.features : [];
             const prices = features.map((feature) => Number(feature.properties?.price_value)).filter((value) => Number.isFinite(value));
             const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
             const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
@@ -3600,30 +3719,32 @@ try {
                 fuelMapInstance.setPaintProperty('fuel-stations-circle', 'circle-color', colorExpression);
             }
 
-            if (collection.features.length === 1) {
-                const only = collection.features[0];
+            const focusFeatures = highlightFeatures.length > 0 ? highlightFeatures : features;
+            if (focusFeatures.length === 1) {
+                const only = focusFeatures[0];
                 fuelMapInstance.easeTo({
                     center: only.geometry.coordinates,
                     zoom: 12,
                     duration: 400,
                 });
-            } else if (collection.features.length > 1) {
+            } else if (focusFeatures.length > 1) {
                 const bounds = new maplibregl.LngLatBounds();
-                collection.features.forEach((feature) => {
+                focusFeatures.forEach((feature) => {
                     bounds.extend(feature.geometry.coordinates);
                 });
                 fuelMapInstance.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 400 });
             }
 
-            renderFuelMapLegend(features);
+            renderFuelMapLegend(features, highlight);
         }
 
-        function renderFuelMap(rows) {
+        function renderFuelMap(rows, highlight = null) {
             if (!fuelMap) {
                 return;
             }
 
             const collection = fuelMapFeatureCollection(Array.isArray(rows) ? rows : []);
+            const highlightCollection = fuelMapHighlightCollection(highlight);
             if (!window.maplibregl) {
                 fuelMap.innerHTML = renderRouteEmpty('Fuel map unavailable in this browser.');
                 fuelMapLegend.innerHTML = '';
@@ -3659,6 +3780,12 @@ try {
                             data: collection,
                         });
                     }
+                    if (!fuelMapInstance.getSource('fuel-station-highlights')) {
+                        fuelMapInstance.addSource('fuel-station-highlights', {
+                            type: 'geojson',
+                            data: highlightCollection,
+                        });
+                    }
                     if (!fuelMapInstance.getLayer('fuel-stations-circle')) {
                         fuelMapInstance.addLayer({
                             id: 'fuel-stations-circle',
@@ -3672,12 +3799,50 @@ try {
                             },
                         });
                     }
+                    if (!fuelMapInstance.getLayer('fuel-station-highlight-min')) {
+                        fuelMapInstance.addLayer({
+                            id: 'fuel-station-highlight-min',
+                            type: 'circle',
+                            source: 'fuel-station-highlights',
+                            filter: ['==', ['get', 'kind'], 'min'],
+                            paint: {
+                                'circle-radius': 10,
+                                'circle-color': '#16a34a',
+                                'circle-stroke-width': 3,
+                                'circle-stroke-color': '#ffffff',
+                                'circle-opacity': 0.95,
+                            },
+                        });
+                    }
+                    if (!fuelMapInstance.getLayer('fuel-station-highlight-max')) {
+                        fuelMapInstance.addLayer({
+                            id: 'fuel-station-highlight-max',
+                            type: 'circle',
+                            source: 'fuel-station-highlights',
+                            filter: ['==', ['get', 'kind'], 'max'],
+                            paint: {
+                                'circle-radius': 10,
+                                'circle-color': '#b91c1c',
+                                'circle-stroke-width': 3,
+                                'circle-stroke-color': '#ffffff',
+                                'circle-opacity': 0.95,
+                            },
+                        });
+                    }
 
                     fuelMapInstance.on('mouseenter', 'fuel-stations-circle', () => {
                         fuelMapInstance.getCanvas().style.cursor = 'pointer';
                     });
                     fuelMapInstance.on('mouseleave', 'fuel-stations-circle', () => {
                         fuelMapInstance.getCanvas().style.cursor = '';
+                    });
+                    ['fuel-station-highlight-min', 'fuel-station-highlight-max'].forEach((layerId) => {
+                        fuelMapInstance.on('mouseenter', layerId, () => {
+                            fuelMapInstance.getCanvas().style.cursor = 'pointer';
+                        });
+                        fuelMapInstance.on('mouseleave', layerId, () => {
+                            fuelMapInstance.getCanvas().style.cursor = '';
+                        });
                     });
                     fuelMapInstance.on('click', 'fuel-stations-circle', (event) => {
                         const feature = event.features && event.features[0];
@@ -3689,14 +3854,29 @@ try {
                             .setHTML(fuelMapPopupHtml(feature.properties || {}))
                             .addTo(fuelMapInstance);
                     });
+                    ['fuel-station-highlight-min', 'fuel-station-highlight-max'].forEach((layerId) => {
+                        fuelMapInstance.on('click', layerId, (event) => {
+                            const feature = event.features && event.features[0];
+                            if (!feature || !fuelMapPopup) {
+                                return;
+                            }
+                            fuelMapPopup
+                                .setLngLat(feature.geometry.coordinates)
+                                .setHTML(fuelMapPopupHtml(feature.properties || {}))
+                                .addTo(fuelMapInstance);
+                        });
+                    });
 
-                    updateFuelMapSource(fuelMapPendingData || collection);
+                    updateFuelMapSource(
+                        (fuelMapPendingData && fuelMapPendingData.collection) || collection,
+                        (fuelMapPendingData && fuelMapPendingData.highlight) || highlight
+                    );
                     fuelMapPendingData = null;
                 });
             } else if (fuelMapReady) {
-                updateFuelMapSource(collection);
+                updateFuelMapSource(collection, highlight);
             } else {
-                fuelMapPendingData = collection;
+                fuelMapPendingData = { collection, highlight };
             }
         }
 
@@ -3719,11 +3899,12 @@ try {
                     apiRequest(`/api/fuel/history?${filters.toString()}&period=monthly`),
                 ]);
 
+                fuelCurrentRows = Array.isArray(current.rows) ? current.rows : [];
                 renderFuelSummary(sources.sources || {});
                 renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
                 renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
-                renderSnapshot(current.rows || []);
-                renderFuelMap(current.rows || []);
+                renderSnapshot(fuelCurrentRows);
+                renderFuelMap(fuelCurrentRows);
                 fuelStatus.textContent = `Loaded ${Array.isArray(current.rows) ? current.rows.length : 0} current records for the selected filter.`;
             } catch (error) {
                 fuelStatus.textContent = error.message;

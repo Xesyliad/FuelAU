@@ -74,6 +74,20 @@ function fuelauBindFuelFilters(PDOStatement $statement, array $filters): void
     $statement->bindValue(':limit', $filters['limit'], PDO::PARAM_INT);
 }
 
+function fuelauBindHistoricalFilters(PDOStatement $statement, array $filters): void
+{
+    if ($filters['fuel'] !== '') {
+        $statement->bindValue(':fuel', $filters['fuel']);
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $statement->bindValue(':lat', $filters['lat']);
+        $statement->bindValue(':lon', $filters['lon']);
+        if ($filters['radius_km'] !== null) {
+            $statement->bindValue(':radius_km', $filters['radius_km']);
+        }
+    }
+}
+
 function fuelauQldFuelRows(PDO $pdo, array $filters): array
 {
     $distanceSelect = 'NULL AS distance_km';
@@ -493,6 +507,9 @@ function fuelauHistoricalFilters(): array
     if (!in_array($period, ['weekly', 'monthly'], true)) {
         $period = 'weekly';
     }
+    $latitude = $_GET['lat'] ?? null;
+    $longitude = $_GET['lon'] ?? null;
+    $radiusKm = isset($_GET['radius_km']) ? max(0.1, (float) $_GET['radius_km']) : null;
     $source = $requestedSource !== ''
         ? $requestedSource
         : match ($state) {
@@ -509,6 +526,9 @@ function fuelauHistoricalFilters(): array
         'state' => $state,
         'fuel' => $fuel,
         'period' => $period,
+        'lat' => is_numeric((string) $latitude) ? (float) $latitude : null,
+        'lon' => is_numeric((string) $longitude) ? (float) $longitude : null,
+        'radius_km' => $radiusKm,
     ];
 }
 
@@ -517,6 +537,12 @@ function fuelauQldHistoryRows(PDO $pdo, array $filters): array
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
         $where[] = '(CAST(h.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
     }
 
     $selectPeriod = $filters['period'] === 'monthly'
@@ -535,6 +561,7 @@ function fuelauQldHistoryRows(PDO $pdo, array $filters): array
             COUNT(*) AS sample_count
         FROM fpq_site_prices_history h
         INNER JOIN fpq_fuel_types f ON f.fuel_id = h.fuel_id
+        INNER JOIN fpq_sites s ON s.site_id = h.site_id
         WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
           AND h.price BETWEEN 500 AND 4000
           AND " . implode(' AND ', $where) . "
@@ -543,9 +570,10 @@ function fuelauQldHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['fuel'] !== '') {
-        $statement->bindValue(':fuel', $filters['fuel']);
+    if ($filters['state'] !== '') {
+        $statement->bindValue(':state', $filters['state']);
     }
+    fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
 }
@@ -558,6 +586,12 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
     }
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
     }
 
     $selectPeriod = $filters['period'] === 'monthly'
@@ -578,6 +612,9 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
         INNER JOIN nsw_fuel_types f
             ON f.state = h.state
            AND f.fuel_code = h.fuel_code
+        INNER JOIN nsw_stations s
+            ON s.state = h.state
+           AND s.station_code = h.station_code
         WHERE h.last_updated_at >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
           AND h.price BETWEEN 50 AND 400
           AND " . implode(' AND ', $where) . "
@@ -586,12 +623,7 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['state'] !== '') {
-        $statement->bindValue(':state', $filters['state']);
-    }
-    if ($filters['fuel'] !== '') {
-        $statement->bindValue(':fuel', $filters['fuel']);
-    }
+    fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
 }
@@ -601,6 +633,12 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
     }
 
     $selectPeriod = $filters['period'] === 'monthly'
@@ -619,6 +657,7 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
             COUNT(*) AS sample_count
         FROM vic_site_prices_history h
         INNER JOIN vic_fuel_types f ON f.fuel_code = h.fuel_code
+        INNER JOIN vic_stations s ON s.station_id = h.station_id
         WHERE h.updated_at_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
           AND h.price BETWEEN 50 AND 400
           AND " . implode(' AND ', $where) . "
@@ -627,9 +666,7 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['fuel'] !== '') {
-        $statement->bindValue(':fuel', $filters['fuel']);
-    }
+    fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
 }
@@ -639,6 +676,12 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_id = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
     }
 
     $selectPeriod = $filters['period'] === 'monthly'
@@ -657,6 +700,7 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
             COUNT(*) AS sample_count
         FROM sa_site_prices_history h
         INNER JOIN sa_fuel_types f ON f.fuel_id = h.fuel_id
+        INNER JOIN sa_stations s ON s.station_id = h.station_id
         WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
           AND h.price BETWEEN 500 AND 4000
           AND " . implode(' AND ', $where) . "
@@ -665,9 +709,7 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['fuel'] !== '') {
-        $statement->bindValue(':fuel', $filters['fuel']);
-    }
+    fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
 }
