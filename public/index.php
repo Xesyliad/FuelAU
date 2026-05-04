@@ -1821,6 +1821,14 @@ try {
             return Math.max(15, Number(tankCapacityL || 0) * 0.5);
         }
 
+        function routeFuelRelaxedPurchaseL(tankCapacityL) {
+            return Math.max(10, Number(tankCapacityL || 0) * 0.15);
+        }
+
+        function routeFuelContingencyPurchaseL(tankCapacityL) {
+            return Math.max(5, Number(tankCapacityL || 0) * 0.05);
+        }
+
         function routeFuelReserveL(tankCapacityL) {
             return Math.max(0, Number(tankCapacityL || 0) * 0.1);
         }
@@ -2307,7 +2315,7 @@ try {
                 }));
         }
 
-        function buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set(), allowSafetyStops = false) {
+        function buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set(), allowSafetyStops = false, allowRelaxedStops = false) {
             const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
             if (rateLPerKm <= 0) {
                 return null;
@@ -2318,6 +2326,7 @@ try {
             const detourLimitKm = routeFuelDetourLimitKm(routeKm, Math.max(fullTankSafeRangeKm, currentSafeRangeKm));
             const strictMinimumRefillL = routeFuelMinimumPurchaseL(tankCapacityL);
             const safetyMinimumRefillL = Math.max(15, tankCapacityL * 0.25);
+            const relaxedMinimumRefillL = routeFuelRelaxedPurchaseL(tankCapacityL);
             const launchFuelExemption = currentFuelL <= (tankCapacityL * 0.25);
             const stationNodes = routeFuelGraphStationNodes(candidates, routeKm, detourLimitKm, visitedKeys, visitedNames);
             const nodes = [
@@ -2366,14 +2375,18 @@ try {
                     let edgeCost = 0;
                     let litresPurchased = 0;
                     let safetyFallback = false;
+                    let relaxedFallback = false;
                     if (toNode.kind === 'station') {
                         const station = toNode.station;
                         litresPurchased = Math.max(0, tankCapacityL - arrivalFuelL);
-                        const minimumRefillL = allowSafetyStops ? safetyMinimumRefillL : strictMinimumRefillL;
+                        const minimumRefillL = allowRelaxedStops
+                            ? relaxedMinimumRefillL
+                            : (allowSafetyStops ? safetyMinimumRefillL : strictMinimumRefillL);
                         if (!(fromNode.kind === 'start' && launchFuelExemption) && litresPurchased < minimumRefillL) {
                             continue;
                         }
                         safetyFallback = litresPurchased < strictMinimumRefillL;
+                        relaxedFallback = allowRelaxedStops && litresPurchased < safetyMinimumRefillL;
                         const offRouteKm = routeFuelCandidateOffRouteKm(station);
                         const purchaseCost = litresPurchased * Number(station.price || 0);
                         const detourCost = routeFuelDetourCostCents(offRouteKm, station.price, economyLPer100km);
@@ -2392,6 +2405,7 @@ try {
                             arrivalFuelL,
                             litresPurchased,
                             safetyFallback,
+                            relaxedFallback,
                         };
                     }
                 }
@@ -2412,6 +2426,7 @@ try {
                         ...node.station,
                         plannedRefillL: entry.litresPurchased,
                         safetyFallback: entry.safetyFallback,
+                        relaxedFallback: entry.relaxedFallback,
                     });
                 }
                 cursorIndex = entry.previousIndex;
@@ -2422,6 +2437,7 @@ try {
                 cost: best[destinationIndex].cost,
                 stops,
                 safetyFallback: allowSafetyStops,
+                relaxedFallback: allowRelaxedStops,
             };
         }
 
@@ -2430,7 +2446,11 @@ try {
             if (strictPlan) {
                 return strictPlan;
             }
-            return buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true);
+            const safetyPlan = buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true, false);
+            if (safetyPlan) {
+                return safetyPlan;
+            }
+            return buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true, true);
         }
 
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
@@ -2467,7 +2487,10 @@ try {
                 let chosen = null;
                 let approach = null;
                 let safetyFallback = false;
+                let relaxedFallback = false;
+                let contingencyFallback = false;
                 const shortSafetyCandidates = [];
+                const contingencyCandidates = [];
                 const isFirstStop = routePieces.length === 0;
                 const graphPlan = selectRouteFuelGraphPlan(
                     candidates,
@@ -2480,6 +2503,9 @@ try {
                     visitedStationNames
                 );
                 const graphCandidates = graphPlan ? graphPlan.stops.slice() : [];
+                const graphMinimumRefillL = graphPlan?.relaxedFallback
+                    ? routeFuelRelaxedPurchaseL(tankCapacityL)
+                    : (graphPlan?.safetyFallback ? Math.max(15, tankCapacityL * 0.25) : routeFuelMinimumPurchaseL(tankCapacityL));
                 while (graphCandidates.length > 0 || candidates.length > 0) {
                     const nextCandidate = graphCandidates.length > 0
                         ? graphCandidates.shift()
@@ -2515,15 +2541,29 @@ try {
                     const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
                     const nextArrivalFuel = Math.max(0, fuelInTank - nextApproachFuel);
                     const nextRefillL = Math.max(0, tankCapacityL - nextArrivalFuel);
-                    if (!isFirstStop && nextRefillL < routeFuelMinimumPurchaseL(tankCapacityL)) {
+                    if (!isFirstStop && nextRefillL < graphMinimumRefillL) {
+                        if ((nextCandidate.relaxedFallback || graphPlan?.relaxedFallback) && nextRefillL >= routeFuelRelaxedPurchaseL(tankCapacityL) && (fuelInTank - nextApproachFuel) >= reserveL) {
+                            chosen = nextCandidate;
+                            approach = nextApproach;
+                            relaxedFallback = true;
+                            break;
+                        }
                         if ((nextCandidate.safetyFallback || graphPlan?.safetyFallback) && nextRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - nextApproachFuel) >= reserveL) {
                             chosen = nextCandidate;
                             approach = nextApproach;
                             safetyFallback = true;
                             break;
                         }
-                        if (graphCandidates.length === 0 && nextRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - nextApproachFuel) >= reserveL) {
+                        if (graphCandidates.length === 0 && nextRefillL >= routeFuelRelaxedPurchaseL(tankCapacityL) && (fuelInTank - nextApproachFuel) >= reserveL) {
                             shortSafetyCandidates.push({
+                                candidate: nextCandidate,
+                                approach: nextApproach,
+                                refillL: nextRefillL,
+                                relaxedFallback: nextRefillL < Math.max(15, tankCapacityL * 0.25),
+                            });
+                        }
+                        if (graphCandidates.length === 0 && nextRefillL >= routeFuelContingencyPurchaseL(tankCapacityL) && (fuelInTank - nextApproachFuel) >= reserveL) {
+                            contingencyCandidates.push({
                                 candidate: nextCandidate,
                                 approach: nextApproach,
                                 refillL: nextRefillL,
@@ -2558,7 +2598,26 @@ try {
                     });
                     chosen = shortSafetyCandidates[0].candidate;
                     approach = shortSafetyCandidates[0].approach;
-                    safetyFallback = true;
+                    relaxedFallback = shortSafetyCandidates[0].relaxedFallback || false;
+                    safetyFallback = !relaxedFallback;
+                }
+
+                if (!chosen && contingencyCandidates.length > 0) {
+                    contingencyCandidates.sort((left, right) => {
+                        if (left.candidate.forwardFeasible !== right.candidate.forwardFeasible) {
+                            return Number(right.candidate.forwardFeasible) - Number(left.candidate.forwardFeasible);
+                        }
+                        if (left.refillL !== right.refillL) {
+                            return right.refillL - left.refillL;
+                        }
+                        if (left.candidate.effectiveCost !== right.candidate.effectiveCost) {
+                            return left.candidate.effectiveCost - right.candidate.effectiveCost;
+                        }
+                        return Number(left.candidate.price || 0) - Number(right.candidate.price || 0);
+                    });
+                    chosen = contingencyCandidates[0].candidate;
+                    approach = contingencyCandidates[0].approach;
+                    contingencyFallback = true;
                 }
 
                 if (!chosen) {
@@ -2597,6 +2656,8 @@ try {
                     purchaseCents,
                     fuelAfterArrival,
                     safetyFallback,
+                    relaxedFallback,
+                    contingencyFallback,
                 });
 
                 routePieces.push({
@@ -2605,6 +2666,8 @@ try {
                     litresPurchased: litresToBuy,
                     purchaseCents,
                     safetyFallback,
+                    relaxedFallback,
+                    contingencyFallback,
                 });
 
                 fuelInTank = tankCapacityL;
@@ -3007,7 +3070,7 @@ try {
                             instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
                             distance: '-',
                             duration: '-',
-                            details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${piece.safetyFallback ? ' safety stop' : ''}`,
+                            details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : ''))}`,
                         });
                     }
                 });
@@ -3128,9 +3191,11 @@ try {
                 const returnMode = routeReturnMode() === 'reverses'
                     ? 'Return reverses path'
                     : 'Return direct to origin';
+                const hadContingencyStop = plan.segments.some((segment) => Array.isArray(segment.stops) && segment.stops.some((stop) => stop.contingencyFallback));
+                const contingencyMessage = hadContingencyStop ? ' Contingency refill used on one or more legs.' : '';
                 routeStatus.textContent = plan.reserveNote
-                    ? `Planned ${plan.segments.length} legs using ${returnMode}. ${plan.reserveNote.message}`
-                    : `Planned ${plan.segments.length} legs using ${returnMode}.`;
+                    ? `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage} ${plan.reserveNote.message}`
+                    : `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage}`;
             } catch (error) {
                 routeStatus.textContent = error.message;
                 routeSummary.innerHTML = renderRouteEmpty(error.message);
