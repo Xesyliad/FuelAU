@@ -267,6 +267,7 @@ Expected result:
 - Fuel stops are listed with litres and total fill price.
 - The map shows the route and fuel-stop markers.
 - No normal stop should be a tiny refill; safety stops should be labelled if the planner cannot maintain the normal half-tank refill rule.
+- If the tank is too small to reach a safe stop, the planner should show the extra external reserve needed to reach the destination safely.
 
 ## Services
 
@@ -411,6 +412,7 @@ The Route Planning tab has:
 - Direct-return or reverse-path return mode.
 - A MapLibre route map using the local `/tiles/` basemap when the map stack is running.
 - Fuel stops plotted on the route and a turn-by-turn breakdown.
+- If a segment cannot reach any safe fuel stop, the planner shows an external reserve requirement instead of failing silently.
 
 ## App API
 

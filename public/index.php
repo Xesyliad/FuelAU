@@ -1825,6 +1825,29 @@ try {
             return Math.max(0, Number(tankCapacityL || 0) * 0.1);
         }
 
+        function routeFuelExternalReserveL(routeKm, currentFuelL, tankCapacityL, economyLPer100km) {
+            const reserveL = routeFuelReserveL(tankCapacityL);
+            const fuelNeededL = Math.max(0, Number(routeKm || 0)) * routeFuelRateLPerKm(economyLPer100km);
+            const requiredStartFuelL = fuelNeededL + reserveL;
+            return Math.max(0, requiredStartFuelL - Number(currentFuelL || 0));
+        }
+
+        function routeFuelReserveNote(destination, routeKm, currentFuelL, tankCapacityL, economyLPer100km) {
+            const destinationLabel = destination?.display_name || destination?.query || 'destination';
+            const reserveL = routeFuelReserveL(tankCapacityL);
+            const requiredExternalReserveL = routeFuelExternalReserveL(routeKm, currentFuelL, tankCapacityL, economyLPer100km);
+            return {
+                destinationLabel,
+                routeKm: Number(routeKm || 0),
+                currentFuelL: Number(currentFuelL || 0),
+                reserveL,
+                requiredExternalReserveL,
+                message: requiredExternalReserveL > 0
+                    ? `No reachable fuel stop before reserve. Choose a different route or start with an additional ${requiredExternalReserveL.toFixed(1)} L external reserve to reach ${destinationLabel} safely.`
+                    : `No reachable fuel stop before reserve for ${destinationLabel}.`,
+            };
+        }
+
         function routeFuelRateLPerKm(economyLPer100km) {
             return Number(economyLPer100km || 0) / 100;
         }
@@ -2539,7 +2562,20 @@ try {
                 }
 
                 if (!chosen) {
-                    throw new Error(`No fuel stop is reachable before running out of fuel on the way to ${destination.display_name || destination.query}.`);
+                    const reserveNote = routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km);
+                    routePieces.push({
+                        type: 'route',
+                        route,
+                    });
+                    return {
+                        cursor,
+                        destination,
+                        routePieces,
+                        stops: chosenStops,
+                        remainingFuelL: Math.max(0, fuelInTank - fuelNeeded),
+                        requiresExternalReserve: true,
+                        reserveNote,
+                    };
                 }
 
                 visitedStationKeys.add(stationKey(chosen));
@@ -2644,6 +2680,10 @@ try {
                 segments.push(segment);
                 currentPoint = destination;
                 currentFuel = Math.max(0, segment.remainingFuelL);
+
+                if (segment.requiresExternalReserve) {
+                    break;
+                }
             }
 
             return {
@@ -2656,6 +2696,7 @@ try {
                 totalFuelUsedL,
                 totalFillCostCents,
                 fuelRemainingL: currentFuel,
+                reserveNote: segments.find((segment) => segment?.reserveNote)?.reserveNote || null,
             };
         }
 
@@ -2683,6 +2724,12 @@ try {
                 ['Fuel Stops', String(plan.segments.reduce((count, segment) => count + segment.stops.length, 0))],
                 ['Total Fill Price', `$${(Number(plan.totalFillCostCents || 0) / 100).toFixed(2)}`],
             ];
+            if (plan.reserveNote) {
+                cards.unshift(
+                    ['Reserve Needed', `${Number(plan.reserveNote.requiredExternalReserveL || 0).toFixed(1)} L`],
+                    ['Route Note', plan.reserveNote.message]
+                );
+            }
             routeSummary.innerHTML = cards.map(([label, value]) => `
                 <article class="route-summary-card">
                     <strong>${escapeHtml(value)}</strong>
@@ -2930,6 +2977,16 @@ try {
 
         function renderRouteBreakdown(plan) {
             const rows = [];
+            if (plan.reserveNote) {
+                rows.push({
+                    leg: '-',
+                    type: 'Notice',
+                    instruction: plan.reserveNote.message,
+                    distance: '-',
+                    duration: '-',
+                    details: `External reserve required: ${Number(plan.reserveNote.requiredExternalReserveL || 0).toFixed(1)} L`,
+                });
+            }
             plan.segments.forEach((segment, segmentIndex) => {
                 segment.routePieces.forEach((piece) => {
                     if (piece.type === 'route') {
@@ -3071,7 +3128,9 @@ try {
                 const returnMode = routeReturnMode() === 'reverses'
                     ? 'Return reverses path'
                     : 'Return direct to origin';
-                routeStatus.textContent = `Planned ${plan.segments.length} legs using ${returnMode}.`;
+                routeStatus.textContent = plan.reserveNote
+                    ? `Planned ${plan.segments.length} legs using ${returnMode}. ${plan.reserveNote.message}`
+                    : `Planned ${plan.segments.length} legs using ${returnMode}.`;
             } catch (error) {
                 routeStatus.textContent = error.message;
                 routeSummary.innerHTML = renderRouteEmpty(error.message);
