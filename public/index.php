@@ -160,6 +160,11 @@ try {
             font-size: 14px;
         }
 
+        .status-line.route-status-warning {
+            color: #b42318;
+            font-weight: 700;
+        }
+
         .container-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -2743,10 +2748,6 @@ try {
                 segments.push(segment);
                 currentPoint = destination;
                 currentFuel = Math.max(0, segment.remainingFuelL);
-
-                if (segment.requiresExternalReserve) {
-                    break;
-                }
             }
 
             return {
@@ -2787,12 +2788,6 @@ try {
                 ['Fuel Stops', String(plan.segments.reduce((count, segment) => count + segment.stops.length, 0))],
                 ['Total Fill Price', `$${(Number(plan.totalFillCostCents || 0) / 100).toFixed(2)}`],
             ];
-            if (plan.reserveNote) {
-                cards.unshift(
-                    ['Reserve Needed', `${Number(plan.reserveNote.requiredExternalReserveL || 0).toFixed(1)} L`],
-                    ['Route Note', plan.reserveNote.message]
-                );
-            }
             routeSummary.innerHTML = cards.map(([label, value]) => `
                 <article class="route-summary-card">
                     <strong>${escapeHtml(value)}</strong>
@@ -3193,10 +3188,12 @@ try {
                     : 'Return direct to origin';
                 const hadContingencyStop = plan.segments.some((segment) => Array.isArray(segment.stops) && segment.stops.some((stop) => stop.contingencyFallback));
                 const contingencyMessage = hadContingencyStop ? ' Contingency refill used on one or more legs.' : '';
+                routeStatus.classList.toggle('route-status-warning', Boolean(plan.reserveNote));
                 routeStatus.textContent = plan.reserveNote
                     ? `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage} ${plan.reserveNote.message}`
                     : `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage}`;
             } catch (error) {
+                routeStatus.classList.remove('route-status-warning');
                 routeStatus.textContent = error.message;
                 routeSummary.innerHTML = renderRouteEmpty(error.message);
                 routeMap.innerHTML = renderRouteEmpty(error.message);
@@ -3215,6 +3212,7 @@ try {
             routeFuelEconomy.value = '';
             routeReturnDirect.checked = true;
             routeReturnReverses.checked = false;
+            routeStatus.classList.remove('route-status-warning');
             routeDestinationList.innerHTML = '';
             routeDestinationCounter = 0;
             addRouteDestination('');
