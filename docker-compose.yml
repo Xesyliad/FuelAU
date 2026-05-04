@@ -22,7 +22,7 @@ services:
 
   db:
     image: mariadb:11.4
-    user: "999:999"
+    user: "${UID:-999}:${GID:-999}"
     environment:
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}"
       MYSQL_DATABASE: "${MYSQL_DATABASE:-fuelau}"

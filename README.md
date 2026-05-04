@@ -32,6 +32,8 @@ cp config/mysql-sample.env config/mysql.env
 
 2. Edit `.env`, `config/app.env`, and `config/mysql.env`.
 
+`UID` and `GID` live in the root `.env` file. Keep the defaults of `999:999` for most Linux hosts. On macOS or on any host where the mounted MariaDB data directory needs different ownership, set `UID` and `GID` to the host user IDs before starting the stack.
+
 3. Start the base stack:
 
 ```bash
@@ -90,6 +92,7 @@ cp config/mysql-sample.env config/mysql.env
 
 At minimum, set:
 
+- `UID` and `GID` to match the host user if the MariaDB data directory needs to be writable by your local Docker engine. The defaults are `999:999`; on macOS or other hosts with different file ownership, changing these values prevents the startup error during the base stack build.
 - `MYSQL_ROOT_PASSWORD`
 - `MYSQL_PASSWORD`
 - `NOMINATIM_PASSWORD`
@@ -289,7 +292,7 @@ docker compose up -d --build app
 
 Edit these files before starting the stack:
 
-- `.env`: Compose ports, MariaDB bootstrap credentials, Nominatim password, timezone.
+- `.env`: Compose ports, MariaDB bootstrap credentials, MariaDB container UID/GID, Nominatim password, timezone.
 - `config/app.env`: central application settings such as external API tokens and non-MySQL integration credentials.
 - `config/mysql.env`: MySQL connection settings only.
 
@@ -334,7 +337,7 @@ Project-owned runtime state is stored under `/opt/FuelAU/var/docker/`, which is 
 
 Docker image layers, container metadata, and build cache are still managed by the host Docker daemon. Normal Compose cannot relocate those per project without using a separate Docker daemon or compatible external BuildKit builder.
 
-`setup.php` creates the project-local runtime directories required by later services. The MariaDB image uses UID/GID `999:999`; the Nominatim image uses PostgreSQL as UID/GID `100:103`.
+`setup.php` creates the project-local runtime directories required by later services. The MariaDB image uses UID/GID `999:999` by default; override that in `.env` with `UID` and `GID` when your host ownership requires it. The Nominatim image uses PostgreSQL as UID/GID `100:103`.
 
 For Synology/NFS-backed `/opt/FuelAU`, the share must allow real ownership changes for PostgreSQL-backed services. Verify Nominatim ownership on the Docker host:
 
