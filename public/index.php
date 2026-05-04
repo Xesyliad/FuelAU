@@ -165,6 +165,10 @@ try {
             font-weight: 700;
         }
 
+        .status-line.route-status-muted {
+            color: var(--muted);
+        }
+
         .container-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -1075,6 +1079,7 @@ try {
                         </div>
 
                         <div class="status-line" id="route-status">Enter a trip to build a route.</div>
+                        <div class="status-line route-status-muted" id="route-excluded-status"></div>
                     </section>
 
                     <section class="surface-block route-results">
@@ -1151,6 +1156,7 @@ try {
         const routeTest = document.getElementById('route-test');
         const routeReset = document.getElementById('route-reset');
         const routeStatus = document.getElementById('route-status');
+        const routeExcludedStatus = document.getElementById('route-excluded-status');
         const routeSummary = document.getElementById('route-summary');
         const routeMap = document.getElementById('route-map');
         const routeMapLegend = document.getElementById('route-map-legend');
@@ -1822,6 +1828,29 @@ try {
                 && routeFuelPriceIsFresh(candidate?.updated_at);
         }
 
+        function routeFuelCandidateExclusionReasons(candidate) {
+            const reasons = [];
+            if (!routeFuelSourceIsOfficial(candidate?.source)) {
+                reasons.push('no government pricing');
+            }
+            const price = Number(candidate?.price);
+            if (!Number.isFinite(price) || price <= 0) {
+                reasons.push('pricing does not exist');
+            } else if (!routeFuelPriceIsReasonable(price)) {
+                reasons.push('pricing is outside the supported range');
+            }
+            if (!routeFuelPriceIsFresh(candidate?.updated_at)) {
+                reasons.push('pricing is older than 14 days');
+            }
+            return reasons;
+        }
+
+        function routeFuelStationDisplay(candidate) {
+            const station = String(candidate?.station_name || '').trim();
+            const address = String(candidate?.address || '').trim();
+            return [station, address].filter((part) => part !== '').join(' - ');
+        }
+
         function routeFuelMinimumPurchaseL(tankCapacityL) {
             return Math.max(15, Number(tankCapacityL || 0) * 0.5);
         }
@@ -2105,8 +2134,28 @@ try {
                 `/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=${encodeURIComponent(radiusKm)}&limit=50`
             )));
 
-            return dedupeRouteStations(candidateBatches.flatMap((payload) => Array.isArray(payload.rows) ? payload.rows : []))
-                .filter((candidate) => routeFuelCandidateIsEligible(candidate))
+            const deduped = dedupeRouteStations(candidateBatches.flatMap((payload) => Array.isArray(payload.rows) ? payload.rows : []));
+            const excludedStations = [];
+            const excludedKeys = new Set();
+            const candidates = deduped
+                .filter((candidate) => {
+                    if (routeFuelCandidateIsEligible(candidate)) {
+                        return true;
+                    }
+                    const reasons = routeFuelCandidateExclusionReasons(candidate);
+                    if (reasons.length === 0) {
+                        return false;
+                    }
+                    const key = stationKey(candidate);
+                    if (!excludedKeys.has(key)) {
+                        excludedKeys.add(key);
+                        excludedStations.push({
+                            ...candidate,
+                            exclusionReasons: reasons,
+                        });
+                    }
+                    return false;
+                })
                 .map((candidate) => {
                 let nearestProgress = progress[0] || routePoint(0, 0, 0);
                 let bestDistance = Number.POSITIVE_INFINITY;
@@ -2125,6 +2174,11 @@ try {
                     progressKm: nearestProgress.progressKm,
                 };
             }).filter((candidate) => candidate.routeDistanceFromCursorKm <= radiusKm);
+
+            return {
+                candidates,
+                excludedStations,
+            };
         }
 
         function dedupeRouteStations(rows) {
@@ -2136,6 +2190,33 @@ try {
                 }
             });
             return Array.from(unique.values());
+        }
+
+        function dedupeRouteExcludedStations(rows) {
+            const unique = new Map();
+            rows.forEach((row) => {
+                const reasons = Array.isArray(row?.exclusionReasons) ? row.exclusionReasons.slice().sort().join('|') : '';
+                const key = `${String(row?.source || '')}:${String(row?.state || '')}:${String(row?.station_id || '')}:${String(row?.station_name || '')}:${String(row?.address || '')}:${reasons}`;
+                if (!unique.has(key)) {
+                    unique.set(key, row);
+                }
+            });
+            return Array.from(unique.values());
+        }
+
+        function formatRouteExcludedStations(excludedStations) {
+            const rows = Array.isArray(excludedStations) ? excludedStations : [];
+            if (rows.length === 0) {
+                return '';
+            }
+
+            const preview = rows.slice(0, 5).map((station) => {
+                const label = routeFuelStationDisplay(station) || 'Unknown station';
+                const reasons = Array.isArray(station.exclusionReasons) ? station.exclusionReasons.join(', ') : 'excluded';
+                return `${label} (${reasons})`;
+            });
+            const suffix = rows.length > preview.length ? ` and ${rows.length - preview.length} more` : '';
+            return `Excluded route stations: ${preview.join('; ')}${suffix}.`;
         }
 
         function stationKey(candidate) {
@@ -2461,6 +2542,7 @@ try {
         async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery) {
             const chosenStops = [];
             const routePieces = [];
+            const excludedStations = [];
             const visitedStationKeys = new Set();
             const visitedStationNames = new Set();
             let currentPoint = cursor;
@@ -2474,9 +2556,13 @@ try {
                 const progress = buildRouteProgress(route.geometry);
                 const sampleLimit = Math.max(12, Math.min(36, Math.ceil(routeKm / 60)));
                 const searchRadiusKm = routeKm > 1600 ? 60 : (routeKm > 900 ? 45 : 30);
-                let candidates = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm);
+                let candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm);
+                let candidates = candidateBundle.candidates;
+                excludedStations.push(...candidateBundle.excludedStations);
                 if (candidates.length === 0) {
-                    candidates = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(40, sampleLimit + 8), routeKm > 1600 ? 90 : 60);
+                    candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(40, sampleLimit + 8), routeKm > 1600 ? 90 : 60);
+                    candidates = candidateBundle.candidates;
+                    excludedStations.push(...candidateBundle.excludedStations);
                 }
 
                 const currentCursor = routePoint(currentPoint.lon, currentPoint.lat, 0);
@@ -2636,6 +2722,7 @@ try {
                         destination,
                         routePieces,
                         stops: chosenStops,
+                        excludedStations,
                         remainingFuelL: Math.max(0, fuelInTank - fuelNeeded),
                         requiresExternalReserve: true,
                         reserveNote,
@@ -2685,12 +2772,14 @@ try {
                 destination,
                 routePieces,
                 stops: chosenStops,
+                excludedStations,
                 remainingFuelL: Math.max(0, fuelInTank),
             };
         }
 
         async function buildRoutePlan(resolveStops, fuelQuery, tankCapacityL, economyLPer100km) {
             const segments = [];
+            const excludedStations = [];
             let currentFuel = tankCapacityL * 0.2;
             let currentPoint = resolveStops[0];
             let totalDistanceM = 0;
@@ -2746,6 +2835,7 @@ try {
                 });
 
                 segments.push(segment);
+                excludedStations.push(...(Array.isArray(segment.excludedStations) ? segment.excludedStations : []));
                 currentPoint = destination;
                 currentFuel = Math.max(0, segment.remainingFuelL);
             }
@@ -2761,6 +2851,7 @@ try {
                 totalFillCostCents,
                 fuelRemainingL: currentFuel,
                 reserveNote: segments.find((segment) => segment?.reserveNote)?.reserveNote || null,
+                excludedStations: dedupeRouteExcludedStations(excludedStations),
             };
         }
 
@@ -3168,10 +3259,12 @@ try {
 
             routePlan.disabled = true;
             routeStatus.textContent = 'Resolving locations and building route legs...';
+            routeStatus.classList.remove('route-status-warning');
             routeSummary.innerHTML = renderRouteEmpty('Planning route...');
             routeMap.innerHTML = renderRouteEmpty('Resolving locations...');
             routeMapLegend.innerHTML = '';
             routeLegs.innerHTML = renderRouteEmpty('Building legs...');
+            routeExcludedStatus.textContent = '';
 
             try {
                 const origin = await resolveRouteLocation(originValue);
@@ -3181,6 +3274,7 @@ try {
                 renderRouteSummary(plan);
                 renderRouteMap(plan);
                 renderRouteBreakdown(plan);
+                routeExcludedStatus.textContent = formatRouteExcludedStations(plan.excludedStations);
                 saveRoutePlannerState(true);
 
                 const returnMode = routeReturnMode() === 'reverses'
@@ -3199,6 +3293,7 @@ try {
                 routeMap.innerHTML = renderRouteEmpty(error.message);
                 routeMapLegend.innerHTML = '';
                 routeLegs.innerHTML = renderRouteEmpty(error.message);
+                routeExcludedStatus.textContent = '';
             } finally {
                 routePlan.disabled = false;
             }
@@ -3213,6 +3308,7 @@ try {
             routeReturnDirect.checked = true;
             routeReturnReverses.checked = false;
             routeStatus.classList.remove('route-status-warning');
+            routeExcludedStatus.textContent = '';
             routeDestinationList.innerHTML = '';
             routeDestinationCounter = 0;
             addRouteDestination('');

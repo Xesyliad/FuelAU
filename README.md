@@ -414,6 +414,7 @@ The Route Planning tab has:
 - Fuel stops plotted on the route and a turn-by-turn breakdown.
 - If a segment cannot reach a normal or safety stop, the planner can fall back to a smaller contingency refill before showing an external reserve requirement.
 - Reserve warnings are shown under the route button in red, and the planner continues into later legs instead of stopping the whole trip.
+- Route stations that are skipped because they have no government pricing or no price are listed under the route button with the station name, address, and exclusion reason.
 
 ## App API
 
