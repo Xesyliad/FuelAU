@@ -16,6 +16,8 @@ from urllib.request import Request
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
+from sync_utils import is_unconfigured_value
+
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
 DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
@@ -608,6 +610,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
     app_config = parse_env_file(Path(args.app_env))
     api_states = args.api_states.strip() or app_config.get("NSW_FUEL_API_STATES", "").strip() or DEFAULT_API_STATES
+
+    auth_header = app_config.get("NSW_FUEL_API_AUTHORIZATION_HEADER")
+    api_key = app_config.get("NSW_FUEL_API_KEY")
+    if is_unconfigured_value(auth_header) or is_unconfigured_value(api_key):
+        print(
+            "info: NSW_FUEL_API_AUTHORIZATION_HEADER or NSW_FUEL_API_KEY is not configured; skipping NSW sync",
+            file=os.sys.stderr,
+        )
+        return 0
+
     try:
         access_token, client_id = fetch_access_token(app_config, Path(args.token_cache), args.api_base_url)
     except Exception as exc:

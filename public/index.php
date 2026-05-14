@@ -8,6 +8,10 @@ require dirname(__DIR__) . '/src/http.php';
 require dirname(__DIR__) . '/src/routing.php';
 require dirname(__DIR__) . '/src/fuel.php';
 
+$fuelauConfig = fuelauConfig();
+$containerManagementEnabled = fuelauConfigBool($fuelauConfig, 'CONTAINER_MANAGEMENT_ENABLED', false);
+$containerManagementToken = trim((string) ($fuelauConfig['CONTAINER_MANAGEMENT_TOKEN'] ?? ''));
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 
 try {
@@ -638,7 +642,7 @@ try {
 
         .route-map {
             width: 100%;
-            aspect-ratio: 1 / 1;
+            height: 85vh;
             display: block;
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -649,7 +653,7 @@ try {
 
         .route-map-frame {
             width: 100%;
-            aspect-ratio: 1 / 1;
+            height: 85vh;
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
@@ -856,8 +860,7 @@ try {
 
         .fuel-map-frame {
             width: 100%;
-            aspect-ratio: 16 / 9;
-            min-height: 420px;
+            height: 85vh;
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
@@ -952,12 +955,17 @@ try {
             fuelauMapTileConfig(),
             JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
         ) ?>;
+        window.fuelauAppConfig = <?= json_encode([
+            'containerManagementEnabled' => $containerManagementEnabled,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
     <main class="app-shell">
         <nav class="tabs" aria-label="Primary">
             <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab">Fuel Prices</button>
             <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="route-planning" id="route-planning-tab">Route Planning</button>
+            <?php if ($containerManagementEnabled): ?>
             <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab">Container Management</button>
+            <?php endif; ?>
         </nav>
 
         <section class="content">
@@ -1099,6 +1107,7 @@ try {
                     </section>
                 </div>
             </div>
+            <?php if ($containerManagementEnabled): ?>
             <div class="panel" role="tabpanel" id="container-management" aria-labelledby="container-management-tab">
                 <h1>Container Management</h1>
                 <p>Status, logs, restart controls, and constrained cleanup tasks for this Compose project.</p>
@@ -1116,6 +1125,7 @@ try {
                 <h1>Logs</h1>
                 <pre class="logs" id="container-logs">Select a container to load logs.</pre>
             </div>
+            <?php endif; ?>
         </section>
     </main>
 
@@ -1161,6 +1171,7 @@ try {
         const routeMap = document.getElementById('route-map');
         const routeMapLegend = document.getElementById('route-map-legend');
         const routeLegs = document.getElementById('route-legs');
+        const containerManagementEnabled = Boolean(window.fuelauAppConfig?.containerManagementEnabled);
         let selectedContainerId = null;
         let selectedContainerRestartable = false;
         let fuelOptions = null;
@@ -1181,6 +1192,7 @@ try {
         const fuelRegionCookieName = 'fuelau_selected_region';
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const activeTabKey = 'fuelau_active_tab_v1';
+        const containerManagementTokenKey = 'fuelau_container_management_token';
 
         const fuelRegionCatalog = {
             QLD: [
@@ -1282,7 +1294,7 @@ try {
             document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
             saveActiveTab(tab.id);
 
-            if (tab.id === 'container-management-tab') {
+            if (containerManagementEnabled && tab.id === 'container-management-tab') {
                 loadContainers();
             }
             if (tab.id === 'fuel-prices-tab') {
@@ -1296,16 +1308,38 @@ try {
             }
         }
 
-        async function apiRequest(url, options = {}) {
+        async function apiRequest(url, options = {}, retryOnContainerAuthFailure = true) {
+            const headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                ...(options.headers || {}),
+            };
+
+            if (containerManagementEnabled && String(url || '').startsWith('/api/docker/')) {
+                const token = getContainerManagementToken();
+                if (token !== '') {
+                    headers['X-FuelAU-Container-Token'] = token;
+                }
+            }
+
             const response = await fetch(url, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
                 ...options,
+                headers,
             });
             const payload = await response.json();
             if (!response.ok) {
+                if (
+                    retryOnContainerAuthFailure
+                    && response.status === 401
+                    && containerManagementEnabled
+                    && String(url || '').startsWith('/api/docker/')
+                ) {
+                    const token = promptContainerManagementToken();
+                    if (token !== '') {
+                        return apiRequest(url, options, false);
+                    }
+                }
+
                 throw new Error(payload.message || payload.error || 'Request failed');
             }
             return payload;
@@ -1342,6 +1376,37 @@ try {
             const safeValue = encodeURIComponent(String(value || '').trim());
             const maxAge = Math.max(1, Number(maxAgeDays || 365)) * 24 * 60 * 60;
             document.cookie = `${encodeURIComponent(name)}=${safeValue}; path=/; max-age=${maxAge}; samesite=lax`;
+        }
+
+        function getContainerManagementToken() {
+            try {
+                return window.localStorage.getItem(containerManagementTokenKey) || '';
+            } catch (error) {
+                return '';
+            }
+        }
+
+        function setContainerManagementToken(value) {
+            try {
+                const token = String(value || '').trim();
+                if (token === '') {
+                    window.localStorage.removeItem(containerManagementTokenKey);
+                    return;
+                }
+                window.localStorage.setItem(containerManagementTokenKey, token);
+            } catch (error) {
+                void error;
+            }
+        }
+
+        function promptContainerManagementToken() {
+            const token = window.prompt('Enter the FuelAU container management token for this browser session:');
+            if (token === null) {
+                return '';
+            }
+            const normalized = token.trim();
+            setContainerManagementToken(normalized);
+            return normalized;
         }
 
         function savedFuelLabel() {
@@ -4373,30 +4438,32 @@ try {
             }
         }
 
-        refreshContainers.addEventListener('click', loadContainers);
-        restartContainer.addEventListener('click', async () => {
-            if (!selectedContainerId || !window.confirm('Restart the selected container?')) {
-                return;
-            }
+        if (containerManagementEnabled && refreshContainers && restartContainer && pruneStopped && pruneImages) {
+            refreshContainers.addEventListener('click', loadContainers);
+            restartContainer.addEventListener('click', async () => {
+                if (!selectedContainerId || !window.confirm('Restart the selected container?')) {
+                    return;
+                }
 
-            containerStatus.textContent = 'Restarting container...';
-            try {
-                await apiRequest(`/api/docker/containers/${selectedContainerId}/restart`, { method: 'POST' });
-                containerStatus.textContent = 'Container restarted.';
-                await loadContainers();
-                await loadLogs(selectedContainerId);
-            } catch (error) {
-                containerStatus.textContent = error.message;
-            }
-        });
-        pruneStopped.addEventListener('click', () => runAction(
-            'stopped_project_containers',
-            'Remove stopped containers that belong to this Compose project?'
-        ));
-        pruneImages.addEventListener('click', () => runAction(
-            'dangling_images',
-            'Remove dangling Docker images? This does not remove tagged images.'
-        ));
+                containerStatus.textContent = 'Restarting container...';
+                try {
+                    await apiRequest(`/api/docker/containers/${selectedContainerId}/restart`, { method: 'POST' });
+                    containerStatus.textContent = 'Container restarted.';
+                    await loadContainers();
+                    await loadLogs(selectedContainerId);
+                } catch (error) {
+                    containerStatus.textContent = error.message;
+                }
+            });
+            pruneStopped.addEventListener('click', () => runAction(
+                'stopped_project_containers',
+                'Remove stopped containers that belong to this Compose project?'
+            ));
+            pruneImages.addEventListener('click', () => runAction(
+                'dangling_images',
+                'Remove dangling Docker images? This does not remove tagged images.'
+            ));
+        }
 
         routeAddDestination.addEventListener('click', () => addRouteDestination(''));
         routePlan.addEventListener('click', planRoute);
@@ -4463,6 +4530,23 @@ try {
         ]);
     }
 
+    if (str_starts_with($path, '/api/docker/')) {
+        if (!fuelauConfigBool($fuelauConfig, 'CONTAINER_MANAGEMENT_ENABLED', false)) {
+            fuelauJsonResponse([
+                'error' => 'not_found',
+                'message' => 'Container management is disabled.',
+            ], 404);
+        }
+
+        if ($containerManagementToken === '' || !fuelauContainerManagementAuthorized($fuelauConfig)) {
+            header('WWW-Authenticate: Token realm="FuelAU Container Management"');
+            fuelauJsonResponse([
+                'error' => 'unauthorized',
+                'message' => 'Container management authentication required.',
+            ], 401);
+        }
+    }
+
     if ($path === '/api/docker/status') {
         fuelauDockerApiResponse([
             'project' => fuelauDockerProject(),
@@ -4488,6 +4572,8 @@ try {
             ], 400);
         }
 
+        fuelauRateLimit('geo-search:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 60);
+
         fuelauJsonResponse([
             'query' => $query,
             'results' => fuelauNominatimSearch($query, (int) ($_GET['limit'] ?? 10)),
@@ -4504,6 +4590,8 @@ try {
             ], 400);
         }
 
+        fuelauRateLimit('geo-reverse:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 60);
+
         fuelauJsonResponse([
             'result' => fuelauNominatimReverse((float) $latitude, (float) $longitude),
         ]);
@@ -4517,6 +4605,8 @@ try {
                 'message' => 'Missing required query parameter: coordinates',
             ], 400);
         }
+
+        fuelauRateLimit('route:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 30, 60);
 
         fuelauJsonResponse(
             fuelauRoutePlan(
@@ -4623,8 +4713,13 @@ try {
         'path' => $path,
     ], 404);
 } catch (Throwable $exception) {
+    error_log(sprintf(
+        'FuelAU request failed for %s: %s',
+        $path,
+        $exception->getMessage()
+    ));
     fuelauJsonResponse([
         'error' => 'server_error',
-        'message' => $exception->getMessage(),
+        'message' => 'An internal error occurred.',
     ], 500);
 }

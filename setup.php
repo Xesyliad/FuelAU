@@ -9,15 +9,16 @@ const FUELAU_SCHEMA_VERSION = 5;
 function fuelauEnsureRuntimeDirectories(): void
 {
     $directories = [
-        [__DIR__ . '/var/docker/app-logs', 0777, null, null],
-        [__DIR__ . '/var/docker/app-state', 0777, null, null],
+        [__DIR__ . '/var/docker/app-logs', 0775, 'www-data', 'www-data'],
+        [__DIR__ . '/var/docker/app-state', 0775, 'www-data', 'www-data'],
+        [__DIR__ . '/var/docker/app-state/rate-limits', 0775, 'www-data', 'www-data'],
         [__DIR__ . '/var/docker/db-data', 0777, 999, 999],
         [__DIR__ . '/var/docker/nominatim-db', 0755, 100, 103],
         [__DIR__ . '/var/docker/nominatim-db/16', 0755, 100, 103],
         [__DIR__ . '/var/docker/nominatim-db/16/main', 0700, 100, 103],
         [__DIR__ . '/var/docker/nominatim-flatnode', 0777, null, null],
         [__DIR__ . '/var/docker/osrm-data', 0777, null, null],
-        [__DIR__ . '/var/docker/vic-state', 0777, null, null],
+        [__DIR__ . '/var/docker/vic-state', 0775, 'www-data', 'www-data'],
         [__DIR__ . '/var/docker/map-tiles', 0777, null, null],
     ];
 

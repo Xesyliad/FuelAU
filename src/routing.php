@@ -46,7 +46,8 @@ function fuelauServiceStatus(): array
         ]), [], 15);
         $services['nominatim'] = ['status' => 'ok'];
     } catch (Throwable $exception) {
-        $services['nominatim'] = ['status' => 'unavailable', 'message' => $exception->getMessage()];
+        error_log('FuelAU nominatim status probe failed: ' . $exception->getMessage());
+        $services['nominatim'] = ['status' => 'unavailable', 'message' => 'Service unavailable'];
     }
 
     try {
@@ -57,7 +58,8 @@ function fuelauServiceStatus(): array
         );
         $services['osrm'] = ['status' => 'ok'];
     } catch (Throwable $exception) {
-        $services['osrm'] = ['status' => 'unavailable', 'message' => $exception->getMessage()];
+        error_log('FuelAU osrm status probe failed: ' . $exception->getMessage());
+        $services['osrm'] = ['status' => 'unavailable', 'message' => 'Service unavailable'];
     }
 
     return $services;

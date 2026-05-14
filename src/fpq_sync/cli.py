@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 from urllib.request import Request
 from urllib.request import urlopen
 
+from sync_utils import is_unconfigured_value
+
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
 DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
@@ -665,6 +667,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
     config = parse_env_file(Path(args.app_env))
     token = config.get("FUEL_PRICES_QLD_SUBSCRIBER_TOKEN")
+    if is_unconfigured_value(token):
+        print("info: FUEL_PRICES_QLD_SUBSCRIBER_TOKEN is not configured; skipping FPQ sync", file=os.sys.stderr)
+        return 0
     if not token:
         print("error: missing FUEL_PRICES_QLD_SUBSCRIBER_TOKEN in app env file", file=os.sys.stderr)
         return 1

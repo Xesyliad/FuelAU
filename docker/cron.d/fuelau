@@ -6,13 +6,17 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 */15 * * * * cd /var/www/html && php bin/cron-heartbeat.php >> /var/log/fuelapi/cron-heartbeat.log 2>&1
 
 # Fuel Prices QLD: refresh reference data and current prices every 30 minutes.
+# The importer self-skips when the sample placeholder token is still configured.
 0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
 
 # South Australia Fuel Pricing Information Scheme: refresh reference data daily and sync prices every 30 minutes.
+# The importer self-skips when the sample placeholder token is still configured.
 20,50 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m sa_sync.cli all >> /var/log/fuelapi/sa_sync.log 2>&1
 
 # NSW Fuel API: reuse cached OAuth token, refresh reference data daily, and sync prices every 30 minutes.
+# The importer self-skips when the sample placeholder auth header or API key is still configured.
 15,45 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nsw_sync.cli all >> /var/log/fuelapi/nsw_sync.log 2>&1
 
 # Victoria Servo Saver Open Data: refresh reference data daily and sync prices every 30 minutes.
+# The importer self-skips when the sample placeholder key is still configured.
 5,35 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all >> /var/log/fuelapi/vic_sync.log 2>&1

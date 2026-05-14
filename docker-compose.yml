@@ -16,6 +16,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       APP_ENV: "${APP_ENV:-local}"
+      CONTAINER_MANAGEMENT_ENABLED: "${CONTAINER_MANAGEMENT_ENABLED:-false}"
+      CONTAINER_MANAGEMENT_TOKEN: "${CONTAINER_MANAGEMENT_TOKEN:-}"
       FUELAU_DOCKER_PROJECT: "${COMPOSE_PROJECT_NAME:-fuelau}"
       TZ: "${TZ:-Australia/Brisbane}"
     restart: unless-stopped
@@ -30,7 +32,7 @@ services:
       MYSQL_PASSWORD: "${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}"
       TZ: "${TZ:-Australia/Brisbane}"
     ports:
-      - "${MYSQL_HOST_PORT:-3307}:3306"
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3307}:3306"
     volumes:
       - ./var/docker/db-data:/var/lib/mysql
     healthcheck:

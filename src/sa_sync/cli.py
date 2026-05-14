@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 from urllib.request import Request
 from urllib.request import urlopen
 
+from sync_utils import is_unconfigured_value
+
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
 DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
@@ -661,6 +663,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=os.sys.stderr)
         return 1
+
+    if is_unconfigured_value(token):
+        print("info: SA_FUEL_SUBSCRIBER_TOKEN is not configured; skipping SA sync", file=os.sys.stderr)
+        return 0
 
     api_base_url = args.api_base_url.strip() or required_app_config(app_config, "SA_FUEL_API_BASE_URL")
 

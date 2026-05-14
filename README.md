@@ -15,8 +15,49 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 - Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
 - Optional Australia routing/geocoding services using OSRM and Nominatim.
 - Optional local Australia vector basemap using Planetiler and TileServer GL.
+- Optional Container Management tab for local admin use; disabled by default.
 
 All services are managed from the single root `docker-compose.yml`.
+
+## Security Notes
+
+FuelAU is designed for trusted home use on a local machine or private LAN. It is intended to be reachable from devices on your home network, but not exposed directly to the public internet.
+
+The intended access model is LAN-only:
+
+- Safe: access from a desktop, laptop, or phone on your home network.
+- Not safe: exposing the app to the public internet with router port forwarding or WAN firewall rules.
+- Not safe: treating the app as a general internet-facing service.
+- Optional routing and map profiles can remain disabled if you only need the fuel price UI and sync jobs.
+
+If this app is exposed to the internet and compromised, the attacker may be able to:
+
+- control Docker-backed services on the host,
+- read local application data and logs,
+- interfere with routing, map, and sync jobs,
+- and potentially pivot into other devices or services on the same local network.
+
+Recommended controls before first use:
+
+- Do not configure router port forwarding to the app or database ports.
+- Keep the Docker host behind a firewall and block inbound access from the internet.
+- Allow only trusted LAN devices to reach the app port.
+- If you need remote access, use a VPN or other private tunnel rather than opening the app to the internet.
+- Treat the Container Management tab as a local-admin tool only; it can control Docker resources on the host.
+- Keep `MYSQL_HOST_PORT` bound to `127.0.0.1` unless you have a specific reason to expose MariaDB on a trusted private network.
+- To enable the Container Management tab, set `CONTAINER_MANAGEMENT_ENABLED=true` in `.env` and set `CONTAINER_MANAGEMENT_TOKEN` to a strong local secret. When you open the tab, the browser will prompt for that token.
+
+If the app is reachable beyond your trusted LAN, that is a misconfiguration that should be corrected before launch.
+
+### Before You Open It Up At Home
+
+1. Confirm the Docker host has no WAN port forwards configured for FuelAU.
+2. Confirm the host firewall blocks inbound access from the internet.
+3. Confirm the app is only reachable from trusted devices on the home LAN.
+4. Confirm `config/app.env` contains real API credentials, not sample placeholders.
+5. Confirm `MYSQL_HOST_PORT` stays loopback-only unless you intentionally expose MariaDB on a trusted private network.
+6. Confirm the Container Management tab is only used by people who are allowed to manage the host Docker daemon.
+7. Confirm `/api/health` works before relying on the sync jobs.
 
 ## Quick Start
 
@@ -34,6 +75,7 @@ cp config/mysql-sample.env config/mysql.env
 
 `UID` and `GID` live in the root `.env` file. Keep the defaults of `999:999` for most Linux hosts. On macOS or on any host where the mounted MariaDB data directory needs different ownership, set `UID` and `GID` to the host user IDs before starting the stack.
 
+For home use, keep the host firewall enabled and block inbound access from the public internet. The app may be reachable on your LAN, but it should not be exposed with router port forwards or WAN rules.
 3. Start the base stack:
 
 ```bash
@@ -184,6 +226,8 @@ Expected result:
 - Weekly and monthly graphs populate after price/history data is present.
 - The station map shows clickable stations for the selected state, region, and fuel.
 - Cron continues refreshing supported sources every 30 minutes.
+
+If any fuel API credential is left at its sample placeholder value, the corresponding importer exits before making upstream requests. That keeps the stack quiet until real credentials are configured.
 
 ### Stage 3: Route Planning Without Local Map Tiles
 

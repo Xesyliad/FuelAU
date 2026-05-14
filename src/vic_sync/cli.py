@@ -14,6 +14,8 @@ from urllib.error import HTTPError
 from urllib.request import Request
 from urllib.request import urlopen
 
+from sync_utils import is_unconfigured_value
+
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
 DEFAULT_APP_ENV_PATH = "/etc/fuelapi/app.env"
@@ -508,6 +510,10 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"error: {exc}", file=os.sys.stderr)
         return 1
+
+    if is_unconfigured_value(consumer_id):
+        print("info: VIC_SERVO_SAVER_API_KEY is not configured; skipping VIC sync", file=os.sys.stderr)
+        return 0
 
     try:
         results: list[SyncResult] = []
