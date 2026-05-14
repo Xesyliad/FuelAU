@@ -181,11 +181,11 @@ function fuelauConfiguredServices(): array
         'nominatim' => [
             'service' => 'nominatim',
             'title' => 'Nominatim',
-            'role' => 'Australia geocoding service.',
+            'role' => 'Australia geocoding service with Geofabrik replication updates.',
             'kind' => 'runtime',
             'profile' => 'routing',
             'expected_state' => 'running when routing profile is enabled',
-            'expected_detail' => 'Expected to run after app starts and Nominatim import is ready.',
+            'expected_detail' => 'Expected to run after app starts, complete the initial import, and keep applying replication updates.',
             'start_command' => 'docker compose --profile routing up -d nominatim',
             'data_paths' => ['var/docker/nominatim-db', 'var/docker/nominatim-flatnode'],
             'source' => 'https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf',

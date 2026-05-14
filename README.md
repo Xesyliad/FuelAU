@@ -672,6 +672,8 @@ PBF_URL=https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
 REPLICATION_URL=https://download.geofabrik.de/australia-oceania/australia-updates
 ```
 
+Nominatim also runs in `UPDATE_MODE=continuous`, so after the initial import it keeps applying Geofabrik replication diffs.
+
 OSRM uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
 
 Custom OSRM profile template:

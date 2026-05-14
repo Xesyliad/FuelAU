@@ -52,6 +52,7 @@ services:
     environment:
       PBF_URL: https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
       REPLICATION_URL: https://download.geofabrik.de/australia-oceania/australia-updates
+      UPDATE_MODE: continuous
       NOMINATIM_PASSWORD: "${NOMINATIM_PASSWORD:?set NOMINATIM_PASSWORD in .env}"
       THREADS: "${NOMINATIM_THREADS:-4}"
       IMPORT_WIKIPEDIA: "false"
