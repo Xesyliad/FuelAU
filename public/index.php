@@ -4574,10 +4574,18 @@ try {
 
         fuelauRateLimit('geo-search:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 60);
 
-        fuelauJsonResponse([
-            'query' => $query,
-            'results' => fuelauNominatimSearch($query, (int) ($_GET['limit'] ?? 10)),
-        ]);
+        try {
+            fuelauJsonResponse([
+                'query' => $query,
+                'results' => fuelauNominatimSearch($query, (int) ($_GET['limit'] ?? 10)),
+            ]);
+        } catch (Throwable $exception) {
+            error_log('FuelAU geo search failed: ' . $exception->getMessage());
+            fuelauJsonResponse([
+                'error' => 'upstream_unavailable',
+                'message' => 'Geocoding service unavailable.',
+            ], 503);
+        }
     }
 
     if ($path === '/api/geo/reverse') {
@@ -4592,9 +4600,17 @@ try {
 
         fuelauRateLimit('geo-reverse:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 60);
 
-        fuelauJsonResponse([
-            'result' => fuelauNominatimReverse((float) $latitude, (float) $longitude),
-        ]);
+        try {
+            fuelauJsonResponse([
+                'result' => fuelauNominatimReverse((float) $latitude, (float) $longitude),
+            ]);
+        } catch (Throwable $exception) {
+            error_log('FuelAU geo reverse failed: ' . $exception->getMessage());
+            fuelauJsonResponse([
+                'error' => 'upstream_unavailable',
+                'message' => 'Geocoding service unavailable.',
+            ], 503);
+        }
     }
 
     if ($path === '/api/route') {
@@ -4608,12 +4624,20 @@ try {
 
         fuelauRateLimit('route:' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 30, 60);
 
-        fuelauJsonResponse(
-            fuelauRoutePlan(
-                fuelauParseCoordinates($coordinates),
-                (($_GET['steps'] ?? '1') !== '0')
-            )
-        );
+        try {
+            fuelauJsonResponse(
+                fuelauRoutePlan(
+                    fuelauParseCoordinates($coordinates),
+                    (($_GET['steps'] ?? '1') !== '0')
+                )
+            );
+        } catch (Throwable $exception) {
+            error_log('FuelAU route planning failed: ' . $exception->getMessage());
+            fuelauJsonResponse([
+                'error' => 'upstream_unavailable',
+                'message' => 'Routing service unavailable.',
+            ], 503);
+        }
     }
 
     if ($path === '/api/map/config') {
