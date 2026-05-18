@@ -4583,7 +4583,7 @@ try {
             error_log('FuelAU geo search failed: ' . $exception->getMessage());
             fuelauJsonResponse([
                 'error' => 'upstream_unavailable',
-                'message' => 'Geocoding service unavailable.',
+                'message' => fuelauNominatimUnavailableMessage(),
             ], 503);
         }
     }
@@ -4608,7 +4608,7 @@ try {
             error_log('FuelAU geo reverse failed: ' . $exception->getMessage());
             fuelauJsonResponse([
                 'error' => 'upstream_unavailable',
-                'message' => 'Geocoding service unavailable.',
+                'message' => fuelauNominatimUnavailableMessage(),
             ], 503);
         }
     }

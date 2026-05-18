@@ -47,7 +47,10 @@ function fuelauServiceStatus(): array
         $services['nominatim'] = ['status' => 'ok'];
     } catch (Throwable $exception) {
         error_log('FuelAU nominatim status probe failed: ' . $exception->getMessage());
-        $services['nominatim'] = ['status' => 'unavailable', 'message' => 'Service unavailable'];
+        $services['nominatim'] = [
+            'status' => 'unavailable',
+            'message' => fuelauNominatimUnavailableMessage(),
+        ];
     }
 
     try {
@@ -63,6 +66,50 @@ function fuelauServiceStatus(): array
     }
 
     return $services;
+}
+
+function fuelauDockerService(string $service): ?array
+{
+    try {
+        foreach (fuelauDockerServices() as $dockerService) {
+            if ((string) ($dockerService['service'] ?? '') === $service) {
+                return $dockerService;
+            }
+        }
+    } catch (Throwable) {
+        return null;
+    }
+
+    return null;
+}
+
+function fuelauNominatimUnavailableMessage(): string
+{
+    $service = fuelauDockerService('nominatim');
+    if (!is_array($service)) {
+        return 'Geocoding service unavailable.';
+    }
+
+    if (($service['has_container'] ?? false) !== true) {
+        return 'Geocoding service unavailable. Start it with `docker compose --profile routing up -d nominatim`.';
+    }
+
+    $displayState = strtolower((string) ($service['display_state'] ?? ''));
+    $displayStatus = strtolower((string) ($service['display_status'] ?? ''));
+
+    if (str_contains($displayStatus, 'health: starting')) {
+        return 'Geocoding service is still starting or importing. Try again after Nominatim finishes its import.';
+    }
+
+    if (str_contains($displayStatus, 'unhealthy')) {
+        return 'Geocoding service is unhealthy. Check `docker compose logs -f nominatim`.';
+    }
+
+    if ($displayState !== '' && $displayState !== 'running') {
+        return 'Geocoding service is not running. Start it with `docker compose --profile routing up -d nominatim`.';
+    }
+
+    return 'Geocoding service unavailable.';
 }
 
 function fuelauNominatimSearch(string $query, int $limit = 10): array
