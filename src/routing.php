@@ -114,17 +114,7 @@ function fuelauNominatimUnavailableMessage(): string
 
 function fuelauNominatimSearch(string $query, int $limit = 10): array
 {
-    $payload = fuelauHttpJsonRequest(
-        fuelauHttpBuildUrl(fuelauServiceBaseUrl('nominatim') . '/search', [
-            'format' => 'jsonv2',
-            'addressdetails' => 1,
-            'countrycodes' => 'au',
-            'limit' => 50,
-            'q' => $query,
-        ]),
-        [],
-        20
-    );
+    $payload = fuelauNominatimSearchPayload($query);
 
     $normalizedQuery = fuelauNormalizeLookupText($query);
     $results = [];
@@ -189,6 +179,67 @@ function fuelauNominatimSearch(string $query, int $limit = 10): array
     );
 
     return $results;
+}
+
+function fuelauNominatimSearchPayload(string $query): array
+{
+    $lastException = null;
+    foreach (fuelauNominatimSearchCandidates($query) as $candidate) {
+        try {
+            return fuelauHttpJsonRequest(
+                fuelauHttpBuildUrl(fuelauServiceBaseUrl('nominatim') . '/search', [
+                    'format' => 'jsonv2',
+                    'addressdetails' => 1,
+                    'countrycodes' => 'au',
+                    'limit' => 50,
+                    'q' => $candidate,
+                ]),
+                [],
+                20
+            );
+        } catch (Throwable $exception) {
+            $lastException = $exception;
+            if (!fuelauNominatimShouldRetrySearch($exception)) {
+                throw $exception;
+            }
+        }
+    }
+
+    if ($lastException instanceof Throwable) {
+        throw $lastException;
+    }
+
+    throw new RuntimeException('Nominatim search failed.');
+}
+
+function fuelauNominatimSearchCandidates(string $query): array
+{
+    $query = trim(preg_replace('/\s+/', ' ', $query) ?? $query);
+    if ($query === '') {
+        return [];
+    }
+
+    $parts = preg_split('/[\s,]+/', $query, -1, PREG_SPLIT_NO_EMPTY);
+    if (!is_array($parts) || $parts === []) {
+        return [$query];
+    }
+
+    $candidates = [];
+    for ($count = count($parts); $count >= 1; $count--) {
+        $candidate = trim(implode(' ', array_slice($parts, 0, $count)));
+        if ($candidate !== '' && !in_array($candidate, $candidates, true)) {
+            $candidates[] = $candidate;
+        }
+    }
+
+    return $candidates;
+}
+
+function fuelauNominatimShouldRetrySearch(Throwable $exception): bool
+{
+    $message = strtolower($exception->getMessage());
+    return str_contains($message, 'query took too long to process')
+        || str_contains($message, 'http 503');
 }
 
 function fuelauNormalizeLookupText(string $text): string
