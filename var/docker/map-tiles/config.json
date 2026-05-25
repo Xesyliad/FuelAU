@@ -1,0 +1,28 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "styles": "/data/styles",
+      "fonts": "/usr/src/app/node_modules/tileserver-gl-styles/fonts",
+      "mbtiles": "/data"
+    }
+  },
+  "data": {
+    "australia": {
+      "mbtiles": "australia.mbtiles"
+    }
+  },
+  "styles": {
+    "basic-preview": {
+      "style": "basic-preview/style.json",
+      "tilejson": {
+        "bounds": [
+          -180,
+          -85.0511287798066,
+          180,
+          85.0511287798066
+        ]
+      }
+    }
+  }
+}
