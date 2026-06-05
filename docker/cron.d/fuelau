@@ -20,3 +20,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Victoria Servo Saver Open Data: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample placeholder key is still configured.
 5,35 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all >> /var/log/fuelapi/vic_sync.log 2>&1
+
+# Northern Territory MyFuel API: refresh reference data daily and sync prices every 30 minutes.
+# The importer self-skips when the sample username or password is still configured.
+10,40 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nt_sync.cli all >> /var/log/fuelapi/nt_sync.log 2>&1

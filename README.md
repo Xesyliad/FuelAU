@@ -172,6 +172,7 @@ Use this stage to test the Fuel Prices tab, history graphs, station map markers,
 | South Australia Fuel Pricing Information Scheme | SA | `SA_FUEL_API_BASE_URL`, `SA_FUEL_SUBSCRIBER_TOKEN` | https://www.safuelpricinginformation.com.au/publishers.html |
 | NSW Fuel API | NSW and TAS | `NSW_FUEL_API_KEY`, `NSW_FUEL_API_SECRET`, `NSW_FUEL_API_AUTHORIZATION_HEADER` | https://api.nsw.gov.au/Product/Index/22 |
 | Victoria Servo Saver Public API | VIC | `VIC_SERVO_SAVER_API_KEY` | https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api |
+| MyFuel NT Third Party API | NT | `NT_MYFUEL_USERNAME`, `NT_MYFUEL_PASSWORD` | https://myfuelnt.nt.gov.au/ |
 
 Useful portal links:
 
@@ -180,6 +181,7 @@ Useful portal links:
 - Fuel Prices Queensland developer information: https://www.fuelpricesqld.com.au/#developers
 - South Australia publishers page and outbound API guide: https://www.safuelpricinginformation.com.au/publishers.html
 - Servo Saver API information: https://service.vic.gov.au/find-services/transport-and-driving/servo-saver/help-centre/servo-saver-public-api
+- MyFuel NT portal: https://myfuelnt.nt.gov.au/
 
 2. Put the credentials in `config/app.env`.
 
@@ -193,6 +195,8 @@ NSW_FUEL_API_KEY=your_nsw_key
 NSW_FUEL_API_SECRET=your_nsw_secret
 NSW_FUEL_API_AUTHORIZATION_HEADER=Basic your_nsw_basic_header
 VIC_SERVO_SAVER_API_KEY=your_vic_key
+NT_MYFUEL_USERNAME=your_nt_username
+NT_MYFUEL_PASSWORD=your_nt_password
 ```
 
 3. Rebuild or restart the app after changing env files.
@@ -209,6 +213,7 @@ docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m nt_sync.cli all
 ```
 
 5. Check logs if any source is empty.
@@ -218,6 +223,7 @@ docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
+docker compose exec app tail -f /var/log/fuelapi/nt_sync.log
 ```
 
 Expected result:
@@ -615,6 +621,7 @@ Current jobs:
 
 - Every 15 minutes: PHP heartbeat to `/var/log/fuelapi/cron-heartbeat.log`.
 - Every 30 minutes: Fuel Prices Queensland sync to `/var/log/fuelapi/fpq_sync.log`.
+- Every 30 minutes at `:10` and `:40`: Northern Territory MyFuel sync to `/var/log/fuelapi/nt_sync.log`.
 - Every 30 minutes at `:20` and `:50`: South Australia sync to `/var/log/fuelapi/sa_sync.log`.
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
 - Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
@@ -627,6 +634,7 @@ Useful checks:
 docker compose exec app ps -ef | grep '[c]ron'
 docker compose exec app tail -f /var/log/fuelapi/cron-heartbeat.log
 docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
+docker compose exec app tail -f /var/log/fuelapi/nt_sync.log
 docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
@@ -757,6 +765,7 @@ docker compose exec app env PYTHONPATH=src python3 -m fpq_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m sa_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m nsw_sync.cli all
 docker compose exec app env PYTHONPATH=src python3 -m vic_sync.cli all
+docker compose exec app env PYTHONPATH=src python3 -m nt_sync.cli all
 docker compose --profile routing-setup up osrm-customize
 docker compose --profile routing up -d nominatim osrm-routed
 docker compose --profile map-setup run --rm map-build

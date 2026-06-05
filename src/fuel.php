@@ -25,6 +25,7 @@ function fuelauFuelRequestFilters(): array
             'SA' => 'sa',
             'NSW' => 'nsw',
             'TAS' => 'tas',
+            'NT' => 'nt',
             default => 'all',
         };
     }
@@ -306,6 +307,68 @@ function fuelauVicFuelRows(PDO $pdo, array $filters): array
     return $statement->fetchAll();
 }
 
+function fuelauNtFuelRows(PDO $pdo, array $filters): array
+{
+    $distanceSelect = 'NULL AS distance_km';
+    $where = ['1=1'];
+    $bindFilters = $filters;
+    if ($filters['state'] !== '' && $filters['state'] !== 'NT') {
+        $where[] = '1=0';
+        $bindFilters['state'] = '';
+    } elseif ($filters['state'] === 'NT') {
+        $bindFilters['state'] = '';
+    }
+    if ($filters['search'] !== '') {
+        $where[] = '(s.name LIKE :search OR s.address LIKE :search OR s.suburb LIKE :search OR b.name LIKE :search)';
+    }
+    if ($filters['brand'] !== '') {
+        $where[] = 'b.name LIKE :brand';
+    }
+    if ($filters['fuel'] !== '') {
+        $where[] = '(CAST(c.fuel_code AS CHAR) = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
+    }
+
+    $sql = "
+        SELECT
+            'nt' AS source,
+            'NT' AS state,
+            s.station_id AS station_id,
+            s.name AS station_name,
+            s.address,
+            s.postcode,
+            s.suburb,
+            b.name AS brand_name,
+            s.latitude,
+            s.longitude,
+            c.fuel_code,
+            f.name AS fuel_name,
+            c.price AS price_raw,
+            c.price AS price,
+            c.is_available AS is_available,
+            c.observed_at_utc AS updated_at,
+            {$distanceSelect}
+        FROM nt_site_prices_current c
+        INNER JOIN nt_stations s ON s.station_id = c.station_id
+        INNER JOIN nt_fuel_types f ON f.fuel_code = c.fuel_code
+        LEFT JOIN nt_brands b ON b.brand_id = s.brand_id
+        WHERE " . implode(' AND ', $where) . "
+        ORDER BY " . ($filters['lat'] !== null && $filters['lon'] !== null ? 'distance_km ASC,' : '') . " c.observed_at_utc DESC
+        LIMIT :limit
+    ";
+
+    $statement = $pdo->prepare($sql);
+    fuelauBindFuelFilters($statement, $bindFilters);
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
 function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
 {
     $source = strtolower($filters['source']);
@@ -334,6 +397,13 @@ function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
             $vicFilters['state'] = 'VIC';
         }
         $rows = array_merge($rows, fuelauVicFuelRows($pdo, $vicFilters));
+    }
+    if ($source === 'all' || $source === 'nt') {
+        $ntFilters = $filters;
+        if ($source === 'nt') {
+            $ntFilters['state'] = 'NT';
+        }
+        $rows = array_merge($rows, fuelauNtFuelRows($pdo, $ntFilters));
     }
 
     usort(
@@ -387,6 +457,11 @@ function fuelauFuelSourceSummary(PDO $pdo): array
             'current_prices' => 'SELECT COUNT(*) FROM vic_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(updated_at_utc), "%Y-%m-%d %H:%i:%s") FROM vic_site_prices_current',
         ],
+        'nt' => [
+            'stations' => 'SELECT COUNT(*) FROM nt_stations',
+            'current_prices' => 'SELECT COUNT(*) FROM nt_site_prices_current',
+            'latest_update' => 'SELECT DATE_FORMAT(MAX(observed_at_utc), "%Y-%m-%d %H:%i:%s") FROM nt_site_prices_current',
+        ],
     ];
 
     $summary = [];
@@ -431,6 +506,13 @@ function fuelauFuelOptionRows(PDO $pdo): array
             CAST(fuel_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
             CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_name
         FROM vic_fuel_types
+        UNION ALL
+        SELECT DISTINCT
+            CAST('nt' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS source,
+            CAST('NT' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS state,
+            CAST(fuel_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_code,
+            CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS fuel_name
+        FROM nt_fuel_types
         ORDER BY source, state, fuel_name
     ";
 
@@ -447,6 +529,9 @@ function fuelauFuelOptions(PDO $pdo): array
         ['value' => 'sa', 'label' => 'SA'],
         ['value' => 'nsw', 'label' => 'NSW'],
     ];
+    if (($summary['nt']['stations'] ?? 0) > 0 || ($summary['nt']['current_prices'] ?? 0) > 0) {
+        $sources[] = ['value' => 'nt', 'label' => 'NT'];
+    }
     if (($summary['tas']['stations'] ?? 0) > 0 || ($summary['tas']['current_prices'] ?? 0) > 0) {
         $sources[] = ['value' => 'tas', 'label' => 'TAS'];
     }
@@ -467,6 +552,9 @@ function fuelauFuelOptions(PDO $pdo): array
     }
     if (($summary['vic']['stations'] ?? 0) > 0 || ($summary['vic']['current_prices'] ?? 0) > 0) {
         $states[] = ['value' => 'VIC', 'label' => 'VIC'];
+    }
+    if (($summary['nt']['stations'] ?? 0) > 0 || ($summary['nt']['current_prices'] ?? 0) > 0) {
+        $states[] = ['value' => 'NT', 'label' => 'NT'];
     }
     $fuels = [];
     $seen = [];
@@ -518,6 +606,7 @@ function fuelauHistoricalFilters(): array
             'NSW' => 'nsw',
             'TAS' => 'tas',
             'VIC' => 'vic',
+            'NT' => 'nt',
             default => 'all',
         };
 
@@ -671,6 +760,53 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
     return $statement->fetchAll();
 }
 
+function fuelauNtHistoryRows(PDO $pdo, array $filters): array
+{
+    $where = ['1=1'];
+    if ($filters['state'] !== '' && $filters['state'] !== 'NT') {
+        $where[] = '1=0';
+    }
+    if ($filters['fuel'] !== '') {
+        $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+    }
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
+        }
+    }
+
+    $selectPeriod = $filters['period'] === 'monthly'
+        ? "DATE_FORMAT(h.observed_at_utc, '%Y-%m-01')"
+        : "DATE(h.observed_at_utc)";
+    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
+
+    $sql = "
+        SELECT
+            'nt' AS source,
+            'NT' AS state,
+            {$selectPeriod} AS bucket_date,
+            AVG(h.price) AS average_price,
+            MIN(h.price) AS minimum_price,
+            MAX(h.price) AS maximum_price,
+            COUNT(*) AS sample_count
+        FROM nt_site_prices_history h
+        INNER JOIN nt_fuel_types f ON f.fuel_code = h.fuel_code
+        INNER JOIN nt_stations s ON s.station_id = h.station_id
+        WHERE h.observed_at_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
+          AND h.is_available = 1
+          AND h.price IS NOT NULL
+          AND " . implode(' AND ', $where) . "
+        GROUP BY bucket_date
+        ORDER BY bucket_date ASC
+    ";
+
+    $statement = $pdo->prepare($sql);
+    fuelauBindHistoricalFilters($statement, $filters);
+    $statement->execute();
+    return $statement->fetchAll();
+}
+
 function fuelauSaHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
@@ -745,6 +881,15 @@ function fuelauHistoricalSeries(PDO $pdo, array $filters): array
             $vicFilters['state'] = 'VIC';
         }
         $rows = array_merge($rows, fuelauVicHistoryRows($pdo, $vicFilters));
+    }
+    if ($source === 'all' || $source === 'nt') {
+        $ntFilters = $filters;
+        if ($source === 'nt') {
+            $ntFilters['state'] = 'NT';
+        } elseif ($filters['state'] === '') {
+            $ntFilters['state'] = 'NT';
+        }
+        $rows = array_merge($rows, fuelauNtHistoryRows($pdo, $ntFilters));
     }
 
     $buckets = [];

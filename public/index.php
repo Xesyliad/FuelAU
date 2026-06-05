@@ -17,6 +17,9 @@ $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 try {
     if ($path === '/') {
         header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
         ?>
 <!doctype html>
 <html lang="en">
@@ -1191,8 +1194,8 @@ try {
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
         const fuelRegionCookieName = 'fuelau_selected_region';
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
-        const routePlannerRouteBudgetLimit = 150;
-        const routePlannerFuelBudgetLimit = 300;
+        const routePlannerRouteBudgetLimit = 240;
+        const routePlannerFuelBudgetLimit = 720;
         const activeTabKey = 'fuelau_active_tab_v1';
         const containerManagementTokenKey = 'fuelau_container_management_token';
 
@@ -1257,6 +1260,16 @@ try {
                 { key: 'devonport', label: 'Devonport', lat: -41.1782, lon: 146.3513, radius_km: 30 },
                 { key: 'burnie', label: 'Burnie', lat: -41.0550, lon: 145.9150, radius_km: 25 },
                 { key: 'ulverstone', label: 'Ulverstone', lat: -41.1610, lon: 146.1810, radius_km: 25 },
+            ],
+            NT: [
+                { key: 'darwin', label: 'Darwin', lat: -12.4634, lon: 130.8456, radius_km: 75 },
+                { key: 'palmerston', label: 'Palmerston', lat: -12.4860, lon: 130.9833, radius_km: 35 },
+                { key: 'katherine', label: 'Katherine', lat: -14.4650, lon: 132.2635, radius_km: 40 },
+                { key: 'tennant-creek', label: 'Tennant Creek', lat: -19.6466, lon: 134.1911, radius_km: 35 },
+                { key: 'alice-springs', label: 'Alice Springs', lat: -23.6980, lon: 133.8807, radius_km: 60 },
+                { key: 'nhulunbuy', label: 'Nhulunbuy', lat: -12.1811, lon: 136.7790, radius_km: 30 },
+                { key: 'jabiru', label: 'Jabiru', lat: -12.6700, lon: 132.8300, radius_km: 25 },
+                { key: 'yulara', label: 'Yulara', lat: -25.2406, lon: 130.9847, radius_km: 25 },
             ],
         };
 
@@ -1876,7 +1889,7 @@ try {
         }
 
         function routeFuelSourceIsOfficial(source) {
-            return ['qld', 'sa', 'nsw', 'tas', 'vic'].includes(String(source || '').trim().toLowerCase());
+            return ['qld', 'sa', 'nsw', 'tas', 'vic', 'nt'].includes(String(source || '').trim().toLowerCase());
         }
 
         function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
@@ -2128,6 +2141,33 @@ try {
             }
             if (points.length <= limit) {
                 return points;
+            }
+
+            const hasProgress = points.every((point) => Number.isFinite(Number(point?.progressKm)));
+            if (hasProgress) {
+                const result = [];
+                const lastIndex = points.length - 1;
+                const totalProgress = Number(points[lastIndex]?.progressKm || 0);
+                if (totalProgress > 0) {
+                    let cursor = 0;
+                    for (let index = 0; index < limit; index += 1) {
+                        const targetProgress = totalProgress * index / Math.max(limit - 1, 1);
+                        while (cursor < lastIndex && Number(points[cursor].progressKm || 0) < targetProgress) {
+                            cursor += 1;
+                        }
+                        const previous = cursor > 0 ? points[cursor - 1] : points[cursor];
+                        const current = points[cursor] || points[lastIndex];
+                        const chosen = Math.abs(Number(previous.progressKm || 0) - targetProgress) <= Math.abs(Number(current.progressKm || 0) - targetProgress)
+                            ? previous
+                            : current;
+                        if (result[result.length - 1] !== chosen) {
+                            result.push(chosen);
+                        }
+                    }
+                    if (result.length > 0) {
+                        return result;
+                    }
+                }
             }
 
             const result = [];
@@ -2661,7 +2701,7 @@ try {
             let fuelInTank = currentFuelL;
             const reserveL = routeFuelReserveL(tankCapacityL);
 
-            async function confirmRouteApproachCandidate(nextCandidate, minimumRefillL) {
+            async function confirmRouteApproachCandidate(nextCandidate, minimumRefillL, isFirstStop) {
                 const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
                 const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true, budget);
                 const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
@@ -2685,7 +2725,7 @@ try {
                 const routeKm = route.distanceM / 1000;
                 const fuelNeeded = routeKm * (economyLPer100km / 100);
                 const progress = buildRouteProgress(route.geometry);
-                const sampleLimit = Math.max(10, Math.min(20, Math.ceil(routeKm / 80)));
+                const sampleLimit = Math.max(12, Math.min(30, Math.ceil(routeKm / 60)));
                 const searchRadiusKm = routeKm > 1600 ? 60 : (routeKm > 900 ? 45 : 30);
                 let candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm, budget);
                 let candidates = candidateBundle.candidates;
@@ -2764,7 +2804,7 @@ try {
                     const estimatedRefillL = Math.max(0, tankCapacityL - estimatedArrivalFuel);
                     if (!isFirstStop && estimatedRefillL < graphMinimumRefillL) {
                         if ((nextCandidate.relaxedFallback || graphPlan?.relaxedFallback) && estimatedRefillL >= routeFuelRelaxedPurchaseL(tankCapacityL) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                            const validation = await confirmRouteApproachCandidate(nextCandidate, routeFuelRelaxedPurchaseL(tankCapacityL));
+                            const validation = await confirmRouteApproachCandidate(nextCandidate, routeFuelRelaxedPurchaseL(tankCapacityL), isFirstStop);
                             if (validation) {
                                 chosen = nextCandidate;
                                 approach = validation.approach;
@@ -2773,7 +2813,7 @@ try {
                             }
                         }
                         if ((nextCandidate.safetyFallback || graphPlan?.safetyFallback) && estimatedRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                            const validation = await confirmRouteApproachCandidate(nextCandidate, Math.max(15, tankCapacityL * 0.25));
+                            const validation = await confirmRouteApproachCandidate(nextCandidate, Math.max(15, tankCapacityL * 0.25), isFirstStop);
                             if (validation) {
                                 chosen = nextCandidate;
                                 approach = validation.approach;
@@ -2799,7 +2839,7 @@ try {
                         continue;
                     }
                     if ((fuelInTank - estimatedApproachFuel) >= reserveL) {
-                        const validation = await confirmRouteApproachCandidate(nextCandidate, graphMinimumRefillL);
+                        const validation = await confirmRouteApproachCandidate(nextCandidate, graphMinimumRefillL, isFirstStop);
                         if (validation) {
                             chosen = nextCandidate;
                             approach = validation.approach;
@@ -2827,7 +2867,8 @@ try {
                     for (const option of shortSafetyCandidates) {
                         const validation = await confirmRouteApproachCandidate(
                             option.candidate,
-                            routeFuelRelaxedPurchaseL(tankCapacityL)
+                            routeFuelRelaxedPurchaseL(tankCapacityL),
+                            isFirstStop
                         );
                         if (validation) {
                             chosen = option.candidate;
@@ -2855,7 +2896,8 @@ try {
                     for (const option of contingencyCandidates) {
                         const validation = await confirmRouteApproachCandidate(
                             option.candidate,
-                            routeFuelContingencyPurchaseL(tankCapacityL)
+                            routeFuelContingencyPurchaseL(tankCapacityL),
+                            isFirstStop
                         );
                         if (validation) {
                             chosen = option.candidate;
@@ -3564,7 +3606,11 @@ try {
                 return [{ value: '', label: 'All Fuels' }];
             }
             const state = fuelState.value || '';
-            const source = state === 'QLD' ? 'qld' : (state === 'NSW' ? 'nsw' : (state === 'TAS' ? 'tas' : 'all'));
+            const source = state === 'QLD'
+                ? 'qld'
+                : (state === 'NSW'
+                    ? 'nsw'
+                    : (state === 'TAS' ? 'tas' : (state === 'NT' ? 'nt' : 'all')));
             return fuelOptions.fuels.filter((item) => {
                 if (item.value === '') {
                     return true;
@@ -3666,6 +3712,7 @@ try {
                 ['NSW', summary.nsw],
                 ['TAS', summary.tas],
                 ['VIC', summary.vic],
+                ['NT', summary.nt],
             ];
             cards.forEach(([label, item]) => {
                 const currentPrices = Number(item?.current_prices || 0);
