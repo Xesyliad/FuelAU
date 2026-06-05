@@ -2979,6 +2979,7 @@ try {
             const segments = [];
             const excludedStations = [];
             let currentFuel = tankCapacityL * 0.2;
+            let finalFuelRemaining = currentFuel;
             let currentPoint = resolveStops[0];
             let totalDistanceM = 0;
             let totalDurationS = 0;
@@ -3037,7 +3038,14 @@ try {
                 segments.push(segment);
                 excludedStations.push(...(Array.isArray(segment.excludedStations) ? segment.excludedStations : []));
                 currentPoint = destination;
-                currentFuel = Math.max(0, segment.remainingFuelL);
+                finalFuelRemaining = Math.max(0, segment.remainingFuelL);
+
+                // If a leg needed an external reserve to reach its destination, treat that destination
+                // as a fresh departure point for the next leg so the planner can keep selecting stops
+                // on the rest of the trip.
+                currentFuel = segment.reserveNote
+                    ? Number(tankCapacityL || 0)
+                    : finalFuelRemaining;
             }
 
             return {
@@ -3049,7 +3057,7 @@ try {
                 totalDurationS,
                 totalFuelUsedL,
                 totalFillCostCents,
-                fuelRemainingL: currentFuel,
+                fuelRemainingL: finalFuelRemaining,
                 reserveNote: segments.find((segment) => segment?.reserveNote)?.reserveNote || null,
                 excludedStations: dedupeRouteExcludedStations(excludedStations),
             };
