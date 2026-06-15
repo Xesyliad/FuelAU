@@ -8,3 +8,4 @@ var/
 __pycache__/
 *.py[cod]
 *.swp
+.playwright-cli/
