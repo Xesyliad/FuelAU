@@ -1,0 +1,36 @@
+[     101ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:18080/favicon.ico:0
+[    2410ms] [WARNING] [.WebGL-0x320c000f6000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    2424ms] [WARNING] You are using the same source for a hillshade layer and for 3D terrain. Please consider using two separate sources to improve rendering quality. @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[    2852ms] [WARNING] [.WebGL-0x320c000f6000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    2958ms] [WARNING] [.WebGL-0x320c000f6000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    3159ms] [WARNING] [.WebGL-0x320c000f6000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat) @ http://127.0.0.1:18080/:0
+[   10386ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10387ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10388ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10388ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10389ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10389ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10389ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10389ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10390ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10391ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10391ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10391ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10391ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10392ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10392ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   10392ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13793ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13794ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13794ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13794ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13795ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13795ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   13795ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   16344ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[   16362ms] [ERROR] Error @ http://127.0.0.1:18080/resources/maplibre-gl.js:41

@@ -1,0 +1,470 @@
+- main [ref=e2]:
+  - navigation "Primary" [ref=e3]:
+    - tab "Fuel Prices" [ref=e4] [cursor=pointer]
+    - tab "Fuel Stop Finder" [selected] [ref=e5] [cursor=pointer]
+    - tab "Route Planning" [ref=e6] [cursor=pointer]
+    - tab "Container Management" [ref=e7] [cursor=pointer]
+  - tabpanel "Fuel Stop Finder" [ref=e358]:
+    - heading "Fuel Stop Finder" [level=1] [ref=e359]
+    - paragraph [ref=e360]: Enter an origin, destination, fuel type, and fuel economy. The planner will find the best station to fill up at between the two points while keeping the route detour sensible.
+    - generic [ref=e361]:
+      - generic [ref=e362]:
+        - heading "Trip Inputs" [level=2] [ref=e363]
+        - paragraph [ref=e364]: Origin, destination, fuel type, and fuel economy are required.
+        - generic [ref=e365]:
+          - generic [ref=e366]:
+            - generic [ref=e367]: Origin
+            - textbox "Origin" [ref=e369]:
+              - /placeholder: Enter an origin
+              - text: Brisbane
+          - generic [ref=e370]:
+            - generic [ref=e371]: Destination
+            - generic [ref=e372]:
+              - textbox "Destination" [ref=e373]:
+                - /placeholder: Enter a destination
+                - text: Rockhampton
+              - generic [ref=e405]:
+                - button "Rockhampton Queensland 4700 Rockhampton, Rockhampton Regional, Queensland, 4700, Australia" [ref=e814] [cursor=pointer]:
+                  - strong [ref=e815]: Rockhampton Queensland 4700
+                  - generic [ref=e816]: Rockhampton, Rockhampton Regional, Queensland, 4700, Australia
+                - button "Queensland Fallback Rockhampton Regional, Queensland, Australia Fallback" [ref=e817] [cursor=pointer]:
+                  - strong [ref=e818]: Queensland Fallback
+                  - generic [ref=e819]:
+                    - text: Rockhampton Regional, Queensland, Australia
+                    - generic [ref=e820]: Fallback
+          - generic [ref=e374]:
+            - generic [ref=e375]: Fuel Type
+            - combobox "Fuel Type" [ref=e376]:
+              - option "Bio-Diesel 20"
+              - option "Compressed natural gas"
+              - option "Diesel" [selected]
+              - option "Diesel/Premium Diesel"
+              - option "LPG"
+              - option "LRP"
+              - option "Liquefied natural gas"
+              - option "OPAL"
+              - option "Premium Diesel"
+              - option "Premium Unleaded 95"
+              - option "Premium Unleaded 98"
+              - option "Premium e5"
+              - option "ULSD"
+              - option "Unleaded"
+              - option "e10"
+              - option "e10/Unleaded"
+              - option "e85"
+          - generic [ref=e377]:
+            - generic [ref=e378]: Fuel Economy (L/100km)
+            - spinbutton "Fuel Economy (L/100km)" [ref=e379]: "11.5"
+        - generic [ref=e380]:
+          - button "Find Best Stop" [ref=e381] [cursor=pointer]
+          - button "Reset" [ref=e382] [cursor=pointer]
+        - generic [ref=e383]: Selected Liberty Monkland - 51 Geordie Street for this route.
+        - generic [ref=e384]: Evaluating Diesel stations along the route and selecting the cheapest eligible stop with a sensible detour.
+      - generic [ref=e385]:
+        - heading "Trip Summary" [level=2] [ref=e386]
+        - generic [ref=e387]:
+          - article [ref=e821]:
+            - strong [ref=e822]: 626 km
+            - generic [ref=e823]: Distance
+          - article [ref=e824]:
+            - strong [ref=e825]: 7h 59m
+            - generic [ref=e826]: Drive Time
+          - article [ref=e827]:
+            - strong [ref=e828]: 72.0 L
+            - generic [ref=e829]: Fuel Used
+          - article [ref=e830]:
+            - strong [ref=e831]: Diesel
+            - generic [ref=e832]: Fuel Type
+          - article [ref=e833]:
+            - strong [ref=e834]: Liberty Monkland - 51 Geordie Street
+            - generic [ref=e835]: Best Stop
+          - article [ref=e836]:
+            - strong [ref=e837]: $1.88/L
+            - generic [ref=e838]: Stop Price
+          - article [ref=e839]:
+            - strong [ref=e840]: 1.9 km
+            - generic [ref=e841]: Route Detour
+        - generic [ref=e842]:
+          - strong [ref=e843]: Liberty Monkland - 51 Geordie Street
+          - generic [ref=e844]: 51 Geordie Street
+          - generic [ref=e845]: "Price: $1.88/L"
+          - generic [ref=e846]: "Route detour: 1.9 km"
+          - generic [ref=e847]: Selected because it is the cheapest eligible stop within the strict detour window.
+      - generic [ref=e389]:
+        - heading "Route Map" [level=2] [ref=e390]
+        - generic [ref=e391]:
+          - region "Map" [ref=e848]
+          - generic:
+            - generic [ref=e849]:
+              - button "Zoom in" [ref=e850] [cursor=pointer]
+              - button "Zoom out" [ref=e852] [cursor=pointer]
+              - button "Drag to rotate map, click to reset north" [ref=e854]
+            - group [ref=e856]:
+              - generic "Toggle attribution" [ref=e857] [cursor=pointer]
+              - generic [ref=e858]:
+                - text: Elevation tiles from AWS Open Data Terrain Tiles |
+                - link "MapLibre" [ref=e859] [cursor=pointer]:
+                  - /url: https://maplibre.org/
+                - text: "|"
+                - link "© OpenMapTiles" [ref=e860] [cursor=pointer]:
+                  - /url: https://www.openmaptiles.org/
+                - link "© OpenStreetMap contributors" [ref=e861] [cursor=pointer]:
+                  - /url: https://www.openstreetmap.org/copyright
+        - generic [ref=e455]:
+          - generic [ref=e862]: Origin
+          - generic [ref=e864]: Destination
+          - generic [ref=e866]: Fuel stop
+      - generic [ref=e393]:
+        - heading "Route Breakdown" [level=2] [ref=e394]
+        - table [ref=e868]:
+          - rowgroup [ref=e869]:
+            - row "Leg Type Instruction Distance Duration Details" [ref=e870]:
+              - columnheader "Leg" [ref=e871]
+              - columnheader "Type" [ref=e872]
+              - columnheader "Instruction" [ref=e873]
+              - columnheader "Distance" [ref=e874]
+              - columnheader "Duration" [ref=e875]
+              - columnheader "Details" [ref=e876]
+          - rowgroup [ref=e877]:
+            - row "1 Turn Depart onto Dugandan Road 969 m 0m 1 / 37" [ref=e878]:
+              - cell "1" [ref=e879]
+              - cell "Turn" [ref=e880]
+              - cell "Depart onto Dugandan Road" [ref=e881]:
+                - generic [ref=e882]: Depart onto Dugandan Road
+              - cell "969 m" [ref=e883]
+              - cell "0m" [ref=e884]
+              - cell "1 / 37" [ref=e885]:
+                - generic [ref=e886]: 1 / 37
+            - row "1 Turn Turn left onto Bunya Road 2.6 km 3m 2 / 37" [ref=e887]:
+              - cell "1" [ref=e888]
+              - cell "Turn" [ref=e889]
+              - cell "Turn left onto Bunya Road" [ref=e890]:
+                - generic [ref=e891]: Turn left onto Bunya Road
+              - cell "2.6 km" [ref=e892]
+              - cell "3m" [ref=e893]
+              - cell "2 / 37" [ref=e894]:
+                - generic [ref=e895]: 2 / 37
+            - row "1 Turn Turn straight onto Collins Road 3.1 km 3m 3 / 37" [ref=e896]:
+              - cell "1" [ref=e897]
+              - cell "Turn" [ref=e898]
+              - cell "Turn straight onto Collins Road" [ref=e899]:
+                - generic [ref=e900]: Turn straight onto Collins Road
+              - cell "3.1 km" [ref=e901]
+              - cell "3m" [ref=e902]
+              - cell "3 / 37" [ref=e903]:
+                - generic [ref=e904]: 3 / 37
+            - row "1 Turn Turn left onto Old Northern Road 247 m 0m 4 / 37" [ref=e905]:
+              - cell "1" [ref=e906]
+              - cell "Turn" [ref=e907]
+              - cell "Turn left onto Old Northern Road" [ref=e908]:
+                - generic [ref=e909]: Turn left onto Old Northern Road
+              - cell "247 m" [ref=e910]
+              - cell "0m" [ref=e911]
+              - cell "4 / 37" [ref=e912]:
+                - generic [ref=e913]: 4 / 37
+            - row "1 Turn Turn right onto Hamilton Road 783 m 1m 5 / 37" [ref=e914]:
+              - cell "1" [ref=e915]
+              - cell "Turn" [ref=e916]
+              - cell "Turn right onto Hamilton Road" [ref=e917]:
+                - generic [ref=e918]: Turn right onto Hamilton Road
+              - cell "783 m" [ref=e919]
+              - cell "1m" [ref=e920]
+              - cell "5 / 37" [ref=e921]:
+                - generic [ref=e922]: 5 / 37
+            - row "1 Turn Turn slight left 42 m 0m 6 / 37" [ref=e923]:
+              - cell "1" [ref=e924]
+              - cell "Turn" [ref=e925]
+              - cell "Turn slight left" [ref=e926]:
+                - generic [ref=e927]: Turn slight left
+              - cell "42 m" [ref=e928]
+              - cell "0m" [ref=e929]
+              - cell "6 / 37" [ref=e930]:
+                - generic [ref=e931]: 6 / 37
+            - row "1 Turn Turn left onto Beckett Road 2.8 km 3m 7 / 37" [ref=e932]:
+              - cell "1" [ref=e933]
+              - cell "Turn" [ref=e934]
+              - cell "Turn left onto Beckett Road" [ref=e935]:
+                - generic [ref=e936]: Turn left onto Beckett Road
+              - cell "2.8 km" [ref=e937]
+              - cell "3m" [ref=e938]
+              - cell "7 / 37" [ref=e939]:
+                - generic [ref=e940]: 7 / 37
+            - row "1 Turn Turn straight onto Bridgeman Road 2.2 km 2m 8 / 37" [ref=e941]:
+              - cell "1" [ref=e942]
+              - cell "Turn" [ref=e943]
+              - cell "Turn straight onto Bridgeman Road" [ref=e944]:
+                - generic [ref=e945]: Turn straight onto Bridgeman Road
+              - cell "2.2 km" [ref=e946]
+              - cell "2m" [ref=e947]
+              - cell "8 / 37" [ref=e948]:
+                - generic [ref=e949]: 8 / 37
+            - row "1 Turn Turn straight onto Roghan Road 222 m 0m 9 / 37" [ref=e950]:
+              - cell "1" [ref=e951]
+              - cell "Turn" [ref=e952]
+              - cell "Turn straight onto Roghan Road" [ref=e953]:
+                - generic [ref=e954]: Turn straight onto Roghan Road
+              - cell "222 m" [ref=e955]
+              - cell "0m" [ref=e956]
+              - cell "9 / 37" [ref=e957]:
+                - generic [ref=e958]: 9 / 37
+            - row "1 Turn Turn straight onto Carseldine Road 473 m 0m 10 / 37" [ref=e959]:
+              - cell "1" [ref=e960]
+              - cell "Turn" [ref=e961]
+              - cell "Turn straight onto Carseldine Road" [ref=e962]:
+                - generic [ref=e963]: Turn straight onto Carseldine Road
+              - cell "473 m" [ref=e964]
+              - cell "0m" [ref=e965]
+              - cell "10 / 37" [ref=e966]:
+                - generic [ref=e967]: 10 / 37
+            - row "1 Turn Turn right onto Linkfield Road 686 m 0m 11 / 37" [ref=e968]:
+              - cell "1" [ref=e969]
+              - cell "Turn" [ref=e970]
+              - cell "Turn right onto Linkfield Road" [ref=e971]:
+                - generic [ref=e972]: Turn right onto Linkfield Road
+              - cell "686 m" [ref=e973]
+              - cell "0m" [ref=e974]
+              - cell "11 / 37" [ref=e975]:
+                - generic [ref=e976]: 11 / 37
+            - row "1 Turn Turn left 276 m 0m 12 / 37" [ref=e977]:
+              - cell "1" [ref=e978]
+              - cell "Turn" [ref=e979]
+              - cell "Turn left" [ref=e980]:
+                - generic [ref=e981]: Turn left
+              - cell "276 m" [ref=e982]
+              - cell "0m" [ref=e983]
+              - cell "12 / 37" [ref=e984]:
+                - generic [ref=e985]: 12 / 37
+            - row "1 Turn Turn slight right onto Gympie Arterial Road 4.5 km 3m 13 / 37" [ref=e986]:
+              - cell "1" [ref=e987]
+              - cell "Turn" [ref=e988]
+              - cell "Turn slight right onto Gympie Arterial Road" [ref=e989]:
+                - generic [ref=e990]: Turn slight right onto Gympie Arterial Road
+              - cell "4.5 km" [ref=e991]
+              - cell "3m" [ref=e992]
+              - cell "13 / 37" [ref=e993]:
+                - generic [ref=e994]: 13 / 37
+            - row "1 Turn Turn straight onto Bruce Highway 64 km 45m 14 / 37" [ref=e995]:
+              - cell "1" [ref=e996]
+              - cell "Turn" [ref=e997]
+              - cell "Turn straight onto Bruce Highway" [ref=e998]:
+                - generic [ref=e999]: Turn straight onto Bruce Highway
+              - cell "64 km" [ref=e1000]
+              - cell "45m" [ref=e1001]
+              - cell "14 / 37" [ref=e1002]:
+                - generic [ref=e1003]: 14 / 37
+            - row "1 Turn Turn slight right onto Bruce Highway 138 km 1h 37m 15 / 37" [ref=e1004]:
+              - cell "1" [ref=e1005]
+              - cell "Turn" [ref=e1006]
+              - cell "Turn slight right onto Bruce Highway" [ref=e1007]:
+                - generic [ref=e1008]: Turn slight right onto Bruce Highway
+              - cell "138 km" [ref=e1009]
+              - cell "1h 37m" [ref=e1010]
+              - cell "15 / 37" [ref=e1011]:
+                - generic [ref=e1012]: 15 / 37
+            - row "1 Turn Turn straight onto Mayne Street 1.7 km 2m 16 / 37" [ref=e1013]:
+              - cell "1" [ref=e1014]
+              - cell "Turn" [ref=e1015]
+              - cell "Turn straight onto Mayne Street" [ref=e1016]:
+                - generic [ref=e1017]: Turn straight onto Mayne Street
+              - cell "1.7 km" [ref=e1018]
+              - cell "2m" [ref=e1019]
+              - cell "16 / 37" [ref=e1020]:
+                - generic [ref=e1021]: 16 / 37
+            - row "1 Turn Turn straight onto Bruce Highway 80 km 59m 17 / 37" [ref=e1022]:
+              - cell "1" [ref=e1023]
+              - cell "Turn" [ref=e1024]
+              - cell "Turn straight onto Bruce Highway" [ref=e1025]:
+                - generic [ref=e1026]: Turn straight onto Bruce Highway
+              - cell "80 km" [ref=e1027]
+              - cell "59m" [ref=e1028]
+              - cell "17 / 37" [ref=e1029]:
+                - generic [ref=e1030]: 17 / 37
+            - row "1 Turn Turn straight onto Churchill Street 2.3 km 2m 18 / 37" [ref=e1031]:
+              - cell "1" [ref=e1032]
+              - cell "Turn" [ref=e1033]
+              - cell "Turn straight onto Churchill Street" [ref=e1034]:
+                - generic [ref=e1035]: Turn straight onto Churchill Street
+              - cell "2.3 km" [ref=e1036]
+              - cell "2m" [ref=e1037]
+              - cell "18 / 37" [ref=e1038]:
+                - generic [ref=e1039]: 18 / 37
+            - row "1 Turn Turn straight onto Bruce Highway 54 km 41m 19 / 37" [ref=e1040]:
+              - cell "1" [ref=e1041]
+              - cell "Turn" [ref=e1042]
+              - cell "Turn straight onto Bruce Highway" [ref=e1043]:
+                - generic [ref=e1044]: Turn straight onto Bruce Highway
+              - cell "54 km" [ref=e1045]
+              - cell "41m" [ref=e1046]
+              - cell "19 / 37" [ref=e1047]:
+                - generic [ref=e1048]: 19 / 37
+            - row "1 Turn Turn straight onto Mulgrave Street 1.3 km 1m 20 / 37" [ref=e1049]:
+              - cell "1" [ref=e1050]
+              - cell "Turn" [ref=e1051]
+              - cell "Turn straight onto Mulgrave Street" [ref=e1052]:
+                - generic [ref=e1053]: Turn straight onto Mulgrave Street
+              - cell "1.3 km" [ref=e1054]
+              - cell "1m" [ref=e1055]
+              - cell "20 / 37" [ref=e1056]:
+                - generic [ref=e1057]: 20 / 37
+            - row "1 Turn Turn straight onto Bruce Highway 97 km 1h 13m 21 / 37" [ref=e1058]:
+              - cell "1" [ref=e1059]
+              - cell "Turn" [ref=e1060]
+              - cell "Turn straight onto Bruce Highway" [ref=e1061]:
+                - generic [ref=e1062]: Turn straight onto Bruce Highway
+              - cell "97 km" [ref=e1063]
+              - cell "1h 13m" [ref=e1064]
+              - cell "21 / 37" [ref=e1065]:
+                - generic [ref=e1066]: 21 / 37
+            - row "1 Turn Turn straight onto Roe Street 1.4 km 1m 22 / 37" [ref=e1067]:
+              - cell "1" [ref=e1068]
+              - cell "Turn" [ref=e1069]
+              - cell "Turn straight onto Roe Street" [ref=e1070]:
+                - generic [ref=e1071]: Turn straight onto Roe Street
+              - cell "1.4 km" [ref=e1072]
+              - cell "1m" [ref=e1073]
+              - cell "22 / 37" [ref=e1074]:
+                - generic [ref=e1075]: 22 / 37
+            - row "1 Turn Turn straight onto Bruce Highway 164 km 2h 6m 23 / 37" [ref=e1076]:
+              - cell "1" [ref=e1077]
+              - cell "Turn" [ref=e1078]
+              - cell "Turn straight onto Bruce Highway" [ref=e1079]:
+                - generic [ref=e1080]: Turn straight onto Bruce Highway
+              - cell "164 km" [ref=e1081]
+              - cell "2h 6m" [ref=e1082]
+              - cell "23 / 37" [ref=e1083]:
+                - generic [ref=e1084]: 23 / 37
+            - row "1 Turn Take exit 2 onto Yeppen Crossing 155 m 0m 24 / 37" [ref=e1085]:
+              - cell "1" [ref=e1086]
+              - cell "Turn" [ref=e1087]
+              - cell "Take exit 2 onto Yeppen Crossing" [ref=e1088]:
+                - generic [ref=e1089]: Take exit 2 onto Yeppen Crossing
+              - cell "155 m" [ref=e1090]
+              - cell "0m" [ref=e1091]
+              - cell "24 / 37" [ref=e1092]:
+                - generic [ref=e1093]: 24 / 37
+            - row "1 Turn Turn straight onto Yeppen Crossing 740 m 0m 25 / 37" [ref=e1094]:
+              - cell "1" [ref=e1095]
+              - cell "Turn" [ref=e1096]
+              - cell "Turn straight onto Yeppen Crossing" [ref=e1097]:
+                - generic [ref=e1098]: Turn straight onto Yeppen Crossing
+              - cell "740 m" [ref=e1099]
+              - cell "0m" [ref=e1100]
+              - cell "25 / 37" [ref=e1101]:
+                - generic [ref=e1102]: 25 / 37
+            - row "1 Turn Turn straight onto Lower Dawson Road (Bruce Highway) 965 m 1m 26 / 37" [ref=e1103]:
+              - cell "1" [ref=e1104]
+              - cell "Turn" [ref=e1105]
+              - cell "Turn straight onto Lower Dawson Road (Bruce Highway)" [ref=e1106]:
+                - generic [ref=e1107]: Turn straight onto Lower Dawson Road (Bruce Highway)
+              - cell "965 m" [ref=e1108]
+              - cell "1m" [ref=e1109]
+              - cell "26 / 37" [ref=e1110]:
+                - generic [ref=e1111]: 26 / 37
+            - row "1 Turn Turn straight onto Gladstone Road (Bruce Highway) 1.9 km 2m 27 / 37" [ref=e1112]:
+              - cell "1" [ref=e1113]
+              - cell "Turn" [ref=e1114]
+              - cell "Turn straight onto Gladstone Road (Bruce Highway)" [ref=e1115]:
+                - generic [ref=e1116]: Turn straight onto Gladstone Road (Bruce Highway)
+              - cell "1.9 km" [ref=e1117]
+              - cell "2m" [ref=e1118]
+              - cell "27 / 37" [ref=e1119]:
+                - generic [ref=e1120]: 27 / 37
+            - row "1 Turn Turn straight onto George Street (Bruce Highway) 150 m 0m 28 / 37" [ref=e1121]:
+              - cell "1" [ref=e1122]
+              - cell "Turn" [ref=e1123]
+              - cell "Turn straight onto George Street (Bruce Highway)" [ref=e1124]:
+                - generic [ref=e1125]: Turn straight onto George Street (Bruce Highway)
+              - cell "150 m" [ref=e1126]
+              - cell "0m" [ref=e1127]
+              - cell "28 / 37" [ref=e1128]:
+                - generic [ref=e1129]: 28 / 37
+            - row "1 Turn Turn right onto Denham Street 144 m 0m 29 / 37" [ref=e1130]:
+              - cell "1" [ref=e1131]
+              - cell "Turn" [ref=e1132]
+              - cell "Turn right onto Denham Street" [ref=e1133]:
+                - generic [ref=e1134]: Turn right onto Denham Street
+              - cell "144 m" [ref=e1135]
+              - cell "0m" [ref=e1136]
+              - cell "29 / 37" [ref=e1137]:
+                - generic [ref=e1138]: 29 / 37
+            - row "1 Turn Take exit 2 onto Denham Street 22 m 0m 30 / 37" [ref=e1139]:
+              - cell "1" [ref=e1140]
+              - cell "Turn" [ref=e1141]
+              - cell "Take exit 2 onto Denham Street" [ref=e1142]:
+                - generic [ref=e1143]: Take exit 2 onto Denham Street
+              - cell "22 m" [ref=e1144]
+              - cell "0m" [ref=e1145]
+              - cell "30 / 37" [ref=e1146]:
+                - generic [ref=e1147]: 30 / 37
+            - row "1 Turn Turn left onto Denham Street 119 m 0m 31 / 37" [ref=e1148]:
+              - cell "1" [ref=e1149]
+              - cell "Turn" [ref=e1150]
+              - cell "Turn left onto Denham Street" [ref=e1151]:
+                - generic [ref=e1152]: Turn left onto Denham Street
+              - cell "119 m" [ref=e1153]
+              - cell "0m" [ref=e1154]
+              - cell "31 / 37" [ref=e1155]:
+                - generic [ref=e1156]: 31 / 37
+            - row "1 Turn Take exit 2 onto Denham Street 23 m 0m 32 / 37" [ref=e1157]:
+              - cell "1" [ref=e1158]
+              - cell "Turn" [ref=e1159]
+              - cell "Take exit 2 onto Denham Street" [ref=e1160]:
+                - generic [ref=e1161]: Take exit 2 onto Denham Street
+              - cell "23 m" [ref=e1162]
+              - cell "0m" [ref=e1163]
+              - cell "32 / 37" [ref=e1164]:
+                - generic [ref=e1165]: 32 / 37
+            - row "1 Turn Turn left onto Denham Street 253 m 0m 33 / 37" [ref=e1166]:
+              - cell "1" [ref=e1167]
+              - cell "Turn" [ref=e1168]
+              - cell "Turn left onto Denham Street" [ref=e1169]:
+                - generic [ref=e1170]: Turn left onto Denham Street
+              - cell "253 m" [ref=e1171]
+              - cell "0m" [ref=e1172]
+              - cell "33 / 37" [ref=e1173]:
+                - generic [ref=e1174]: 33 / 37
+            - row "1 Turn Take exit 2 onto Denham Street 26 m 0m 34 / 37" [ref=e1175]:
+              - cell "1" [ref=e1176]
+              - cell "Turn" [ref=e1177]
+              - cell "Take exit 2 onto Denham Street" [ref=e1178]:
+                - generic [ref=e1179]: Take exit 2 onto Denham Street
+              - cell "26 m" [ref=e1180]
+              - cell "0m" [ref=e1181]
+              - cell "34 / 37" [ref=e1182]:
+                - generic [ref=e1183]: 34 / 37
+            - row "1 Turn Turn left onto Denham Street 254 m 0m 35 / 37" [ref=e1184]:
+              - cell "1" [ref=e1185]
+              - cell "Turn" [ref=e1186]
+              - cell "Turn left onto Denham Street" [ref=e1187]:
+                - generic [ref=e1188]: Turn left onto Denham Street
+              - cell "254 m" [ref=e1189]
+              - cell "0m" [ref=e1190]
+              - cell "35 / 37" [ref=e1191]:
+                - generic [ref=e1192]: 35 / 37
+            - row "1 Turn Take the roundabout onto East Street 47 m 0m 36 / 37" [ref=e1193]:
+              - cell "1" [ref=e1194]
+              - cell "Turn" [ref=e1195]
+              - cell "Take the roundabout onto East Street" [ref=e1196]:
+                - generic [ref=e1197]: Take the roundabout onto East Street
+              - cell "47 m" [ref=e1198]
+              - cell "0m" [ref=e1199]
+              - cell "36 / 37" [ref=e1200]:
+                - generic [ref=e1201]: 36 / 37
+            - row "1 Turn Arrive at East Street 0 m 0m 37 / 37" [ref=e1202]:
+              - cell "1" [ref=e1203]
+              - cell "Turn" [ref=e1204]
+              - cell "Arrive at East Street" [ref=e1205]:
+                - generic [ref=e1206]: Arrive at East Street
+              - cell "0 m" [ref=e1207]
+              - cell "0m" [ref=e1208]
+              - cell "37 / 37" [ref=e1209]:
+                - generic [ref=e1210]: 37 / 37
+            - 'row "1 Fuel stop Liberty Monkland at QLD QLD - $1.88/L - - Price: $1.88/L, detour: 1.9 km, selected from the strict detour window" [ref=e1211]':
+              - cell "1" [ref=e1212]
+              - cell "Fuel stop" [ref=e1213]
+              - cell "Liberty Monkland at QLD QLD - $1.88/L" [ref=e1214]:
+                - generic [ref=e1215]: Liberty Monkland at QLD QLD - $1.88/L
+              - cell "-" [ref=e1216]
+              - cell "-" [ref=e1217]
+              - 'cell "Price: $1.88/L, detour: 1.9 km, selected from the strict detour window" [ref=e1218]':
+                - generic [ref=e1219]: "Price: $1.88/L, detour: 1.9 km, selected from the strict detour window"

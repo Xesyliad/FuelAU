@@ -1,0 +1,71 @@
+- main [ref=e2]:
+  - navigation "Primary" [ref=e3]:
+    - tab "Fuel Prices" [selected] [ref=e4] [cursor=pointer]
+    - tab "Route Planning" [ref=e5] [cursor=pointer]
+    - tab "Container Management" [ref=e6] [cursor=pointer]
+  - tabpanel "Fuel Prices" [ref=e8]:
+    - heading "Fuel Prices" [level=1] [ref=e9]
+    - paragraph [ref=e10]: App-owned price analytics from the ingested fuel datasets. Weekly and monthly trend charts are rendered locally with SVG.
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: State
+          - combobox "State" [ref=e15]:
+            - option "All States"
+            - option "QLD" [selected]
+            - option "NSW"
+            - option "SA"
+            - option "TAS"
+            - option "VIC"
+            - option "NT"
+        - generic [ref=e16]:
+          - generic [ref=e17]: Region
+          - combobox "Region" [ref=e18]:
+            - option "Brisbane" [selected]
+            - option "Gold Coast"
+            - option "Sunshine Coast"
+            - option "Ipswich"
+            - option "Toowoomba"
+            - option "Cairns"
+            - option "Townsville"
+            - option "Mackay"
+            - option "Rockhampton"
+            - option "Bundaberg"
+            - option "Hervey Bay"
+            - option "Gladstone"
+        - generic [ref=e19]:
+          - generic [ref=e20]: Fuel
+          - combobox "Fuel" [ref=e21]:
+            - option "All Fuels"
+            - option "Bio-Diesel 20"
+            - option "Compressed natural gas"
+            - option "Diesel" [selected]
+            - option "Diesel/Premium Diesel"
+            - option "LPG"
+            - option "LRP"
+            - option "Liquefied natural gas"
+            - option "OPAL"
+            - option "Premium Diesel"
+            - option "Premium Unleaded 95"
+            - option "Premium Unleaded 98"
+            - option "Premium e5"
+            - option "ULSD"
+            - option "Unleaded"
+            - option "e10"
+            - option "e10/Unleaded"
+            - option "e85"
+        - button "Refresh Graphs" [ref=e24] [cursor=pointer]
+      - generic [ref=e25]: Loading fuel dashboard...
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - heading "Weekly Trend" [level=2] [ref=e28]
+          - paragraph [ref=e29]: Rolling daily average over the last six weeks.
+        - generic [ref=e30]:
+          - heading "Monthly Trend" [level=2] [ref=e31]
+          - paragraph [ref=e32]: Monthly average over the last twelve months.
+        - generic [ref=e33]:
+          - heading "Recent Snapshot" [level=2] [ref=e34]
+          - paragraph [ref=e35]: Most recent prices from the filtered dataset.
+      - generic [ref=e36]:
+        - heading "Station Map" [level=2] [ref=e37]
+        - paragraph [ref=e38]: Click a station to inspect the selected fuel price.

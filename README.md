@@ -718,13 +718,18 @@ The local map stack is built from an Australia OpenStreetMap extract and stored 
 Current services:
 
 - `map-build`: one-shot Planetiler rebuild job that writes `australia.mbtiles`
+- `terrain-build`: one-shot terrain tile builder that writes `terrain.mbtiles`
 - `map-server`: local TileServer GL light instance that serves the rebuilt tiles and style JSON
 - `map-scheduler`: weekly Docker CLI scheduler that runs the map build through Compose
 
 The app exposes the tile server config at `/api/map/config`. The default local settings are:
 
 - `MAP_TILE_SERVER_URL=/tiles`
-- `MAP_TILE_STYLE=basic-preview`
+- `MAP_TILE_STYLE=topo-3d`
+
+The `topo-3d` style keeps the road hierarchy from the preview map, adds terrain shading, and enables 3D buildings with contour overlays in the browser. The older `basic-preview` style is still available if you want a simpler map.
+
+Contour overlays now use a local terrain MBTiles source served through the map tile stack instead of the public elevation tile endpoint.
 
 The browser should load map assets from the app host at `/tiles/`, which Apache reverse proxies to the internal `map-server` container.
 
@@ -732,6 +737,12 @@ Rebuild the basemap manually:
 
 ```bash
 docker compose --profile map-setup run --rm map-build
+```
+
+Rebuild the local terrain tiles manually:
+
+```bash
+docker compose --profile map-setup run --rm terrain-build
 ```
 
 Start the local tile server and weekly rebuild scheduler:

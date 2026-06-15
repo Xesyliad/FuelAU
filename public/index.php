@@ -452,6 +452,34 @@ try {
             gap: 14px;
         }
 
+        .fuel-stop-finder-recommendation {
+            display: grid;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .fuel-stop-finder-card {
+            display: grid;
+            gap: 6px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fbfcfd;
+            padding: 12px;
+        }
+
+        .fuel-stop-finder-card strong {
+            display: block;
+            font-size: 18px;
+            line-height: 1.2;
+            color: var(--accent);
+        }
+
+        .fuel-stop-finder-card span {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
         .route-top {
             display: grid;
             gap: 14px;
@@ -912,6 +940,45 @@ try {
             color: var(--accent);
         }
 
+        .snapshot-price-row {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .snapshot-movement {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 12px;
+            height: 12px;
+            flex: 0 0 auto;
+        }
+
+        .snapshot-movement-up {
+            color: #dc2626;
+        }
+
+        .snapshot-movement-down {
+            color: #16a34a;
+        }
+
+        .snapshot-movement-arrow {
+            width: 0;
+            height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+        }
+
+        .snapshot-movement-up .snapshot-movement-arrow {
+            border-bottom: 8px solid currentColor;
+        }
+
+        .snapshot-movement-down .snapshot-movement-arrow {
+            border-top: 8px solid currentColor;
+        }
+
         @media (max-width: 640px) {
             .app-shell {
                 width: 95%;
@@ -965,6 +1032,7 @@ try {
     <main class="app-shell">
         <nav class="tabs" aria-label="Primary">
             <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab">Fuel Prices</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="fuel-stop-finder" id="fuel-stop-finder-tab">Fuel Stop Finder</button>
             <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="route-planning" id="route-planning-tab">Route Planning</button>
             <?php if ($containerManagementEnabled): ?>
             <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab">Container Management</button>
@@ -1026,6 +1094,67 @@ try {
                         <p>Click a station to inspect the selected fuel price.</p>
                         <div class="fuel-map-frame" id="fuel-map"></div>
                         <div class="fuel-map-legend" id="fuel-map-legend"></div>
+                    </section>
+                </div>
+            </div>
+            <div class="panel" role="tabpanel" id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab">
+                <h1>Fuel Stop Finder</h1>
+                <p>Enter an origin, destination, fuel type, and fuel economy. The planner will find the best station to fill up at between the two points while keeping the route detour sensible.</p>
+
+                <div class="route-layout">
+                    <section class="surface-block route-top">
+                        <h2>Trip Inputs</h2>
+                        <p>Origin, destination, fuel type, and fuel economy are required.</p>
+
+                        <div class="route-input-grid">
+                            <div class="field">
+                                <label for="fuel-stop-finder-origin">Origin</label>
+                                <div class="route-autocomplete">
+                                    <input type="text" id="fuel-stop-finder-origin" class="route-autocomplete-input" placeholder="Enter an origin" autocomplete="off">
+                                    <div class="route-autocomplete-panel" id="fuel-stop-finder-origin-results" hidden></div>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label for="fuel-stop-finder-destination">Destination</label>
+                                <div class="route-autocomplete">
+                                    <input type="text" id="fuel-stop-finder-destination" class="route-autocomplete-input" placeholder="Enter a destination" autocomplete="off">
+                                    <div class="route-autocomplete-panel" id="fuel-stop-finder-destination-results" hidden></div>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label for="fuel-stop-finder-fuel-type">Fuel Type</label>
+                                <select id="fuel-stop-finder-fuel-type"></select>
+                            </div>
+                            <div class="field">
+                                <label for="fuel-stop-finder-economy">Fuel Economy (L/100km)</label>
+                                <input type="number" id="fuel-stop-finder-economy" min="0.1" step="0.1" inputmode="decimal" placeholder="0.0">
+                            </div>
+                        </div>
+
+                        <div class="route-actions">
+                            <button class="button primary" type="button" id="fuel-stop-finder-plan">Find Best Stop</button>
+                            <button class="button" type="button" id="fuel-stop-finder-reset">Reset</button>
+                        </div>
+
+                        <div class="status-line" id="fuel-stop-finder-status">Enter a trip to find the best fuel stop.</div>
+                        <div class="status-line route-status-muted" id="fuel-stop-finder-detail"></div>
+                    </section>
+
+                    <section class="surface-block">
+                        <h2>Trip Summary</h2>
+                        <div class="route-summary-grid" id="fuel-stop-finder-summary"></div>
+                        <div class="fuel-stop-finder-recommendation" id="fuel-stop-finder-recommendation"></div>
+                    </section>
+
+                    <section class="surface-block">
+                        <h2>Route Map</h2>
+                        <div class="route-map-frame" id="fuel-stop-finder-map"></div>
+                        <div class="route-map-legend" id="fuel-stop-finder-map-legend"></div>
+                    </section>
+
+                    <section class="surface-block">
+                        <h2>Route Breakdown</h2>
+                        <div id="fuel-stop-finder-legs"></div>
                     </section>
                 </div>
             </div>
@@ -1133,6 +1262,7 @@ try {
     </main>
 
     <script src="/resources/maplibre-gl.js"></script>
+    <script src="/resources/maplibre-contour.min.js"></script>
     <script>
         const tabs = document.querySelectorAll('.tab');
         const panels = document.querySelectorAll('.panel');
@@ -1156,6 +1286,21 @@ try {
         const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
         const fuelMap = document.getElementById('fuel-map');
         const fuelMapLegend = document.getElementById('fuel-map-legend');
+        const fuelStopFinderOrigin = document.getElementById('fuel-stop-finder-origin');
+        const fuelStopFinderOriginResults = document.getElementById('fuel-stop-finder-origin-results');
+        const fuelStopFinderDestination = document.getElementById('fuel-stop-finder-destination');
+        const fuelStopFinderDestinationResults = document.getElementById('fuel-stop-finder-destination-results');
+        const fuelStopFinderFuelType = document.getElementById('fuel-stop-finder-fuel-type');
+        const fuelStopFinderEconomy = document.getElementById('fuel-stop-finder-economy');
+        const fuelStopFinderPlan = document.getElementById('fuel-stop-finder-plan');
+        const fuelStopFinderReset = document.getElementById('fuel-stop-finder-reset');
+        const fuelStopFinderStatus = document.getElementById('fuel-stop-finder-status');
+        const fuelStopFinderDetail = document.getElementById('fuel-stop-finder-detail');
+        const fuelStopFinderSummary = document.getElementById('fuel-stop-finder-summary');
+        const fuelStopFinderRecommendation = document.getElementById('fuel-stop-finder-recommendation');
+        const fuelStopFinderMap = document.getElementById('fuel-stop-finder-map');
+        const fuelStopFinderMapLegend = document.getElementById('fuel-stop-finder-map-legend');
+        const fuelStopFinderLegs = document.getElementById('fuel-stop-finder-legs');
         const routeOrigin = document.getElementById('route-origin');
         const routeOriginResults = document.getElementById('route-origin-results');
         const routeFuelType = document.getElementById('route-fuel-type');
@@ -1189,10 +1334,142 @@ try {
         let fuelMapAutoRefreshTimer = null;
         let fuelMapAutoRefreshSuppressed = false;
         let fuelMapLegendContext = '';
+        let fuelStopFinderMapInstance = null;
+        let fuelStopFinderMarkers = [];
         let routeMapInstance = null;
         let routeFuelMarkers = [];
         const fuelSelectionCookieName = 'fuelau_selected_fuel';
         const fuelRegionCookieName = 'fuelau_selected_region';
+        const fuelStopFinderStateKey = 'fuelau_fuel_stop_finder_state_v1';
+        const topoStyleId = 'topo-3d';
+        const topoContourSourceId = 'fuelau-terrain-contours';
+        const topoContourLayerId = 'fuelau-terrain-contour-lines';
+        const topoContourLabelLayerId = 'fuelau-terrain-contour-labels';
+        const topoDemUrl = `${String(window.fuelauMapConfig?.base_url || '/tiles').replace(/\/$/, '')}/data/terrain/{z}/{x}/{y}.png`;
+        const topoContourThresholds = {
+            10: [200, 1000],
+            11: [100, 500],
+            12: [50, 200],
+            13: [20, 100],
+            14: [10, 50],
+            15: [5, 20],
+        };
+        let topoContourDemSource = null;
+        let topoContourProtocolReady = false;
+
+        function fuelauIsTopographicStyle() {
+            return String(window.fuelauMapConfig?.style_id || '') === topoStyleId;
+        }
+
+        function fuelauFirstExistingLayer(map, layerIds) {
+            return layerIds.find((layerId) => map.getLayer(layerId)) || null;
+        }
+
+        function fuelauApplyTopographicCamera(map) {
+            if (!fuelauIsTopographicStyle()) {
+                return;
+            }
+        }
+
+        function fuelauEnsureContourProtocol() {
+            if (topoContourProtocolReady || !window.mlcontour) {
+                return;
+            }
+
+            try {
+                topoContourDemSource = new window.mlcontour.DemSource({
+                    url: topoDemUrl,
+                    encoding: 'terrarium',
+                    maxzoom: 8,
+                    worker: true,
+                    cacheSize: 100,
+                    timeoutMs: 15000,
+                });
+                topoContourDemSource.setupMaplibre(maplibregl);
+                topoContourProtocolReady = true;
+            } catch (error) {
+                console.warn('Contour overlays are unavailable for the topographic map.', error);
+                topoContourDemSource = null;
+            }
+        }
+
+        function fuelauAddTopographicEnhancements(map) {
+            if (!fuelauIsTopographicStyle()) {
+                return;
+            }
+
+            fuelauEnsureContourProtocol();
+            if (!topoContourDemSource) {
+                return;
+            }
+
+            if (!map.getSource(topoContourSourceId)) {
+                map.addSource(topoContourSourceId, {
+                    type: 'vector',
+                    tiles: [
+                        topoContourDemSource.contourProtocolUrl({
+                            multiplier: 1,
+                            thresholds: topoContourThresholds,
+                            contourLayer: 'contours',
+                            elevationKey: 'ele',
+                            levelKey: 'level',
+                            overzoom: 1,
+                        }),
+                    ],
+                    maxzoom: 16,
+                });
+            }
+
+            if (!map.getLayer(topoContourLayerId)) {
+                map.addLayer({
+                    id: topoContourLayerId,
+                    type: 'line',
+                    source: topoContourSourceId,
+                    'source-layer': 'contours',
+                        paint: {
+                            'line-color': [
+                                'case',
+                                ['==', ['get', 'level'], 1],
+                                '#8b5e34',
+                                '#a8794a',
+                            ],
+                            'line-width': [
+                                'case',
+                                ['==', ['get', 'level'], 1],
+                                0.9,
+                                0.45,
+                            ],
+                            'line-opacity': 0.45,
+                        },
+                    layout: {
+                        'line-join': 'round',
+                        'line-cap': 'round',
+                    },
+                }, fuelauFirstExistingLayer(map, ['road-ferry', 'road-minor', 'road-secondary']) || undefined);
+            }
+
+            if (!map.getLayer(topoContourLabelLayerId)) {
+                map.addLayer({
+                    id: topoContourLabelLayerId,
+                    type: 'symbol',
+                    source: topoContourSourceId,
+                    'source-layer': 'contours',
+                    filter: ['==', ['get', 'level'], 1],
+                        layout: {
+                            'symbol-placement': 'line',
+                            'text-field': ['concat', ['to-string', ['get', 'ele']], ' m'],
+                            'text-font': ['Noto Sans Regular'],
+                            'text-size': 9.5,
+                        },
+                        paint: {
+                            'text-color': '#6b4c2f',
+                            'text-halo-color': '#f9f4ed',
+                            'text-halo-width': 1,
+                        },
+                    }, fuelauFirstExistingLayer(map, ['road-labels', 'place-label']) || undefined);
+            }
+
+        }
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const routePlannerRouteBudgetLimit = 240;
         const routePlannerFuelBudgetLimit = 720;
@@ -1317,6 +1594,9 @@ try {
                 if (fuelMapInstance) {
                     window.setTimeout(() => fuelMapInstance.resize(), 0);
                 }
+            }
+            if (tab.id === 'fuel-stop-finder-tab' && fuelStopFinderMapInstance) {
+                window.setTimeout(() => fuelStopFinderMapInstance.resize(), 0);
             }
             if (tab.id === 'route-planning-tab' && routeMapInstance) {
                 window.setTimeout(() => routeMapInstance.resize(), 0);
@@ -1477,6 +1757,261 @@ try {
             } catch (error) {
                 void error;
             }
+        }
+
+        function saveFuelStopFinderState(planned = false) {
+            try {
+                window.localStorage.setItem(fuelStopFinderStateKey, JSON.stringify({
+                    origin: fuelStopFinderOrigin.value.trim(),
+                    destination: fuelStopFinderDestination.value.trim(),
+                    fuel: fuelStopFinderFuelType?.value || '',
+                    economy: fuelStopFinderEconomy.value.trim(),
+                    planned: Boolean(planned),
+                }));
+            } catch (error) {
+                void error;
+            }
+        }
+
+        function loadFuelStopFinderState() {
+            try {
+                const raw = window.localStorage.getItem(fuelStopFinderStateKey);
+                return raw ? JSON.parse(raw) : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function clearFuelStopFinderState() {
+            try {
+                window.localStorage.removeItem(fuelStopFinderStateKey);
+            } catch (error) {
+                void error;
+            }
+        }
+
+        function fuelStopFinderFuelChoices() {
+            return routeFuelChoices();
+        }
+
+        function fuelStopFinderDefaultFuelValue() {
+            const options = fuelStopFinderFuelChoices();
+            const current = String(fuelStopFinderFuelType?.value || '').trim();
+            if (current !== '' && options.some((item) => item.value === current)) {
+                return current;
+            }
+
+            const diesel = options.find((item) => item.label.toLowerCase() === 'diesel');
+            return diesel ? diesel.value : (options[0]?.value || '');
+        }
+
+        function syncFuelStopFinderSelector() {
+            if (!fuelStopFinderFuelType) {
+                return;
+            }
+            setSelectOptions(fuelStopFinderFuelType, fuelStopFinderFuelChoices(), fuelStopFinderDefaultFuelValue());
+        }
+
+        function fuelStopFinderFuelSelectedValue() {
+            const value = String(fuelStopFinderFuelType?.value || '').trim();
+            return value !== '' ? value : fuelStopFinderDefaultFuelValue();
+        }
+
+        function fuelStopFinderFuelSelectedLabel() {
+            const option = Array.from(fuelStopFinderFuelType?.options || []).find((item) => item.value === fuelStopFinderFuelSelectedValue());
+            return option ? option.textContent.trim() : '';
+        }
+
+        function fuelStopFinderDetourLimitKm(routeKm) {
+            const distance = Number(routeKm || 0);
+            if (distance <= 80) {
+                return 4;
+            }
+            if (distance <= 250) {
+                return 8;
+            }
+            if (distance <= 800) {
+                return 12;
+            }
+            return 18;
+        }
+
+        function fuelStopFinderCandidateScore(candidate, routeKm, economyLPer100km) {
+            const price = Number(candidate?.price || 0);
+            const offRouteKm = routeFuelCandidateOffRouteKm(candidate);
+            const detourWeight = Math.max(1.5, Math.min(4, Number(economyLPer100km || 0) / 3.5));
+            return price + (offRouteKm * detourWeight);
+        }
+
+        function selectFuelStopFinderCandidate(candidates, routeKm, economyLPer100km, detourLimitKm) {
+            const routeDistance = Number(routeKm || 0);
+            const limit = Number.isFinite(Number(detourLimitKm)) ? Number(detourLimitKm) : Number.POSITIVE_INFINITY;
+            const pool = (Array.isArray(candidates) ? candidates : [])
+                .filter((candidate) => Number(candidate?.progressKm || 0) > 0.01)
+                .filter((candidate) => Number(candidate?.progressKm || 0) < routeDistance - 0.01)
+                .filter((candidate) => routeFuelCandidateOffRouteKm(candidate) <= limit)
+                .map((candidate) => ({
+                    ...candidate,
+                    score: fuelStopFinderCandidateScore(candidate, routeDistance, economyLPer100km),
+                }));
+
+            pool.sort((left, right) => {
+                if (left.score !== right.score) {
+                    return left.score - right.score;
+                }
+                if (left.price !== right.price) {
+                    return left.price - right.price;
+                }
+                if (left.offRouteDistanceKm !== right.offRouteDistanceKm) {
+                    return left.offRouteDistanceKm - right.offRouteDistanceKm;
+                }
+                return left.progressKm - right.progressKm;
+            });
+
+            return pool[0] || null;
+        }
+
+        async function collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget = null) {
+            const sampleLimit = Math.max(12, Math.min(30, Math.ceil(Number(routeKm || 0) / 60)));
+            const attempts = [
+                { sampleLimit, radiusKm: Number(routeKm || 0) > 1600 ? 45 : 25 },
+                { sampleLimit: Math.min(30, sampleLimit + 6), radiusKm: Number(routeKm || 0) > 1600 ? 75 : 45 },
+                { sampleLimit: Math.min(36, sampleLimit + 12), radiusKm: Number(routeKm || 0) > 1600 ? 100 : 60 },
+            ];
+            const excludedStations = [];
+
+            for (const attempt of attempts) {
+                const bundle = await collectRouteFuelCandidates(progress, fuelQuery, attempt.sampleLimit, attempt.radiusKm, budget);
+                excludedStations.push(...bundle.excludedStations);
+                if (bundle.candidates.length > 0) {
+                    return {
+                        candidates: bundle.candidates,
+                        excludedStations: dedupeRouteExcludedStations(excludedStations),
+                    };
+                }
+            }
+
+            return {
+                candidates: [],
+                excludedStations: dedupeRouteExcludedStations(excludedStations),
+            };
+        }
+
+        async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLPer100km) {
+            const budget = createRoutePlannerBudget();
+            const route = await fetchRouteDetails(origin, destination, true, budget);
+            const routeKm = route.distanceM / 1000;
+            const progress = buildRouteProgress(route.geometry);
+            const candidateBundle = await collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget);
+            const candidates = candidateBundle.candidates;
+            const excludedStations = candidateBundle.excludedStations;
+
+            if (candidates.length === 0) {
+                throw new Error('No fuel stations were found along this route.');
+            }
+
+            const strictDetourLimitKm = fuelStopFinderDetourLimitKm(routeKm);
+            const relaxedDetourLimitKm = strictDetourLimitKm * 2;
+            const selectedStop = selectFuelStopFinderCandidate(candidates, routeKm, economyLPer100km, strictDetourLimitKm)
+                || selectFuelStopFinderCandidate(candidates, routeKm, economyLPer100km, relaxedDetourLimitKm)
+                || selectFuelStopFinderCandidate(candidates, routeKm, economyLPer100km, Number.POSITIVE_INFINITY);
+
+            if (!selectedStop) {
+                throw new Error('No eligible fuel stop could be selected for this route.');
+            }
+
+            const routePieces = [
+                {
+                    type: 'route',
+                    route,
+                },
+                {
+                    type: 'fuel-stop',
+                    station: selectedStop,
+                    recommendedOnly: true,
+                    detourKm: routeFuelCandidateOffRouteKm(selectedStop),
+                    score: Number(selectedStop.score || 0),
+                    selectionScope: routeFuelCandidateOffRouteKm(selectedStop) <= strictDetourLimitKm
+                        ? 'strict'
+                        : (routeFuelCandidateOffRouteKm(selectedStop) <= relaxedDetourLimitKm ? 'relaxed' : 'expanded'),
+                },
+            ];
+
+            return {
+                fuelQuery,
+                segments: [
+                    {
+                        routePieces,
+                        stops: [selectedStop],
+                        excludedStations,
+                        remainingFuelL: 0,
+                    },
+                ],
+                totalDistanceM: route.distanceM,
+                totalDurationS: route.durationS,
+                totalFuelUsedL: routeKm * routeFuelRateLPerKm(economyLPer100km),
+                totalFillCostCents: 0,
+                fuelRemainingL: 0,
+                excludedStations,
+                selectedStop,
+            };
+        }
+
+        function renderFuelStopFinderSummaryCard(label, value) {
+            return `
+                <article class="route-summary-card">
+                    <strong>${escapeHtml(String(value || ''))}</strong>
+                    <span>${escapeHtml(String(label || ''))}</span>
+                </article>
+            `;
+        }
+
+        function renderFuelStopFinderRecommendation(stop, plan) {
+            if (!fuelStopFinderRecommendation) {
+                return;
+            }
+
+            if (!stop) {
+                fuelStopFinderRecommendation.innerHTML = `
+                    <div class="fuel-stop-finder-card">
+                        <strong>No station selected</strong>
+                        <span>No eligible fuel station was found along this route.</span>
+                    </div>
+                `;
+                return;
+            }
+
+            const scope = String(plan?.segments?.[0]?.routePieces?.find((piece) => piece.type === 'fuel-stop')?.selectionScope || '').trim();
+            fuelStopFinderRecommendation.innerHTML = `
+                <div class="fuel-stop-finder-card">
+                    <strong>${escapeHtml(routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')}</strong>
+                    <span>${escapeHtml(String(stop.address || ''))}</span>
+                    <span>Price: ${escapeHtml(routeFuelPriceText(stop.price) || '$0.00')}/L</span>
+                    <span>Route detour: ${escapeHtml(Number(stop.offRouteDistanceKm || 0).toFixed(1))} km</span>
+                    <span>Selected because it is the cheapest eligible stop${scope !== '' ? ` within the ${escapeHtml(scope)} detour window` : ''}.</span>
+                </div>
+            `;
+        }
+
+        function renderFuelStopFinderSummary(plan, stop, fuelQuery) {
+            if (!fuelStopFinderSummary) {
+                return;
+            }
+
+            const stopLabel = stop
+                ? (routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')
+                : 'No station selected';
+            const stopPrice = stop ? `${routeFuelPriceText(stop.price)}/L` : 'N/A';
+            const stopDetour = stop ? `${Number(stop.offRouteDistanceKm || 0).toFixed(1)} km` : 'N/A';
+            fuelStopFinderSummary.innerHTML = [
+                renderFuelStopFinderSummaryCard('Distance', formatRouteDistance(plan.totalDistanceM || 0)),
+                renderFuelStopFinderSummaryCard('Drive Time', formatRouteDuration(plan.totalDurationS || 0)),
+                renderFuelStopFinderSummaryCard('Fuel Used', `${Number(plan.totalFuelUsedL || 0).toFixed(1)} L`),
+                renderFuelStopFinderSummaryCard('Fuel Type', String(fuelQuery || 'Diesel')),
+                renderFuelStopFinderSummaryCard('Best Stop', stopLabel),
+                renderFuelStopFinderSummaryCard('Stop Price', stopPrice),
+                renderFuelStopFinderSummaryCard('Route Detour', stopDetour),
+            ].join('');
         }
 
         function formatRouteDistance(meters) {
@@ -2514,6 +3049,83 @@ try {
             return selectRouteFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, 'initial');
         }
 
+        function selectRouteFuelDestinationFallbackCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
+            const safeRangeKm = routeFuelSafeRangeKm(currentFuelL, reserveL, economyLPer100km);
+            const routeWindowKm = Math.max(25, Math.min(140, Math.max(routeKm * 0.12, safeRangeKm * 0.25)));
+            const minProgressKm = Math.max(0, routeKm - routeWindowKm);
+            const detourLimitKm = routeFuelDetourLimitKm(routeKm, Math.max(safeRangeKm, routeKm));
+            const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
+            const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
+            const candidatePool = candidates
+                .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
+                .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
+                .filter((candidate) => Number(candidate.progressKm || 0) >= Number(cursor.progressKm || 0) - 0.001);
+
+            const reachable = candidatePool
+                .map((candidate) => {
+                    const routeProgressKm = routeFuelCandidateProgressKm(candidate, cursor);
+                    const offRouteKm = routeFuelCandidateOffRouteKm(candidate);
+                    const routeFuelL = routeProgressKm * rateLPerKm;
+                    const arrivalFuelL = Math.max(0, currentFuelL - routeFuelL);
+                    const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
+                    const forwardFeasible = routeFuelCandidateHasForwardOption(
+                        candidate,
+                        candidatePool,
+                        tankCapacityL,
+                        economyLPer100km,
+                        reserveL,
+                        routeKm,
+                        visitedKeys,
+                        visitedNames
+                    );
+                    const purchaseCost = refillL * Number(candidate.price || 0);
+                    const detourCost = routeFuelDetourCostCents(offRouteKm, candidate.price, economyLPer100km);
+                    const stopPenalty = routeFuelStopPenaltyCents(routeKm);
+                    const reservePenalty = Math.max(0, (reserveL * 1.5) - arrivalFuelL) * 500;
+                    const progressCredit = routeProgressKm * 1.5;
+
+                    return {
+                        ...candidate,
+                        routeProgressKm,
+                        offRouteKm,
+                        arrivalFuelL,
+                        refillL,
+                        meaningfulRefill: refillL >= minimumPurchaseL,
+                        forwardFeasible,
+                        effectiveCost: purchaseCost + detourCost + stopPenalty + reservePenalty - progressCredit,
+                    };
+                })
+                .filter((candidate) => candidate.routeProgressKm > 0.01)
+                .filter((candidate) => candidate.routeProgressKm >= minProgressKm)
+                .filter((candidate) => candidate.arrivalFuelL >= 0)
+                .filter((candidate) => candidate.offRouteKm <= detourLimitKm);
+
+            if (reachable.length === 0) {
+                return null;
+            }
+
+            reachable.sort((left, right) => {
+                if (left.routeProgressKm !== right.routeProgressKm) {
+                    return right.routeProgressKm - left.routeProgressKm;
+                }
+                if (left.forwardFeasible !== right.forwardFeasible) {
+                    return Number(right.forwardFeasible) - Number(left.forwardFeasible);
+                }
+                if (left.meaningfulRefill !== right.meaningfulRefill) {
+                    return Number(right.meaningfulRefill) - Number(left.meaningfulRefill);
+                }
+                if (left.effectiveCost !== right.effectiveCost) {
+                    return left.effectiveCost - right.effectiveCost;
+                }
+                if (left.offRouteKm !== right.offRouteKm) {
+                    return left.offRouteKm - right.offRouteKm;
+                }
+                return left.price - right.price;
+            });
+
+            return reachable[0];
+        }
+
         function routeFuelGraphEdgeKm(fromNode, toNode) {
             const progressKm = Math.max(0, Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0));
             const fromOffRouteKm = fromNode.kind === 'station' ? routeFuelCandidateOffRouteKm(fromNode.station) : 0;
@@ -2700,6 +3312,7 @@ try {
             let currentPoint = cursor;
             let fuelInTank = currentFuelL;
             const reserveL = routeFuelReserveL(tankCapacityL);
+            let reserveNote = null;
 
             async function confirmRouteApproachCandidate(nextCandidate, minimumRefillL, isFirstStop) {
                 const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
@@ -2717,6 +3330,23 @@ try {
                 return {
                     approach: nextApproach,
                     refillL: nextRefillL,
+                };
+            }
+
+            async function confirmRouteDestinationFallbackCandidate(nextCandidate) {
+                const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
+                const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true, budget);
+                const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
+                if (nextApproachFuel > fuelInTank) {
+                    return null;
+                }
+                const nextArrivalFuel = Math.max(0, fuelInTank - nextApproachFuel);
+                const nextRefillL = Math.max(0, tankCapacityL - nextArrivalFuel);
+
+                return {
+                    approach: nextApproach,
+                    refillL: nextRefillL,
+                    fuelAfterArrival: nextArrivalFuel,
                 };
             }
 
@@ -2909,7 +3539,126 @@ try {
                 }
 
                 if (!chosen) {
-                    const reserveNote = routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km);
+                    routePlannerConsumeBudget(budget, 'fuel');
+                    const destinationRows = await fetchRouteStations(destination, fuelQuery);
+                    const destinationStations = destinationRows
+                        .map((row) => ({
+                            ...row,
+                            progressKm: routeKm,
+                            routeDistanceFromCursorKm: Number(row.distance_km || 0),
+                            offRouteDistanceKm: Number(row.distance_km || 0),
+                        }))
+                        .sort((left, right) => {
+                            if (left.routeDistanceFromCursorKm !== right.routeDistanceFromCursorKm) {
+                                return left.routeDistanceFromCursorKm - right.routeDistanceFromCursorKm;
+                            }
+                            if (left.price !== right.price) {
+                                return left.price - right.price;
+                            }
+                            return String(left.station_name || '').localeCompare(String(right.station_name || ''));
+                        });
+
+                    for (const destinationStation of destinationStations) {
+                        const validation = await confirmRouteDestinationFallbackCandidate(destinationStation);
+                        if (validation) {
+                            const routeFuelAfterArrival = validation.fuelAfterArrival;
+                            const litresToBuy = Math.max(0, tankCapacityL - routeFuelAfterArrival);
+                            const purchaseCents = litresToBuy * Number(destinationStation.price || 0);
+                            const destinationFallbackFlag = true;
+
+                            routePieces.push({
+                                type: 'route',
+                                route,
+                            });
+
+                            chosenStops.push({
+                                ...destinationStation,
+                                litresPurchased: litresToBuy,
+                                purchaseCents,
+                                fuelAfterArrival: routeFuelAfterArrival,
+                                safetyFallback: false,
+                                relaxedFallback: false,
+                                contingencyFallback: false,
+                                destinationFallback: destinationFallbackFlag,
+                            });
+
+                            routePieces.push({
+                                type: 'fuel-stop',
+                                station: destinationStation,
+                                litresPurchased: litresToBuy,
+                                purchaseCents,
+                                safetyFallback: false,
+                                relaxedFallback: false,
+                                contingencyFallback: false,
+                                destinationFallback: destinationFallbackFlag,
+                            });
+
+                            fuelInTank = tankCapacityL;
+                            currentPoint = destination;
+                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km);
+                            chosen = destinationStation;
+                            break;
+                        }
+                    }
+
+                    if (chosen) {
+                        break;
+                    }
+
+                    const destinationFallbackCandidate = selectRouteFuelDestinationFallbackCandidate(
+                        candidates,
+                        currentCursor,
+                        fuelInTank,
+                        tankCapacityL,
+                        economyLPer100km,
+                        reserveL,
+                        routeKm,
+                        visitedStationKeys,
+                        visitedStationNames
+                    );
+                    if (destinationFallbackCandidate) {
+                        const validation = await confirmRouteDestinationFallbackCandidate(destinationFallbackCandidate);
+                        if (validation) {
+                            const routeFuelAfterArrival = validation.fuelAfterArrival;
+                            const litresToBuy = Math.max(0, tankCapacityL - routeFuelAfterArrival);
+                            const purchaseCents = litresToBuy * Number(destinationFallbackCandidate.price || 0);
+                            const destinationFallbackFlag = true;
+
+                            routePieces.push({
+                                type: 'route',
+                                route,
+                            });
+
+                            chosenStops.push({
+                                ...destinationFallbackCandidate,
+                                litresPurchased: litresToBuy,
+                                purchaseCents,
+                                fuelAfterArrival: routeFuelAfterArrival,
+                                safetyFallback: false,
+                                relaxedFallback: false,
+                                contingencyFallback: false,
+                                destinationFallback: destinationFallbackFlag,
+                            });
+
+                            routePieces.push({
+                                type: 'fuel-stop',
+                                station: destinationFallbackCandidate,
+                                litresPurchased: litresToBuy,
+                                purchaseCents,
+                                safetyFallback: false,
+                                relaxedFallback: false,
+                                contingencyFallback: false,
+                                destinationFallback: destinationFallbackFlag,
+                            });
+
+                            fuelInTank = tankCapacityL;
+                            currentPoint = destination;
+                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km);
+                            break;
+                        }
+                    }
+
+                    reserveNote = routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km);
                     routePieces.push({
                         type: 'route',
                         route,
@@ -2971,6 +3720,7 @@ try {
                 stops: chosenStops,
                 excludedStations,
                 remainingFuelL: Math.max(0, fuelInTank),
+                reserveNote,
             };
         }
 
@@ -3209,13 +3959,17 @@ try {
                 style: styleUrl,
                 center: [Number(segments[0]?.routePieces?.[0]?.route?.from?.lon || 133.7751), Number(segments[0]?.routePieces?.[0]?.route?.from?.lat || -25.2744)],
                 zoom: 4,
+                pitch: 0,
+                bearing: 0,
                 attributionControl: true,
                 preserveDrawingBuffer: false,
             });
             routeMapInstance = map;
+            window.fuelauRouteMapInstance = map;
             map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
 
             map.on('load', () => {
+                fuelauAddTopographicEnhancements(map);
                 map.addSource('route-lines', {
                     type: 'geojson',
                     data: {
@@ -3311,6 +4065,7 @@ try {
                 const pointBounds = new maplibregl.LngLatBounds();
                 bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
                 map.fitBounds(pointBounds, { padding: 36, duration: 0 });
+                fuelauApplyTopographicCamera(map);
 
                 markerFeatures
                     .filter((feature) => feature.properties.kind === 'fuel-stop')
@@ -3332,7 +4087,259 @@ try {
             ].join('');
         }
 
-        function renderRouteBreakdown(plan) {
+        function clearFuelStopFinderMarkers() {
+            fuelStopFinderMarkers.forEach((marker) => {
+                try {
+                    marker.remove();
+                } catch (error) {
+                    void error;
+                }
+            });
+            fuelStopFinderMarkers = [];
+        }
+
+        function renderFuelStopFinderMap(plan) {
+            const segments = Array.isArray(plan.segments) ? plan.segments : [];
+            const routeFeatures = [];
+            const markerFeatures = [];
+            const bounds = [];
+            const palette = ['#0f766e', '#2563eb', '#7c3aed', '#b45309', '#c2410c'];
+
+            segments.forEach((segment, segmentIndex) => {
+                const routePieces = segment.routePieces.filter((item) => item.type === 'route');
+                routePieces.forEach((piece, pieceIndex) => {
+                    const routePoints = Array.isArray(piece.route.geometry) ? piece.route.geometry : [];
+                    if (routePoints.length > 0) {
+                        const coordinates = routePoints.map((point) => [Number(point.lon), Number(point.lat)]);
+                        routeFeatures.push({
+                            type: 'Feature',
+                            properties: {
+                                color: palette[segmentIndex % palette.length],
+                                segment_index: segmentIndex + 1,
+                                piece_index: pieceIndex + 1,
+                            },
+                            geometry: {
+                                type: 'LineString',
+                                coordinates,
+                            },
+                        });
+                        routePoints.forEach((point) => bounds.push([Number(point.lat), Number(point.lon)]));
+                    }
+                    if (pieceIndex === 0) {
+                        markerFeatures.push({
+                            type: 'Feature',
+                            properties: {
+                                kind: 'origin',
+                                label: `Leg ${segmentIndex + 1} start`,
+                                sublabel: piece.route.from.display_name || '',
+                                segment_index: segmentIndex + 1,
+                            },
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [Number(piece.route.from.lon), Number(piece.route.from.lat)],
+                            },
+                        });
+                    }
+                    markerFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            kind: 'destination',
+                            label: pieceIndex === routePieces.length - 1
+                                ? `Leg ${segmentIndex + 1} end`
+                                : 'Fuel stop approach',
+                            sublabel: piece.route.to.display_name || '',
+                            segment_index: segmentIndex + 1,
+                        },
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [Number(piece.route.to.lon), Number(piece.route.to.lat)],
+                        },
+                    });
+                });
+                segment.stops.forEach((stop, stopIndex) => {
+                    markerFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            kind: 'fuel-stop',
+                            label: routeFuelStopLabel(stop),
+                            sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L bought`,
+                            segment_index: segmentIndex + 1,
+                            stop_index: stopIndex + 1,
+                            price: stop.price,
+                            price_text: routeFuelPriceText(stop.price),
+                            station_name: stop.station_name || '',
+                            address: stop.address || '',
+                            color: palette[segmentIndex % palette.length],
+                        },
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [Number(stop.longitude), Number(stop.latitude)],
+                        },
+                    });
+                    bounds.push([Number(stop.latitude), Number(stop.longitude)]);
+                });
+            });
+
+            fuelStopFinderMap.innerHTML = '';
+            if (!window.maplibregl) {
+                fuelStopFinderMap.innerHTML = renderRouteEmpty('Route map unavailable in this browser.');
+                fuelStopFinderMapLegend.innerHTML = '';
+                return;
+            }
+
+            if (fuelStopFinderMapInstance) {
+                fuelStopFinderMapInstance.remove();
+                fuelStopFinderMapInstance = null;
+            }
+            clearFuelStopFinderMarkers();
+
+            if (bounds.length === 0) {
+                fuelStopFinderMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
+                fuelStopFinderMapLegend.innerHTML = '';
+                return;
+            }
+
+            const mapConfig = window.fuelauMapConfig || {};
+            const styleUrl = mapConfig.style_url;
+            if (!styleUrl) {
+                fuelStopFinderMap.innerHTML = renderRouteEmpty('Map style is not configured.');
+                fuelStopFinderMapLegend.innerHTML = '';
+                return;
+            }
+
+            const map = new maplibregl.Map({
+                container: fuelStopFinderMap,
+                style: styleUrl,
+                center: [Number(segments[0]?.routePieces?.[0]?.route?.from?.lon || 133.7751), Number(segments[0]?.routePieces?.[0]?.route?.from?.lat || -25.2744)],
+                zoom: 4,
+                pitch: 0,
+                bearing: 0,
+                attributionControl: true,
+                preserveDrawingBuffer: false,
+            });
+            fuelStopFinderMapInstance = map;
+            map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
+
+            map.on('load', () => {
+                fuelauAddTopographicEnhancements(map);
+                map.addSource('route-lines', {
+                    type: 'geojson',
+                    data: {
+                        type: 'FeatureCollection',
+                        features: routeFeatures,
+                    },
+                });
+                map.addSource('route-markers', {
+                    type: 'geojson',
+                    data: {
+                        type: 'FeatureCollection',
+                        features: markerFeatures,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-lines',
+                    type: 'line',
+                    source: 'route-lines',
+                    paint: {
+                        'line-color': ['get', 'color'],
+                        'line-width': 5,
+                        'line-opacity': 0.92,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-origin-marker',
+                    type: 'circle',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'origin'],
+                    paint: {
+                        'circle-radius': 8,
+                        'circle-color': '#166534',
+                        'circle-stroke-color': '#ffffff',
+                        'circle-stroke-width': 2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-destination-marker',
+                    type: 'circle',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'destination'],
+                    paint: {
+                        'circle-radius': 8,
+                        'circle-color': '#0f766e',
+                        'circle-stroke-color': '#ffffff',
+                        'circle-stroke-width': 2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-origin-label',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'origin'],
+                    layout: {
+                        'text-field': ['get', 'label'],
+                        'text-font': ['Noto Sans Regular'],
+                        'text-size': 12,
+                        'text-offset': ['literal', [0, -1.3]],
+                        'text-anchor': 'top',
+                        'text-allow-overlap': true,
+                    },
+                    paint: {
+                        'text-color': '#16212d',
+                        'text-halo-color': '#ffffff',
+                        'text-halo-width': 1.2,
+                    },
+                });
+
+                map.addLayer({
+                    id: 'route-destination-label',
+                    type: 'symbol',
+                    source: 'route-markers',
+                    filter: ['==', ['get', 'kind'], 'destination'],
+                    layout: {
+                        'text-field': ['get', 'label'],
+                        'text-font': ['Noto Sans Regular'],
+                        'text-size': 12,
+                        'text-offset': ['literal', [0, 1.2]],
+                        'text-anchor': 'bottom',
+                        'text-allow-overlap': true,
+                    },
+                    paint: {
+                        'text-color': '#16212d',
+                        'text-halo-color': '#ffffff',
+                        'text-halo-width': 1.2,
+                    },
+                });
+
+                const pointBounds = new maplibregl.LngLatBounds();
+                bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
+                map.fitBounds(pointBounds, { padding: 36, duration: 0 });
+                fuelauApplyTopographicCamera(map);
+
+                markerFeatures
+                    .filter((feature) => feature.properties.kind === 'fuel-stop')
+                    .forEach((feature) => {
+                        const marker = new maplibregl.Marker({
+                            element: createRouteFuelMarkerElement(feature),
+                            anchor: 'bottom',
+                        })
+                            .setLngLat(feature.geometry.coordinates)
+                            .addTo(map);
+                        fuelStopFinderMarkers.push(marker);
+                    });
+            });
+
+            fuelStopFinderMapLegend.innerHTML = [
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
+                '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
+            ].join('');
+        }
+
+        function renderRouteBreakdownInto(targetElement, plan) {
             const rows = [];
             if (plan.reserveNote) {
                 rows.push({
@@ -3358,24 +4365,44 @@ try {
                             });
                         });
                     } else if (piece.type === 'fuel-stop') {
-                        rows.push({
-                            leg: segmentIndex + 1,
-                            type: 'Fuel stop',
-                            instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
-                            distance: '-',
-                            duration: '-',
-                            details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : ''))}`,
-                        });
+                        if (piece.recommendedOnly) {
+                            const detourKm = Number(piece.detourKm || routeFuelCandidateOffRouteKm(piece.station) || 0);
+                            const scope = String(piece.selectionScope || 'strict');
+                            rows.push({
+                                leg: segmentIndex + 1,
+                                type: 'Fuel stop',
+                                instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
+                                distance: '-',
+                                duration: '-',
+                                details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
+                            });
+                        } else {
+                            const stopSuffix = piece.destinationFallback
+                                ? ' destination reserve stop'
+                                : (piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : '')));
+                            rows.push({
+                                leg: segmentIndex + 1,
+                                type: 'Fuel stop',
+                                instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
+                                distance: '-',
+                                duration: '-',
+                                details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${stopSuffix}`,
+                            });
+                        }
                     }
                 });
             });
 
-            if (rows.length === 0) {
-                routeLegs.innerHTML = renderRouteEmpty('Plan a route to see leg breakdowns.');
+            if (!targetElement) {
                 return;
             }
 
-            routeLegs.innerHTML = `
+            if (rows.length === 0) {
+                targetElement.innerHTML = renderRouteEmpty('Plan a route to see leg breakdowns.');
+                return;
+            }
+
+            targetElement.innerHTML = `
                 <table class="route-table">
                     <thead>
                         <tr>
@@ -3405,6 +4432,10 @@ try {
                     </tbody>
                 </table>
             `;
+        }
+
+        function renderRouteBreakdown(plan) {
+            renderRouteBreakdownInto(routeLegs, plan);
         }
 
         async function resolveRouteLocation(query) {
@@ -3545,6 +4576,113 @@ try {
             planRoute();
         }
 
+        function restoreFuelStopFinderState(state) {
+            if (!state || typeof state !== 'object') {
+                return false;
+            }
+
+            resetFuelStopFinder({ clearStorage: false });
+            fuelStopFinderOrigin.value = String(state.origin || '');
+            fuelStopFinderDestination.value = String(state.destination || '');
+            syncFuelStopFinderSelector();
+            if (state.fuel) {
+                fuelStopFinderFuelType.value = String(state.fuel || '');
+            }
+            fuelStopFinderEconomy.value = String(state.economy || '');
+            fuelStopFinderStatus.textContent = state.planned ? 'Restored last planned fuel stop route.' : 'Restored saved fuel stop inputs.';
+            return true;
+        }
+
+        function resetFuelStopFinder(options = {}) {
+            const clearStorage = options.clearStorage !== false;
+            fuelStopFinderOrigin.value = '';
+            fuelStopFinderDestination.value = '';
+            syncFuelStopFinderSelector();
+            fuelStopFinderEconomy.value = '';
+            fuelStopFinderStatus.classList.remove('route-status-warning');
+            fuelStopFinderDetail.textContent = '';
+            fuelStopFinderSummary.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
+            fuelStopFinderRecommendation.innerHTML = '';
+            fuelStopFinderMap.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
+            fuelStopFinderMapLegend.innerHTML = '';
+            fuelStopFinderLegs.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
+            clearFuelStopFinderMarkers();
+            if (fuelStopFinderMapInstance) {
+                try {
+                    fuelStopFinderMapInstance.remove();
+                } catch (error) {
+                    void error;
+                }
+                fuelStopFinderMapInstance = null;
+            }
+            if (clearStorage) {
+                clearFuelStopFinderState();
+            }
+            fuelStopFinderStatus.textContent = 'Enter a trip to find the best fuel stop.';
+        }
+
+        async function planFuelStopFinder() {
+            const originValue = fuelStopFinderOrigin.value.trim();
+            const destinationValue = fuelStopFinderDestination.value.trim();
+            const economy = Number(fuelStopFinderEconomy.value || 0);
+            const fuelQuery = fuelStopFinderFuelSelectedLabel();
+
+            if (originValue === '') {
+                fuelStopFinderStatus.textContent = 'Origin is required.';
+                return;
+            }
+            if (destinationValue === '') {
+                fuelStopFinderStatus.textContent = 'Destination is required.';
+                return;
+            }
+            if (economy <= 0) {
+                fuelStopFinderStatus.textContent = 'Fuel economy must be greater than zero.';
+                return;
+            }
+
+            fuelStopFinderPlan.disabled = true;
+            fuelStopFinderStatus.textContent = 'Resolving locations and searching for the best fuel stop...';
+            fuelStopFinderStatus.classList.remove('route-status-warning');
+            fuelStopFinderDetail.textContent = '';
+            fuelStopFinderSummary.innerHTML = renderRouteEmpty('Planning route...');
+            fuelStopFinderRecommendation.innerHTML = '';
+            fuelStopFinderMap.innerHTML = renderRouteEmpty('Resolving locations...');
+            fuelStopFinderMapLegend.innerHTML = '';
+            fuelStopFinderLegs.innerHTML = renderRouteEmpty('Building route...');
+
+            try {
+                const [origin, destination] = await Promise.all([
+                    resolveRouteLocation(originValue),
+                    resolveRouteLocation(destinationValue),
+                ]);
+                const plan = await buildFuelStopFinderPlan(origin, destination, fuelQuery, economy);
+                const stop = plan.selectedStop || (Array.isArray(plan.segments) ? plan.segments.flatMap((segment) => segment.stops || [])[0] : null);
+                renderFuelStopFinderSummary(plan, stop, fuelQuery);
+                renderFuelStopFinderRecommendation(stop, plan);
+                renderFuelStopFinderMap(plan);
+                renderRouteBreakdownInto(fuelStopFinderLegs, plan);
+                saveFuelStopFinderState(true);
+
+                fuelStopFinderDetail.textContent = `Evaluating ${fuelQuery || 'Diesel'} stations along the route and selecting the cheapest eligible stop with a sensible detour.`;
+                const selectionScope = String(plan?.segments?.[0]?.routePieces?.find((piece) => piece.type === 'fuel-stop')?.selectionScope || 'strict');
+                fuelStopFinderStatus.classList.toggle('route-status-warning', selectionScope !== 'strict');
+                fuelStopFinderStatus.textContent = stop
+                    ? `Selected ${routeFuelStationDisplay(stop) || stop.station_name || 'a fuel stop'} for this route${selectionScope !== 'strict' ? ` using the ${selectionScope} detour window.` : '.'}`
+                    : 'No eligible fuel stop was selected for this route.';
+            } catch (error) {
+                fuelStopFinderStatus.classList.remove('route-status-warning');
+                fuelStopFinderStatus.textContent = error.message;
+                fuelStopFinderSummary.innerHTML = renderRouteEmpty(error.message);
+                fuelStopFinderRecommendation.innerHTML = '';
+                fuelStopFinderMap.innerHTML = renderRouteEmpty(error.message);
+                fuelStopFinderMapLegend.innerHTML = '';
+                fuelStopFinderLegs.innerHTML = renderRouteEmpty(error.message);
+                fuelStopFinderDetail.textContent = '';
+            } finally {
+                fuelStopFinderPlan.disabled = false;
+            }
+        }
+
         function formatBytes(bytes) {
             const value = Number(bytes || 0);
             if (value < 1024) {
@@ -3565,6 +4703,36 @@ try {
         function formatPrice(value) {
             const amount = Number(value || 0);
             return `${amount.toFixed(1)} c/L`;
+        }
+
+        function fuelRecordHasRenderablePrice(value) {
+            const price = Number(value);
+            return Number.isFinite(price) && price > 0;
+        }
+
+        function fuelRowsForRendering(rows) {
+            return (Array.isArray(rows) ? rows : []).filter((row) => fuelRecordHasRenderablePrice(row?.price));
+        }
+
+        function snapshotPriceMovementMarkup(row) {
+            const currentPrice = Number(row?.price);
+            const previousPriceRaw = row?.previous_price;
+            if (previousPriceRaw === null || previousPriceRaw === undefined || previousPriceRaw === '') {
+                return '';
+            }
+
+            const previousPrice = Number(previousPriceRaw);
+            if (!Number.isFinite(currentPrice) || !Number.isFinite(previousPrice) || currentPrice === previousPrice) {
+                return '';
+            }
+
+            const isDown = currentPrice < previousPrice;
+            const delta = Math.abs(currentPrice - previousPrice).toFixed(1);
+            const label = isDown
+                ? `Down ${delta} c/L from the last reported price`
+                : `Up ${delta} c/L from the last reported price`;
+
+            return `<span class="snapshot-movement ${isDown ? 'snapshot-movement-down' : 'snapshot-movement-up'}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span class="snapshot-movement-arrow" aria-hidden="true"></span></span>`;
         }
 
         function formatCompactDate(value) {
@@ -3690,6 +4858,7 @@ try {
                 ? labelFuel
                 : (options.find((item) => item.value === desiredDefaultFuel)?.value || '');
             setSelectOptions(fuelType, options, fallbackFuel);
+            syncFuelStopFinderSelector();
         }
 
         function selectedFuelFilters() {
@@ -3948,7 +5117,8 @@ try {
         }
 
         function renderSnapshot(rows) {
-            if (!Array.isArray(rows) || rows.length === 0) {
+            const visibleRows = fuelRowsForRendering(rows);
+            if (visibleRows.length === 0) {
                 fuelSnapshot.innerHTML = chartEmpty('No current prices available for this filter.');
                 return;
             }
@@ -3963,11 +5133,11 @@ try {
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows.slice(0, 8).map((row) => `
+                        ${visibleRows.slice(0, 8).map((row) => `
                             <tr>
                                 <td>${escapeHtml(row.station_name)}<br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
                                 <td>${escapeHtml(row.fuel_name)}</td>
-                                <td><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span><br><span>${escapeHtml(formatDateTime(row.updated_at))}</span></td>
+                                <td><span class="snapshot-price-row"><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span>${snapshotPriceMovementMarkup(row)}</span><br><span>${escapeHtml(formatDateTime(row.updated_at))}</span></td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -4041,12 +5211,13 @@ try {
         }
 
         function fuelMapFeatureCollection(rows) {
-            const prices = rows
+            const visibleRows = fuelRowsForRendering(rows);
+            const prices = visibleRows
                 .map((row) => Number(row.price))
                 .filter((value) => Number.isFinite(value));
             const minPrice = prices.length > 0 ? Math.min(...prices) : null;
             const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
-            const features = rows
+            const features = visibleRows
                 .filter((row) => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)))
                 .map((row) => ({
                     type: 'Feature',
@@ -4080,7 +5251,7 @@ try {
             const maxStations = Array.isArray(highlight?.maxStations) ? highlight.maxStations : [];
             const features = [];
 
-            minStations.forEach((row) => {
+            minStations.filter((row) => fuelRecordHasRenderablePrice(row?.price)).forEach((row) => {
                 features.push({
                     type: 'Feature',
                     properties: {
@@ -4101,7 +5272,7 @@ try {
                 });
             });
 
-            maxStations.forEach((row) => {
+            maxStations.filter((row) => fuelRecordHasRenderablePrice(row?.price)).forEach((row) => {
                 features.push({
                     type: 'Feature',
                     properties: {
@@ -4173,19 +5344,36 @@ try {
                 fuelMapAutoRefreshSuppressed = true;
                 fuelMapInstance.easeTo({
                     center: only.geometry.coordinates,
-                    zoom: 12,
+                    zoom: 15,
                     duration: 400,
                 });
                 window.setTimeout(() => {
                     fuelMapAutoRefreshSuppressed = false;
                 }, 700);
             } else if (!preserveViewport && focusFeatures.length > 1) {
-                const bounds = new maplibregl.LngLatBounds();
-                focusFeatures.forEach((feature) => {
-                    bounds.extend(feature.geometry.coordinates);
-                });
                 fuelMapAutoRefreshSuppressed = true;
-                fuelMapInstance.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 400 });
+                if (fuelauIsTopographicStyle()) {
+                    const bounds = new maplibregl.LngLatBounds();
+                    focusFeatures.forEach((feature) => {
+                        bounds.extend(feature.geometry.coordinates);
+                    });
+                    const center = bounds.getCenter();
+                    fuelMapInstance.easeTo({
+                        center: [center.lng, center.lat],
+                        zoom: 13.2,
+                        duration: 400,
+                    });
+                } else {
+                    const bounds = new maplibregl.LngLatBounds();
+                    focusFeatures.forEach((feature) => {
+                        bounds.extend(feature.geometry.coordinates);
+                    });
+                    fuelMapInstance.fitBounds(bounds, {
+                        padding: 50,
+                        maxZoom: 12,
+                        duration: 400,
+                    });
+                }
                 window.setTimeout(() => {
                     fuelMapAutoRefreshSuppressed = false;
                 }, 700);
@@ -4239,7 +5427,7 @@ try {
 
             try {
                 const payload = await apiRequest(`/api/fuel/current?${request.params.toString()}&limit=500`);
-                const rows = fuelMapRowsInsideBounds(Array.isArray(payload.rows) ? payload.rows : [], request.bounds);
+                const rows = fuelRowsForRendering(fuelMapRowsInsideBounds(Array.isArray(payload.rows) ? payload.rows : [], request.bounds));
                 fuelMapRows = rows;
                 fuelMapLegendContext = 'Visible map area';
                 renderFuelMap(fuelMapRows, null, true);
@@ -4272,7 +5460,8 @@ try {
                 return;
             }
 
-            const collection = fuelMapFeatureCollection(Array.isArray(rows) ? rows : []);
+            const visibleRows = fuelRowsForRendering(rows);
+            const collection = fuelMapFeatureCollection(visibleRows);
             const highlightCollection = fuelMapHighlightCollection(highlight);
             if (!window.maplibregl) {
                 fuelMap.innerHTML = renderRouteEmpty('Fuel map unavailable in this browser.');
@@ -4295,13 +5484,18 @@ try {
                     style: styleUrl,
                     center: [134.0, -25.0],
                     zoom: 4,
+                    pitch: 0,
+                    bearing: 0,
                     attributionControl: true,
                     preserveDrawingBuffer: false,
                 });
+                window.fuelauFuelMapInstance = fuelMapInstance;
                 fuelMapInstance.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
                 fuelMapPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: 16 });
 
                 fuelMapInstance.on('load', () => {
+                    fuelauAddTopographicEnhancements(fuelMapInstance);
+                    fuelauApplyTopographicCamera(fuelMapInstance);
                     fuelMapReady = true;
                     if (!fuelMapInstance.getSource('fuel-stations')) {
                         fuelMapInstance.addSource('fuel-stations', {
@@ -4430,7 +5624,7 @@ try {
                     apiRequest(`/api/fuel/history?${filters.toString()}&period=monthly`),
                 ]);
 
-                fuelCurrentRows = Array.isArray(current.rows) ? current.rows : [];
+                fuelCurrentRows = fuelRowsForRendering(Array.isArray(current.rows) ? current.rows : []);
                 fuelMapRows = fuelCurrentRows;
                 fuelMapLegendContext = '';
                 if (fuelMapAutoRefreshTimer) {
@@ -4442,7 +5636,7 @@ try {
                 renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
                 renderSnapshot(fuelCurrentRows);
                 renderFuelMap(fuelMapRows);
-                fuelStatus.textContent = `Loaded ${Array.isArray(current.rows) ? current.rows.length : 0} current records for the selected filter.`;
+                fuelStatus.textContent = `Loaded ${fuelCurrentRows.length} current records for the selected filter.`;
             } catch (error) {
                 fuelStatus.textContent = error.message;
                 fuelWeeklyChart.innerHTML = chartEmpty(error.message);
@@ -4618,6 +5812,15 @@ try {
         routeTest.addEventListener('click', loadRouteTestCities);
         routeReset.addEventListener('click', resetRoutePlanner);
 
+        fuelStopFinderPlan.addEventListener('click', planFuelStopFinder);
+        fuelStopFinderReset.addEventListener('click', resetFuelStopFinder);
+        fuelStopFinderOrigin.addEventListener('input', () => saveFuelStopFinderState(false));
+        fuelStopFinderDestination.addEventListener('input', () => saveFuelStopFinderState(false));
+        fuelStopFinderFuelType.addEventListener('change', () => saveFuelStopFinderState(false));
+        fuelStopFinderEconomy.addEventListener('input', () => saveFuelStopFinderState(false));
+        attachRouteAutocomplete(fuelStopFinderOrigin);
+        attachRouteAutocomplete(fuelStopFinderDestination);
+
         fuelState.addEventListener('change', handleFuelFilterChange);
         fuelRegion.addEventListener('change', async () => {
             persistFuelRegion(fuelRegionSelectedValue());
@@ -4639,6 +5842,7 @@ try {
         (async () => {
             const savedActiveTab = loadActiveTab();
             resetRoutePlanner({ clearStorage: false });
+            resetFuelStopFinder({ clearStorage: false });
             syncFuelRegions();
             await loadFuelDashboard();
 
@@ -4647,6 +5851,17 @@ try {
                 restoreRoutePlannerState(savedRouteState);
             }
 
+            const savedFuelStopFinderState = loadFuelStopFinderState();
+            if (savedFuelStopFinderState) {
+                restoreFuelStopFinderState(savedFuelStopFinderState);
+            }
+
+            if (savedActiveTab === 'fuel-stop-finder-tab') {
+                activateTab('fuel-stop-finder-tab');
+                if (savedFuelStopFinderState && savedFuelStopFinderState.planned) {
+                    await planFuelStopFinder();
+                }
+            }
             if (savedActiveTab === 'route-planning-tab') {
                 activateTab('route-planning-tab');
                 if (savedRouteState && savedRouteState.planned) {

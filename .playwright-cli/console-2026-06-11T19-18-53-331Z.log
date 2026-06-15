@@ -1,0 +1,15 @@
+[      97ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:18080/favicon.ico:0
+[    3006ms] [WARNING] [.WebGL-0x68c0012da00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    3016ms] [WARNING] You are using the same source for a hillshade layer and for 3D terrain. Please consider using two separate sources to improve rendering quality. @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[    3494ms] [WARNING] [.WebGL-0x68c0012da00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    3627ms] [WARNING] [.WebGL-0x68c0012da00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels @ http://127.0.0.1:18080/:0
+[    3627ms] [ERROR] Error: Source layer "building" does not exist on source "australia" as specified by style layer "building-3d".
+    at Ai._validateLayer (http://127.0.0.1:18080/resources/maplibre-gl.js:46:294752)
+    at Ai.<anonymous> (http://127.0.0.1:18080/resources/maplibre-gl.js:46:288348)
+    at Ai.fire (http://127.0.0.1:18080/resources/maplibre-gl.js:42:12516)
+    at Ae.fire (http://127.0.0.1:18080/resources/maplibre-gl.js:42:12819)
+    at G.fire (http://127.0.0.1:18080/resources/maplibre-gl.js:42:12819)
+    at G.<anonymous> (http://127.0.0.1:18080/resources/maplibre-gl.js:46:28445)
+    at Generator.next (<anonymous>)
+    at o (http://127.0.0.1:18080/resources/maplibre-gl.js:42:139) @ http://127.0.0.1:18080/resources/maplibre-gl.js:41
+[    3840ms] [WARNING] [.WebGL-0x68c0012da00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat) @ http://127.0.0.1:18080/:0

@@ -166,9 +166,28 @@ services:
       - --download
       - --area=australia
       - --output=/data/australia.mbtiles
+      - --maxzoom=13
+      - --render_maxzoom=13
+      - --threads=2
       - --force
     volumes:
       - ./var/docker/map-tiles:/data
+
+  terrain-build:
+    image: python:3.12-slim
+    profiles:
+      - map-setup
+    environment:
+      TZ: "${TZ:-Australia/Brisbane}"
+    command:
+      - python
+      - /workspace/scripts/build-terrain-mbtiles.py
+      - --output=/data/terrain.mbtiles
+      - --workers=4
+      - --max-zoom=8
+    volumes:
+      - ./var/docker/map-tiles:/data
+      - ./scripts:/workspace/scripts:ro
 
   map-server:
     image: maptiler/tileserver-gl-light:v5.6.0
@@ -178,6 +197,9 @@ services:
       app:
         condition: service_started
       map-build:
+        condition: service_completed_successfully
+        required: false
+      terrain-build:
         condition: service_completed_successfully
         required: false
     command:
@@ -212,7 +234,8 @@ services:
       - -c
       - |
         mkdir -p var/docker/app-logs
-        printf '%s\n' "10 3 * * 0 cd $${FUELAU_HOST_PROJECT_ROOT} && docker compose --profile map-setup run --rm map-build >> var/docker/app-logs/map_build.log 2>&1" > /etc/crontabs/root
+        printf '%s\n' "5 3 * * 0 cd $${FUELAU_HOST_PROJECT_ROOT} && docker compose --profile map-setup run --rm terrain-build >> var/docker/app-logs/terrain_build.log 2>&1" > /etc/crontabs/root
+        printf '%s\n' "10 3 * * 0 cd $${FUELAU_HOST_PROJECT_ROOT} && docker compose --profile map-setup run --rm map-build >> var/docker/app-logs/map_build.log 2>&1" >> /etc/crontabs/root
         crond -f -l 8
     volumes:
       - "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}:${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"

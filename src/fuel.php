@@ -125,6 +125,15 @@ function fuelauQldFuelRows(PDO $pdo, array $filters): array
             f.name AS fuel_name,
             c.price AS price_raw,
             ROUND(c.price / 10, 1) AS price,
+            ROUND((
+                SELECT h.price
+                FROM fpq_site_prices_history h
+                WHERE h.site_id = c.site_id
+                  AND h.fuel_id = c.fuel_id
+                  AND h.transaction_date_utc < c.transaction_date_utc
+                ORDER BY h.transaction_date_utc DESC
+                LIMIT 1
+            ) / 10, 1) AS previous_price,
             c.transaction_date_utc AS updated_at,
             {$distanceSelect}
         FROM fpq_site_prices_current c
@@ -178,6 +187,15 @@ function fuelauSaFuelRows(PDO $pdo, array $filters): array
             f.name AS fuel_name,
             c.price AS price_raw,
             ROUND(c.price / 10, 1) AS price,
+            ROUND((
+                SELECT h.price
+                FROM sa_site_prices_history h
+                WHERE h.station_id = c.station_id
+                  AND h.fuel_id = c.fuel_id
+                  AND h.transaction_date_utc < c.transaction_date_utc
+                ORDER BY h.transaction_date_utc DESC
+                LIMIT 1
+            ) / 10, 1) AS previous_price,
             c.transaction_date_utc AS updated_at,
             {$distanceSelect}
         FROM sa_site_prices_current c
@@ -234,6 +252,16 @@ function fuelauNswFuelRows(PDO $pdo, array $filters): array
             f.name AS fuel_name,
             c.price AS price_raw,
             c.price AS price,
+            (
+                SELECT h.price
+                FROM nsw_site_prices_history h
+                WHERE h.state = c.state
+                  AND h.station_code = c.station_code
+                  AND h.fuel_code = c.fuel_code
+                  AND h.last_updated_at < c.last_updated_at
+                ORDER BY h.last_updated_at DESC
+                LIMIT 1
+            ) AS previous_price,
             c.last_updated_at AS updated_at,
             {$distanceSelect}
         FROM nsw_site_prices_current c
@@ -290,6 +318,15 @@ function fuelauVicFuelRows(PDO $pdo, array $filters): array
             f.name AS fuel_name,
             c.price AS price_raw,
             c.price AS price,
+            (
+                SELECT h.price
+                FROM vic_site_prices_history h
+                WHERE h.station_id = c.station_id
+                  AND h.fuel_code = c.fuel_code
+                  AND h.updated_at_utc < c.updated_at_utc
+                ORDER BY h.updated_at_utc DESC
+                LIMIT 1
+            ) AS previous_price,
             c.updated_at_utc AS updated_at,
             {$distanceSelect}
         FROM vic_site_prices_current c
@@ -352,6 +389,15 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
             c.price AS price_raw,
             c.price AS price,
             c.is_available AS is_available,
+            (
+                SELECT h.price
+                FROM nt_site_prices_history h
+                WHERE h.station_id = c.station_id
+                  AND h.fuel_code = c.fuel_code
+                  AND h.observed_at_utc < c.observed_at_utc
+                ORDER BY h.observed_at_utc DESC
+                LIMIT 1
+            ) AS previous_price,
             c.observed_at_utc AS updated_at,
             {$distanceSelect}
         FROM nt_site_prices_current c

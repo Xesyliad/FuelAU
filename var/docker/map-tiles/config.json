@@ -10,11 +10,25 @@
   "data": {
     "australia": {
       "mbtiles": "australia.mbtiles"
+    },
+    "terrain": {
+      "mbtiles": "terrain.mbtiles"
     }
   },
   "styles": {
     "basic-preview": {
       "style": "basic-preview/style.json",
+      "tilejson": {
+        "bounds": [
+          -180,
+          -85.0511287798066,
+          180,
+          85.0511287798066
+        ]
+      }
+    },
+    "topo-3d": {
+      "style": "topo-3d/style.json",
       "tilejson": {
         "bounds": [
           -180,

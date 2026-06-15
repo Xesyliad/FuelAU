@@ -1,0 +1,379 @@
+- main [ref=e2]:
+  - navigation "Primary" [ref=e3]:
+    - tab "Fuel Prices" [ref=e4] [cursor=pointer]
+    - tab "Fuel Stop Finder" [selected] [ref=e5] [cursor=pointer]
+    - tab "Route Planning" [ref=e6] [cursor=pointer]
+    - tab "Container Management" [ref=e7] [cursor=pointer]
+  - tabpanel "Fuel Stop Finder" [ref=e358]:
+    - heading "Fuel Stop Finder" [level=1] [ref=e359]
+    - paragraph [ref=e360]: Enter an origin, destination, fuel type, and fuel economy. The planner will find the best station to fill up at between the two points while keeping the route detour sensible.
+    - generic [ref=e361]:
+      - generic [ref=e362]:
+        - heading "Trip Inputs" [level=2] [ref=e363]
+        - paragraph [ref=e364]: Origin, destination, fuel type, and fuel economy are required.
+        - generic [ref=e365]:
+          - generic [ref=e366]:
+            - generic [ref=e367]: Origin
+            - textbox "Origin" [ref=e369]:
+              - /placeholder: Enter an origin
+              - text: Bentley Park Queensland 4869
+          - generic [ref=e370]:
+            - generic [ref=e371]: Destination
+            - textbox "Destination" [ref=e373]:
+              - /placeholder: Enter a destination
+              - text: Cairns North Queensland 4870
+          - generic [ref=e374]:
+            - generic [ref=e375]: Fuel Type
+            - combobox "Fuel Type" [ref=e376]:
+              - option "Bio-Diesel 20"
+              - option "Compressed natural gas"
+              - option "Diesel" [selected]
+              - option "Diesel/Premium Diesel"
+              - option "LPG"
+              - option "LRP"
+              - option "Liquefied natural gas"
+              - option "OPAL"
+              - option "Premium Diesel"
+              - option "Premium Unleaded 95"
+              - option "Premium Unleaded 98"
+              - option "Premium e5"
+              - option "ULSD"
+              - option "Unleaded"
+              - option "e10"
+              - option "e10/Unleaded"
+              - option "e85"
+          - generic [ref=e377]:
+            - generic [ref=e378]: Fuel Economy (L/100km)
+            - spinbutton "Fuel Economy (L/100km)" [ref=e379]: "11.5"
+        - generic [ref=e380]:
+          - button "Find Best Stop" [ref=e381] [cursor=pointer]
+          - button "Reset" [ref=e382] [cursor=pointer]
+        - generic [ref=e383]: Selected OOM Energy Cairns Central - Cnr Martyn & Florence St for this route.
+        - generic [ref=e384]: Evaluating Diesel stations along the route and selecting the cheapest eligible stop with a sensible detour.
+      - generic [ref=e385]:
+        - heading "Trip Summary" [level=2] [ref=e386]
+        - generic [ref=e387]:
+          - article [ref=e414]:
+            - strong [ref=e415]: 16 km
+            - generic [ref=e416]: Distance
+          - article [ref=e417]:
+            - strong [ref=e418]: 20m
+            - generic [ref=e419]: Drive Time
+          - article [ref=e420]:
+            - strong [ref=e421]: 1.8 L
+            - generic [ref=e422]: Fuel Used
+          - article [ref=e423]:
+            - strong [ref=e424]: Diesel
+            - generic [ref=e425]: Fuel Type
+          - article [ref=e426]:
+            - strong [ref=e427]: OOM Energy Cairns Central - Cnr Martyn & Florence St
+            - generic [ref=e428]: Best Stop
+          - article [ref=e429]:
+            - strong [ref=e430]: $1.93/L
+            - generic [ref=e431]: Stop Price
+          - article [ref=e432]:
+            - strong [ref=e433]: 0.2 km
+            - generic [ref=e434]: Route Detour
+        - generic [ref=e436]:
+          - strong [ref=e437]: OOM Energy Cairns Central - Cnr Martyn & Florence St
+          - generic [ref=e438]: Cnr Martyn & Florence St
+          - generic [ref=e439]: "Price: $1.93/L"
+          - generic [ref=e440]: "Route detour: 0.2 km"
+          - generic [ref=e441]: Selected because it is the cheapest eligible stop within the strict detour window.
+      - generic [ref=e389]:
+        - heading "Route Map" [level=2] [ref=e390]
+        - generic [ref=e391]:
+          - region "Map" [ref=e442]
+          - generic:
+            - generic [ref=e443]:
+              - button "Zoom in" [ref=e444] [cursor=pointer]
+              - button "Zoom out" [ref=e446] [cursor=pointer]
+              - button "Drag to rotate map, click to reset north" [ref=e448]
+            - group [ref=e450]:
+              - generic "Toggle attribution" [ref=e451] [cursor=pointer]
+              - generic [ref=e452]:
+                - text: Elevation tiles from AWS Open Data Terrain Tiles |
+                - link "MapLibre" [ref=e453] [cursor=pointer]:
+                  - /url: https://maplibre.org/
+                - text: "|"
+                - link "© OpenMapTiles" [ref=e454] [cursor=pointer]:
+                  - /url: https://www.openmaptiles.org/
+                - link "© OpenStreetMap contributors" [ref=e455] [cursor=pointer]:
+                  - /url: https://www.openstreetmap.org/copyright
+        - generic [ref=e456]:
+          - generic [ref=e457]: Origin
+          - generic [ref=e459]: Destination
+          - generic [ref=e461]: Fuel stop
+      - generic [ref=e393]:
+        - heading "Route Breakdown" [level=2] [ref=e394]
+        - table [ref=e463]:
+          - rowgroup [ref=e464]:
+            - row "Leg Type Instruction Distance Duration Details" [ref=e465]:
+              - columnheader "Leg" [ref=e466]
+              - columnheader "Type" [ref=e467]
+              - columnheader "Instruction" [ref=e468]
+              - columnheader "Distance" [ref=e469]
+              - columnheader "Duration" [ref=e470]
+              - columnheader "Details" [ref=e471]
+          - rowgroup [ref=e472]:
+            - row "1 Turn Depart onto Guthrie Close 5 m 0m 1 / 28" [ref=e473]:
+              - cell "1" [ref=e474]
+              - cell "Turn" [ref=e475]
+              - cell "Depart onto Guthrie Close" [ref=e476]:
+                - generic [ref=e477]: Depart onto Guthrie Close
+              - cell "5 m" [ref=e478]
+              - cell "0m" [ref=e479]
+              - cell "1 / 28" [ref=e480]:
+                - generic [ref=e481]: 1 / 28
+            - row "1 Turn Turn left onto Robert Road 1.5 km 2m 2 / 28" [ref=e482]:
+              - cell "1" [ref=e483]
+              - cell "Turn" [ref=e484]
+              - cell "Turn left onto Robert Road" [ref=e485]:
+                - generic [ref=e486]: Turn left onto Robert Road
+              - cell "1.5 km" [ref=e487]
+              - cell "2m" [ref=e488]
+              - cell "2 / 28" [ref=e489]:
+                - generic [ref=e490]: 2 / 28
+            - row "1 Turn Turn straight onto Robert Road 453 m 0m 3 / 28" [ref=e491]:
+              - cell "1" [ref=e492]
+              - cell "Turn" [ref=e493]
+              - cell "Turn straight onto Robert Road" [ref=e494]:
+                - generic [ref=e495]: Turn straight onto Robert Road
+              - cell "453 m" [ref=e496]
+              - cell "0m" [ref=e497]
+              - cell "3 / 28" [ref=e498]:
+                - generic [ref=e499]: 3 / 28
+            - row "1 Turn Turn left onto Hardy Road 506 m 0m 4 / 28" [ref=e500]:
+              - cell "1" [ref=e501]
+              - cell "Turn" [ref=e502]
+              - cell "Turn left onto Hardy Road" [ref=e503]:
+                - generic [ref=e504]: Turn left onto Hardy Road
+              - cell "506 m" [ref=e505]
+              - cell "0m" [ref=e506]
+              - cell "4 / 28" [ref=e507]:
+                - generic [ref=e508]: 4 / 28
+            - row "1 Turn Take exit 2 onto Hardy Road 41 m 0m 5 / 28" [ref=e509]:
+              - cell "1" [ref=e510]
+              - cell "Turn" [ref=e511]
+              - cell "Take exit 2 onto Hardy Road" [ref=e512]:
+                - generic [ref=e513]: Take exit 2 onto Hardy Road
+              - cell "41 m" [ref=e514]
+              - cell "0m" [ref=e515]
+              - cell "5 / 28" [ref=e516]:
+                - generic [ref=e517]: 5 / 28
+            - row "1 Turn Turn left onto Hardy Road 407 m 0m 6 / 28" [ref=e518]:
+              - cell "1" [ref=e519]
+              - cell "Turn" [ref=e520]
+              - cell "Turn left onto Hardy Road" [ref=e521]:
+                - generic [ref=e522]: Turn left onto Hardy Road
+              - cell "407 m" [ref=e523]
+              - cell "0m" [ref=e524]
+              - cell "6 / 28" [ref=e525]:
+                - generic [ref=e526]: 6 / 28
+            - row "1 Turn Take exit 2 onto Hardy Road 38 m 0m 7 / 28" [ref=e527]:
+              - cell "1" [ref=e528]
+              - cell "Turn" [ref=e529]
+              - cell "Take exit 2 onto Hardy Road" [ref=e530]:
+                - generic [ref=e531]: Take exit 2 onto Hardy Road
+              - cell "38 m" [ref=e532]
+              - cell "0m" [ref=e533]
+              - cell "7 / 28" [ref=e534]:
+                - generic [ref=e535]: 7 / 28
+            - row "1 Turn Turn left onto Hardy Road 885 m 1m 8 / 28" [ref=e536]:
+              - cell "1" [ref=e537]
+              - cell "Turn" [ref=e538]
+              - cell "Turn left onto Hardy Road" [ref=e539]:
+                - generic [ref=e540]: Turn left onto Hardy Road
+              - cell "885 m" [ref=e541]
+              - cell "1m" [ref=e542]
+              - cell "8 / 28" [ref=e543]:
+                - generic [ref=e544]: 8 / 28
+            - row "1 Turn Take exit 2 onto Foster Road 54 m 0m 9 / 28" [ref=e545]:
+              - cell "1" [ref=e546]
+              - cell "Turn" [ref=e547]
+              - cell "Take exit 2 onto Foster Road" [ref=e548]:
+                - generic [ref=e549]: Take exit 2 onto Foster Road
+              - cell "54 m" [ref=e550]
+              - cell "0m" [ref=e551]
+              - cell "9 / 28" [ref=e552]:
+                - generic [ref=e553]: 9 / 28
+            - row "1 Turn Turn slight left onto Foster Road 318 m 0m 10 / 28" [ref=e554]:
+              - cell "1" [ref=e555]
+              - cell "Turn" [ref=e556]
+              - cell "Turn slight left onto Foster Road" [ref=e557]:
+                - generic [ref=e558]: Turn slight left onto Foster Road
+              - cell "318 m" [ref=e559]
+              - cell "0m" [ref=e560]
+              - cell "10 / 28" [ref=e561]:
+                - generic [ref=e562]: 10 / 28
+            - row "1 Turn Take exit 1 onto Foster Road 63 m 0m 11 / 28" [ref=e563]:
+              - cell "1" [ref=e564]
+              - cell "Turn" [ref=e565]
+              - cell "Take exit 1 onto Foster Road" [ref=e566]:
+                - generic [ref=e567]: Take exit 1 onto Foster Road
+              - cell "63 m" [ref=e568]
+              - cell "0m" [ref=e569]
+              - cell "11 / 28" [ref=e570]:
+                - generic [ref=e571]: 11 / 28
+            - row "1 Turn Turn straight onto Foster Road 59 m 0m 12 / 28" [ref=e572]:
+              - cell "1" [ref=e573]
+              - cell "Turn" [ref=e574]
+              - cell "Turn straight onto Foster Road" [ref=e575]:
+                - generic [ref=e576]: Turn straight onto Foster Road
+              - cell "59 m" [ref=e577]
+              - cell "0m" [ref=e578]
+              - cell "12 / 28" [ref=e579]:
+                - generic [ref=e580]: 12 / 28
+            - row "1 Turn Turn slight left onto Bruce Highway Onramp 391 m 0m 13 / 28" [ref=e581]:
+              - cell "1" [ref=e582]
+              - cell "Turn" [ref=e583]
+              - cell "Turn slight left onto Bruce Highway Onramp" [ref=e584]:
+                - generic [ref=e585]: Turn slight left onto Bruce Highway Onramp
+              - cell "391 m" [ref=e586]
+              - cell "0m" [ref=e587]
+              - cell "13 / 28" [ref=e588]:
+                - generic [ref=e589]: 13 / 28
+            - row "1 Turn Turn slight right onto Bruce Highway 2.8 km 2m 14 / 28" [ref=e590]:
+              - cell "1" [ref=e591]
+              - cell "Turn" [ref=e592]
+              - cell "Turn slight right onto Bruce Highway" [ref=e593]:
+                - generic [ref=e594]: Turn slight right onto Bruce Highway
+              - cell "2.8 km" [ref=e595]
+              - cell "2m" [ref=e596]
+              - cell "14 / 28" [ref=e597]:
+                - generic [ref=e598]: 14 / 28
+            - row "1 Turn Turn slight left onto Ray Jones Drive off ramp 3.0 km 3m 15 / 28" [ref=e599]:
+              - cell "1" [ref=e600]
+              - cell "Turn" [ref=e601]
+              - cell "Turn slight left onto Ray Jones Drive off ramp" [ref=e602]:
+                - generic [ref=e603]: Turn slight left onto Ray Jones Drive off ramp
+              - cell "3.0 km" [ref=e604]
+              - cell "3m" [ref=e605]
+              - cell "15 / 28" [ref=e606]:
+                - generic [ref=e607]: 15 / 28
+            - row "1 Turn Turn left onto Aumuller Street 1.2 km 1m 16 / 28" [ref=e608]:
+              - cell "1" [ref=e609]
+              - cell "Turn" [ref=e610]
+              - cell "Turn left onto Aumuller Street" [ref=e611]:
+                - generic [ref=e612]: Turn left onto Aumuller Street
+              - cell "1.2 km" [ref=e613]
+              - cell "1m" [ref=e614]
+              - cell "16 / 28" [ref=e615]:
+                - generic [ref=e616]: 16 / 28
+            - row "1 Turn Take exit 2 onto Aumuller Street 31 m 0m 17 / 28" [ref=e617]:
+              - cell "1" [ref=e618]
+              - cell "Turn" [ref=e619]
+              - cell "Take exit 2 onto Aumuller Street" [ref=e620]:
+                - generic [ref=e621]: Take exit 2 onto Aumuller Street
+              - cell "31 m" [ref=e622]
+              - cell "0m" [ref=e623]
+              - cell "17 / 28" [ref=e624]:
+                - generic [ref=e625]: 17 / 28
+            - row "1 Turn Turn straight onto Aumuller Street 442 m 0m 18 / 28" [ref=e626]:
+              - cell "1" [ref=e627]
+              - cell "Turn" [ref=e628]
+              - cell "Turn straight onto Aumuller Street" [ref=e629]:
+                - generic [ref=e630]: Turn straight onto Aumuller Street
+              - cell "442 m" [ref=e631]
+              - cell "0m" [ref=e632]
+              - cell "18 / 28" [ref=e633]:
+                - generic [ref=e634]: 18 / 28
+            - row "1 Turn Turn right onto Mulgrave Road 1.1 km 1m 19 / 28" [ref=e635]:
+              - cell "1" [ref=e636]
+              - cell "Turn" [ref=e637]
+              - cell "Turn right onto Mulgrave Road" [ref=e638]:
+                - generic [ref=e639]: Turn right onto Mulgrave Road
+              - cell "1.1 km" [ref=e640]
+              - cell "1m" [ref=e641]
+              - cell "19 / 28" [ref=e642]:
+                - generic [ref=e643]: 19 / 28
+            - row "1 Turn Turn left onto Draper Street 938 m 1m 20 / 28" [ref=e644]:
+              - cell "1" [ref=e645]
+              - cell "Turn" [ref=e646]
+              - cell "Turn left onto Draper Street" [ref=e647]:
+                - generic [ref=e648]: Turn left onto Draper Street
+              - cell "938 m" [ref=e649]
+              - cell "1m" [ref=e650]
+              - cell "20 / 28" [ref=e651]:
+                - generic [ref=e652]: 20 / 28
+            - row "1 Turn Turn right onto Grove Street 101 m 0m 21 / 28" [ref=e653]:
+              - cell "1" [ref=e654]
+              - cell "Turn" [ref=e655]
+              - cell "Turn right onto Grove Street" [ref=e656]:
+                - generic [ref=e657]: Turn right onto Grove Street
+              - cell "101 m" [ref=e658]
+              - cell "0m" [ref=e659]
+              - cell "21 / 28" [ref=e660]:
+                - generic [ref=e661]: 21 / 28
+            - row "1 Turn Take exit 2 onto Grove Street 31 m 0m 22 / 28" [ref=e662]:
+              - cell "1" [ref=e663]
+              - cell "Turn" [ref=e664]
+              - cell "Take exit 2 onto Grove Street" [ref=e665]:
+                - generic [ref=e666]: Take exit 2 onto Grove Street
+              - cell "31 m" [ref=e667]
+              - cell "0m" [ref=e668]
+              - cell "22 / 28" [ref=e669]:
+                - generic [ref=e670]: 22 / 28
+            - row "1 Turn Turn slight left onto Grove Street 350 m 0m 23 / 28" [ref=e671]:
+              - cell "1" [ref=e672]
+              - cell "Turn" [ref=e673]
+              - cell "Turn slight left onto Grove Street" [ref=e674]:
+                - generic [ref=e675]: Turn slight left onto Grove Street
+              - cell "350 m" [ref=e676]
+              - cell "0m" [ref=e677]
+              - cell "23 / 28" [ref=e678]:
+                - generic [ref=e679]: 23 / 28
+            - row "1 Turn Take exit 1 onto McLeod Street 3 m 0m 24 / 28" [ref=e680]:
+              - cell "1" [ref=e681]
+              - cell "Turn" [ref=e682]
+              - cell "Take exit 1 onto McLeod Street" [ref=e683]:
+                - generic [ref=e684]: Take exit 1 onto McLeod Street
+              - cell "3 m" [ref=e685]
+              - cell "0m" [ref=e686]
+              - cell "24 / 28" [ref=e687]:
+                - generic [ref=e688]: 24 / 28
+            - row "1 Turn Turn slight left onto McLeod Street 960 m 1m 25 / 28" [ref=e689]:
+              - cell "1" [ref=e690]
+              - cell "Turn" [ref=e691]
+              - cell "Turn slight left onto McLeod Street" [ref=e692]:
+                - generic [ref=e693]: Turn slight left onto McLeod Street
+              - cell "960 m" [ref=e694]
+              - cell "1m" [ref=e695]
+              - cell "25 / 28" [ref=e696]:
+                - generic [ref=e697]: 25 / 28
+            - row "1 Turn Turn left onto Smith Street 111 m 0m 26 / 28" [ref=e698]:
+              - cell "1" [ref=e699]
+              - cell "Turn" [ref=e700]
+              - cell "Turn left onto Smith Street" [ref=e701]:
+                - generic [ref=e702]: Turn left onto Smith Street
+              - cell "111 m" [ref=e703]
+              - cell "0m" [ref=e704]
+              - cell "26 / 28" [ref=e705]:
+                - generic [ref=e706]: 26 / 28
+            - row "1 Turn Turn right onto Cairns Street 181 m 0m 27 / 28" [ref=e707]:
+              - cell "1" [ref=e708]
+              - cell "Turn" [ref=e709]
+              - cell "Turn right onto Cairns Street" [ref=e710]:
+                - generic [ref=e711]: Turn right onto Cairns Street
+              - cell "181 m" [ref=e712]
+              - cell "0m" [ref=e713]
+              - cell "27 / 28" [ref=e714]:
+                - generic [ref=e715]: 27 / 28
+            - row "1 Turn Arrive at Cairns Street 0 m 0m 28 / 28" [ref=e716]:
+              - cell "1" [ref=e717]
+              - cell "Turn" [ref=e718]
+              - cell "Arrive at Cairns Street" [ref=e719]:
+                - generic [ref=e720]: Arrive at Cairns Street
+              - cell "0 m" [ref=e721]
+              - cell "0m" [ref=e722]
+              - cell "28 / 28" [ref=e723]:
+                - generic [ref=e724]: 28 / 28
+            - 'row "1 Fuel stop OOM Energy Cairns Central at QLD QLD - $1.93/L - - Price: $1.93/L, detour: 0.2 km, selected from the strict detour window" [ref=e725]':
+              - cell "1" [ref=e726]
+              - cell "Fuel stop" [ref=e727]
+              - cell "OOM Energy Cairns Central at QLD QLD - $1.93/L" [ref=e728]:
+                - generic [ref=e729]: OOM Energy Cairns Central at QLD QLD - $1.93/L
+              - cell "-" [ref=e730]
+              - cell "-" [ref=e731]
+              - 'cell "Price: $1.93/L, detour: 0.2 km, selected from the strict detour window" [ref=e732]':
+                - generic [ref=e733]: "Price: $1.93/L, detour: 0.2 km, selected from the strict detour window"
