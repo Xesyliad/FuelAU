@@ -5292,6 +5292,46 @@ try {
             };
         }
 
+        function fuelMapSelectedRegionBounds(radiusKm = 25) {
+            const region = fuelRegionSelectedOption();
+            const latitude = Number(region?.lat);
+            const longitude = Number(region?.lon);
+            const radius = Math.max(1, Number(radiusKm || 25));
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return null;
+            }
+
+            const latDelta = radius / 110.574;
+            const lonScale = Math.max(Math.cos(latitude * Math.PI / 180), 0.2);
+            const lonDelta = radius / (111.320 * lonScale);
+
+            return new maplibregl.LngLatBounds(
+                [longitude - lonDelta, latitude - latDelta],
+                [longitude + lonDelta, latitude + latDelta]
+            );
+        }
+
+        function fuelMapFocusSelectedRegion(radiusKm = 25, duration = 400) {
+            if (!fuelMapInstance || !fuelMapReady) {
+                return false;
+            }
+
+            const bounds = fuelMapSelectedRegionBounds(radiusKm);
+            if (!bounds) {
+                return false;
+            }
+
+            fuelMapAutoRefreshSuppressed = true;
+            fuelMapInstance.fitBounds(bounds, {
+                padding: 36,
+                duration,
+            });
+            window.setTimeout(() => {
+                fuelMapAutoRefreshSuppressed = false;
+            }, 700);
+            return true;
+        }
+
         function updateFuelMapSource(collection, highlight = null, preserveViewport = false) {
             if (!fuelMapInstance || !fuelMapReady) {
                 fuelMapPendingData = { collection, highlight, preserveViewport };
@@ -5316,6 +5356,9 @@ try {
 
             const features = Array.isArray(collection.features) ? collection.features : [];
             if (features.length === 0) {
+                if (!preserveViewport) {
+                    fuelMapFocusSelectedRegion();
+                }
                 renderFuelMapLegend([], highlight);
                 return;
             }
@@ -5344,19 +5387,8 @@ try {
                     fuelMapAutoRefreshSuppressed = false;
                 }, 700);
             } else if (!preserveViewport && focusFeatures.length > 1) {
-                fuelMapAutoRefreshSuppressed = true;
-                if (fuelauIsTopographicStyle()) {
-                    const bounds = new maplibregl.LngLatBounds();
-                    focusFeatures.forEach((feature) => {
-                        bounds.extend(feature.geometry.coordinates);
-                    });
-                    const center = bounds.getCenter();
-                    fuelMapInstance.easeTo({
-                        center: [center.lng, center.lat],
-                        zoom: 13.2,
-                        duration: 400,
-                    });
-                } else {
+                if (!fuelMapFocusSelectedRegion()) {
+                    fuelMapAutoRefreshSuppressed = true;
                     const bounds = new maplibregl.LngLatBounds();
                     focusFeatures.forEach((feature) => {
                         bounds.extend(feature.geometry.coordinates);
@@ -5366,10 +5398,10 @@ try {
                         maxZoom: 12,
                         duration: 400,
                     });
+                    window.setTimeout(() => {
+                        fuelMapAutoRefreshSuppressed = false;
+                    }, 700);
                 }
-                window.setTimeout(() => {
-                    fuelMapAutoRefreshSuppressed = false;
-                }, 700);
             }
 
             renderFuelMapLegend(features, highlight);
@@ -5472,11 +5504,17 @@ try {
                     return;
                 }
 
+                const region = fuelRegionSelectedOption();
+                const initialCenter = region && Number.isFinite(Number(region.lat)) && Number.isFinite(Number(region.lon))
+                    ? [Number(region.lon), Number(region.lat)]
+                    : [134.0, -25.0];
+                const initialZoom = region ? 9.5 : 4;
+
                 fuelMapInstance = new maplibregl.Map({
                     container: fuelMap,
                     style: styleUrl,
-                    center: [134.0, -25.0],
-                    zoom: 4,
+                    center: initialCenter,
+                    zoom: initialZoom,
                     pitch: 0,
                     bearing: 0,
                     attributionControl: true,
