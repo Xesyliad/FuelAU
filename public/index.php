@@ -1262,7 +1262,9 @@ try {
     </main>
 
     <script src="/resources/maplibre-gl.js"></script>
+    <?php if ((string) (fuelauMapTileConfig()['style_id'] ?? '') === 'topo-3d'): ?>
     <script src="/resources/maplibre-contour.min.js"></script>
+    <?php endif; ?>
     <script>
         const tabs = document.querySelectorAll('.tab');
         const panels = document.querySelectorAll('.panel');
@@ -1363,12 +1365,6 @@ try {
 
         function fuelauFirstExistingLayer(map, layerIds) {
             return layerIds.find((layerId) => map.getLayer(layerId)) || null;
-        }
-
-        function fuelauApplyTopographicCamera(map) {
-            if (!fuelauIsTopographicStyle()) {
-                return;
-            }
         }
 
         function fuelauEnsureContourProtocol() {
@@ -3965,7 +3961,6 @@ try {
                 preserveDrawingBuffer: false,
             });
             routeMapInstance = map;
-            window.fuelauRouteMapInstance = map;
             map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
 
             map.on('load', () => {
@@ -4065,7 +4060,6 @@ try {
                 const pointBounds = new maplibregl.LngLatBounds();
                 bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
                 map.fitBounds(pointBounds, { padding: 36, duration: 0 });
-                fuelauApplyTopographicCamera(map);
 
                 markerFeatures
                     .filter((feature) => feature.properties.kind === 'fuel-stop')
@@ -4317,7 +4311,6 @@ try {
                 const pointBounds = new maplibregl.LngLatBounds();
                 bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
                 map.fitBounds(pointBounds, { padding: 36, duration: 0 });
-                fuelauApplyTopographicCamera(map);
 
                 markerFeatures
                     .filter((feature) => feature.properties.kind === 'fuel-stop')
@@ -5489,13 +5482,11 @@ try {
                     attributionControl: true,
                     preserveDrawingBuffer: false,
                 });
-                window.fuelauFuelMapInstance = fuelMapInstance;
                 fuelMapInstance.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
                 fuelMapPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: 16 });
 
                 fuelMapInstance.on('load', () => {
                     fuelauAddTopographicEnhancements(fuelMapInstance);
-                    fuelauApplyTopographicCamera(fuelMapInstance);
                     fuelMapReady = true;
                     if (!fuelMapInstance.getSource('fuel-stations')) {
                         fuelMapInstance.addSource('fuel-stations', {
