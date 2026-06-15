@@ -15,12 +15,12 @@ function fuelauMapTileConfig(): array
 {
     $config = fuelauConfig();
     $baseUrl = trim((string) ($config['MAP_TILE_SERVER_URL'] ?? '/tiles'));
-    $styleId = trim((string) ($config['MAP_TILE_STYLE'] ?? 'basic-preview'));
+    $styleId = trim((string) ($config['MAP_TILE_STYLE'] ?? 'topo-3d'));
     if ($baseUrl === '') {
         $baseUrl = '/tiles';
     }
     if ($styleId === '') {
-        $styleId = 'basic-preview';
+        $styleId = 'topo-3d';
     }
 
     return [
@@ -87,7 +87,7 @@ function fuelauNominatimUnavailableMessage(): string
 {
     $service = fuelauDockerService('nominatim');
     if (!is_array($service)) {
-        return 'Geocoding service unavailable.';
+        return 'Geocoding service unavailable. Unable to inspect the Nominatim container.';
     }
 
     if (($service['has_container'] ?? false) !== true) {
@@ -109,7 +109,11 @@ function fuelauNominatimUnavailableMessage(): string
         return 'Geocoding service is not running. Start it with `docker compose --profile routing up -d nominatim`.';
     }
 
-    return 'Geocoding service unavailable.';
+    if ($displayState === 'running' || str_contains($displayStatus, 'healthy')) {
+        return 'Geocoding service is running, but geocoding still failed. Check `docker compose logs -f nominatim`.';
+    }
+
+    return 'Geocoding service unavailable. Check `docker compose logs -f nominatim`.';
 }
 
 function fuelauNominatimSearch(string $query, int $limit = 10): array
