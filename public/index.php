@@ -2443,7 +2443,12 @@ try {
         }
 
         function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
-            const timestamp = Date.parse(String(updatedAt || '').trim().replace(' ', 'T'));
+            const raw = String(updatedAt || '').trim();
+            let timestamp = Date.parse(raw.replace(' ', 'T'));
+            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+                const [year, month, day] = raw.split('-').map((part) => Number(part));
+                timestamp = new Date(year, month - 1, day).getTime();
+            }
             if (!Number.isFinite(timestamp)) {
                 return false;
             }
