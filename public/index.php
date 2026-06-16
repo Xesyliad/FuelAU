@@ -1468,7 +1468,7 @@ try {
         }
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const routePlannerRouteBudgetLimit = 240;
-        const routePlannerFuelBudgetLimit = 720;
+        const routePlannerFuelBudgetLimit = 2400;
         const activeTabKey = 'fuelau_active_tab_v1';
         const containerManagementTokenKey = 'fuelau_container_management_token';
 
