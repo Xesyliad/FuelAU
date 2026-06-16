@@ -485,7 +485,7 @@ Fuel response notes:
 
 - `price` is normalized to cents-per-litre across sources.
 - `price_raw` preserves the original stored source value.
-- `source` currently supports `qld`, `sa`, `nsw`, `tas`, `vic`, and `all`.
+- `source` currently supports `qld`, `sa`, `nsw`, `wa`, `tas`, `vic`, `nt`, and `all`.
 
 ## Fuel Prices Queensland
 
@@ -518,6 +518,37 @@ docker compose exec app tail -f /var/log/fuelapi/fpq_sync.log
 ```
 
 The importer requires `FUEL_PRICES_QLD_SUBSCRIBER_TOKEN` in the ignored `config/app.env` file.
+
+## Western Australia FuelWatch RSS
+
+The Western Australia importer is in `src/wa_sync`. It consumes the public FuelWatch RSS feed at `https://www.fuelwatch.wa.gov.au/fuelwatch/fuelWatchRSS?` and supports the documented `Product`, `StateRegion`, and `Day` parameters.
+
+It loads:
+
+- brands
+- fuel types
+- stations
+- current prices
+- price history
+- sync run records
+
+The importer runs once per day after the 2:30pm AWST release window:
+
+```cron
+35 16 * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m wa_sync.cli all >> /var/log/fuelapi/wa_sync.log 2>&1
+```
+
+Manual sync:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m wa_sync.cli all
+```
+
+View sync logs:
+
+```bash
+docker compose exec app tail -f /var/log/fuelapi/wa_sync.log
+```
 
 ## NSW Fuel API
 
@@ -625,6 +656,7 @@ Current jobs:
 - Every 30 minutes at `:20` and `:50`: South Australia sync to `/var/log/fuelapi/sa_sync.log`.
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
 - Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
+- Daily at 16:35 Brisbane time: Western Australia FuelWatch RSS sync to `/var/log/fuelapi/wa_sync.log`.
 
 The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
 
@@ -638,6 +670,7 @@ docker compose exec app tail -f /var/log/fuelapi/nt_sync.log
 docker compose exec app tail -f /var/log/fuelapi/sa_sync.log
 docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
+docker compose exec app tail -f /var/log/fuelapi/wa_sync.log
 docker compose --profile map logs -f map-scheduler
 ```
 

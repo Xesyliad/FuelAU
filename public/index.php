@@ -1042,7 +1042,7 @@ try {
         <section class="content">
             <div class="panel active" role="tabpanel" id="fuel-prices" aria-labelledby="fuel-prices-tab">
                 <h1>Fuel Prices</h1>
-                <p>App-owned price analytics from the ingested fuel datasets. Weekly and monthly trend charts are rendered locally with SVG.</p>
+                <p>App-owned price analytics from the ingested fuel datasets. Western Australia is sourced from the public FuelWatch RSS feed and refreshes after the daily 2:30pm release window. Weekly and monthly trend charts are rendered locally with SVG.</p>
 
                 <div class="fuel-layout">
                     <div class="fuel-toolbar">
@@ -1498,6 +1498,25 @@ try {
                 { key: 'port-lincoln', label: 'Port Lincoln', lat: -34.7215, lon: 135.8586, radius_km: 25 },
                 { key: 'victor-harbor', label: 'Victor Harbor', lat: -35.5513, lon: 138.6219, radius_km: 25 },
                 { key: 'mount-barker', label: 'Mount Barker', lat: -35.0664, lon: 138.8604, radius_km: 20 },
+            ],
+            WA: [
+                { key: 'perth-north', label: 'Perth - North', lat: -31.9505, lon: 115.8605, radius_km: 45 },
+                { key: 'perth-south', label: 'Perth - South', lat: -32.0144, lon: 115.8167, radius_km: 45 },
+                { key: 'fremantle', label: 'Fremantle', lat: -32.0569, lon: 115.7439, radius_km: 30 },
+                { key: 'mandurah', label: 'Mandurah', lat: -32.5269, lon: 115.7217, radius_km: 35 },
+                { key: 'bunbury', label: 'Bunbury', lat: -33.3275, lon: 115.6414, radius_km: 35 },
+                { key: 'busselton', label: 'Busselton', lat: -33.6550, lon: 115.3500, radius_km: 30 },
+                { key: 'augusta-margaret-river', label: 'Augusta / Margaret River', lat: -33.9530, lon: 115.0720, radius_km: 35 },
+                { key: 'geraldton', label: 'Geraldton', lat: -28.7761, lon: 114.6140, radius_km: 35 },
+                { key: 'albany', label: 'Albany', lat: -35.0228, lon: 117.8814, radius_km: 35 },
+                { key: 'kalgoorlie', label: 'Kalgoorlie', lat: -30.7489, lon: 121.4658, radius_km: 35 },
+                { key: 'broome', label: 'Broome', lat: -17.9614, lon: 122.2362, radius_km: 35 },
+                { key: 'karratha', label: 'Karratha', lat: -20.7377, lon: 116.8463, radius_km: 35 },
+                { key: 'port-hedland', label: 'Port Hedland', lat: -20.3104, lon: 118.6060, radius_km: 35 },
+                { key: 'kununurra', label: 'Kununurra', lat: -15.7758, lon: 128.7389, radius_km: 35 },
+                { key: 'esperance', label: 'Esperance', lat: -33.8590, lon: 121.8896, radius_km: 30 },
+                { key: 'northam', label: 'Northam', lat: -31.6540, lon: 116.6734, radius_km: 25 },
+                { key: 'narrogin', label: 'Narrogin', lat: -32.9349, lon: 117.1773, radius_km: 25 },
             ],
             NSW: [
                 { key: 'sydney', label: 'Sydney', lat: -33.8688, lon: 151.2093, radius_km: 80 },
@@ -4737,9 +4756,20 @@ try {
         }
 
         function formatDateTime(value) {
-            const parsed = new Date(value.replace(' ', 'T') + 'Z');
+            const text = String(value || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+                const parsedDate = new Date(`${text}T00:00:00Z`);
+                if (!Number.isNaN(parsedDate.getTime())) {
+                    return parsedDate.toLocaleDateString('en-AU', {
+                        day: '2-digit',
+                        month: 'short',
+                    });
+                }
+                return text;
+            }
+            const parsed = new Date(text.replace(' ', 'T') + 'Z');
             if (Number.isNaN(parsed.getTime())) {
-                return value;
+                return text;
             }
             return parsed.toLocaleString('en-AU', {
                 day: '2-digit',
@@ -4779,7 +4809,9 @@ try {
                 ? 'qld'
                 : (state === 'NSW'
                     ? 'nsw'
-                    : (state === 'TAS' ? 'tas' : (state === 'NT' ? 'nt' : 'all')));
+                    : (state === 'WA'
+                        ? 'wa'
+                        : (state === 'TAS' ? 'tas' : (state === 'NT' ? 'nt' : 'all'))));
             return fuelOptions.fuels.filter((item) => {
                 if (item.value === '') {
                     return true;
@@ -4845,7 +4877,7 @@ try {
             const options = filteredFuelOptions();
             const desiredDefaultFuel = fuelState.value === 'QLD'
                 ? '3'
-                : ((fuelState.value === 'NSW' || fuelState.value === 'TAS') ? 'DL' : '');
+                : ((fuelState.value === 'NSW' || fuelState.value === 'TAS') ? 'DL' : (fuelState.value === 'WA' ? '1' : ''));
             const labelFuel = options.find((item) => item.label.toLowerCase() === currentLabel.toLowerCase())?.value || '';
             const fallbackFuel = labelFuel !== ''
                 ? labelFuel
@@ -4882,6 +4914,7 @@ try {
                 ['NSW', summary.nsw],
                 ['TAS', summary.tas],
                 ['VIC', summary.vic],
+                ['WA', summary.wa],
                 ['NT', summary.nt],
             ];
             cards.forEach(([label, item]) => {

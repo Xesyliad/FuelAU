@@ -24,3 +24,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Northern Territory MyFuel API: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample username or password is still configured.
 10,40 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nt_sync.cli all >> /var/log/fuelapi/nt_sync.log 2>&1
+
+# Western Australia FuelWatch RSS: refresh after the 2:30pm AWST release window.
+35 16 * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m wa_sync.cli all >> /var/log/fuelapi/wa_sync.log 2>&1
