@@ -1887,11 +1887,11 @@ try {
         }
 
         async function collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget = null) {
-            const sampleLimit = Math.max(12, Math.min(30, Math.ceil(Number(routeKm || 0) / 60)));
+            const sampleLimit = Math.max(14, Math.min(42, Math.ceil(Number(routeKm || 0) / 45)));
             const attempts = [
                 { sampleLimit, radiusKm: Number(routeKm || 0) > 1600 ? 45 : 25 },
-                { sampleLimit: Math.min(30, sampleLimit + 6), radiusKm: Number(routeKm || 0) > 1600 ? 75 : 45 },
-                { sampleLimit: Math.min(36, sampleLimit + 12), radiusKm: Number(routeKm || 0) > 1600 ? 100 : 60 },
+                { sampleLimit: Math.min(42, sampleLimit + 6), radiusKm: Number(routeKm || 0) > 1600 ? 75 : 45 },
+                { sampleLimit: Math.min(42, sampleLimit + 12), radiusKm: Number(routeKm || 0) > 1600 ? 100 : 60 },
             ];
             const excludedStations = [];
 
@@ -3375,13 +3375,13 @@ try {
                 const routeKm = route.distanceM / 1000;
                 const fuelNeeded = routeKm * (economyLPer100km / 100);
                 const progress = buildRouteProgress(route.geometry);
-                const sampleLimit = Math.max(12, Math.min(30, Math.ceil(routeKm / 60)));
-                const searchRadiusKm = routeKm > 1600 ? 60 : (routeKm > 900 ? 45 : 30);
+                const sampleLimit = Math.max(14, Math.min(42, Math.ceil(routeKm / 45)));
+                const searchRadiusKm = routeKm > 1600 ? 75 : (routeKm > 900 ? 50 : 30);
                 let candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm, budget);
                 let candidates = candidateBundle.candidates;
                 excludedStations.push(...candidateBundle.excludedStations);
                 if (candidates.length === 0) {
-                    candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(24, sampleLimit + 6), routeKm > 1600 ? 90 : 60, budget);
+                    candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(42, sampleLimit + 6), routeKm > 1600 ? 90 : 60, budget);
                     candidates = candidateBundle.candidates;
                     excludedStations.push(...candidateBundle.excludedStations);
                 }
