@@ -2439,7 +2439,7 @@ try {
         }
 
         function routeFuelSourceIsOfficial(source) {
-            return ['qld', 'sa', 'nsw', 'tas', 'vic', 'nt'].includes(String(source || '').trim().toLowerCase());
+            return ['qld', 'sa', 'nsw', 'wa', 'tas', 'vic', 'nt'].includes(String(source || '').trim().toLowerCase());
         }
 
         function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
