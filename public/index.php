@@ -2521,19 +2521,21 @@ try {
             return Math.max(0, requiredStartFuelL - Number(currentFuelL || 0));
         }
 
-        function routeFuelReserveNote(destination, routeKm, currentFuelL, tankCapacityL, economyLPer100km) {
+        function routeFuelReserveNote(destination, routeKm, currentFuelL, tankCapacityL, economyLPer100km, fuelLabel = routeFuelSelectedLabel()) {
             const destinationLabel = destination?.display_name || destination?.query || 'destination';
+            const normalizedFuelLabel = String(fuelLabel || 'selected fuel').trim() || 'selected fuel';
             const reserveL = routeFuelReserveL(tankCapacityL);
             const requiredExternalReserveL = routeFuelExternalReserveL(routeKm, currentFuelL, tankCapacityL, economyLPer100km);
             return {
                 destinationLabel,
+                fuelLabel: normalizedFuelLabel,
                 routeKm: Number(routeKm || 0),
                 currentFuelL: Number(currentFuelL || 0),
                 reserveL,
                 requiredExternalReserveL,
                 message: requiredExternalReserveL > 0
-                    ? `No reachable fuel stop before reserve. Choose a different route or start with an additional ${requiredExternalReserveL.toFixed(1)} L external reserve to reach ${destinationLabel} safely.`
-                    : `No reachable fuel stop before reserve for ${destinationLabel}.`,
+                    ? `No usable corridor coverage was found for ${normalizedFuelLabel} on the way to ${destinationLabel}. Choose a different route or start with an additional ${requiredExternalReserveL.toFixed(1)} L external reserve to reach ${destinationLabel} safely.`
+                    : `No usable corridor coverage was found for ${normalizedFuelLabel} on the way to ${destinationLabel}.`,
             };
         }
 
@@ -3627,7 +3629,7 @@ try {
 
                             fuelInTank = tankCapacityL;
                             currentPoint = destination;
-                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km);
+                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km, fuelQuery);
                             chosen = destinationStation;
                             break;
                         }
@@ -3685,12 +3687,12 @@ try {
 
                             fuelInTank = tankCapacityL;
                             currentPoint = destination;
-                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km);
+                            reserveNote = routeFuelReserveNote(destination, routeKm, routeFuelAfterArrival, tankCapacityL, economyLPer100km, fuelQuery);
                             break;
                         }
                     }
 
-                    reserveNote = routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km);
+                    reserveNote = routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km, fuelQuery);
                     routePieces.push({
                         type: 'route',
                         route,
