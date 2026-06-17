@@ -1469,6 +1469,8 @@ try {
         const routePlannerStateKey = 'fuelau_route_planner_state_v1';
         const routePlannerRouteBudgetLimit = 240;
         const routePlannerFuelBudgetLimit = 2400;
+        const routePlannerDefaultFuelFillL = 60;
+        const routePlannerDefaultFuelEconomyLPer100km = 12;
         const activeTabKey = 'fuelau_active_tab_v1';
         const containerManagementTokenKey = 'fuelau_container_management_token';
 
@@ -2336,13 +2338,23 @@ try {
         }
 
         function routeFuelDefaultFillValue() {
-            const value = Number(routeFuelFill.value || 0);
-            return Number.isFinite(value) ? value : 0;
+            const rawValue = String(routeFuelFill.value || '').trim();
+            if (rawValue === '') {
+                return routePlannerDefaultFuelFillL;
+            }
+
+            const value = Number(rawValue);
+            return Number.isFinite(value) ? value : routePlannerDefaultFuelFillL;
         }
 
         function routeFuelDefaultEconomyValue() {
-            const value = Number(routeFuelEconomy.value || 0);
-            return Number.isFinite(value) ? value : 0;
+            const rawValue = String(routeFuelEconomy.value || '').trim();
+            if (rawValue === '') {
+                return routePlannerDefaultFuelEconomyLPer100km;
+            }
+
+            const value = Number(rawValue);
+            return Number.isFinite(value) ? value : routePlannerDefaultFuelEconomyLPer100km;
         }
 
         function fuelOptionLabelForValue(value) {
@@ -4481,8 +4493,8 @@ try {
             routeDestinationList.innerHTML = '';
             routeDestinationCounter = 0;
             (destinations.length > 0 ? destinations : ['']).forEach((value) => addRouteDestination(String(value || '')));
-            routeFuelFill.value = String(state.fuelFill || '');
-            routeFuelEconomy.value = String(state.fuelEconomy || '');
+            routeFuelFill.value = String(String(state.fuelFill || '').trim() !== '' ? state.fuelFill : routePlannerDefaultFuelFillL);
+            routeFuelEconomy.value = String(String(state.fuelEconomy || '').trim() !== '' ? state.fuelEconomy : routePlannerDefaultFuelEconomyLPer100km);
             routeReturnDirect.checked = String(state.returnMode || 'direct') !== 'reverses';
             routeReturnReverses.checked = String(state.returnMode || 'direct') === 'reverses';
             syncRouteFuelSelector();
@@ -4559,8 +4571,8 @@ try {
             const clearStorage = options.clearStorage !== false;
             routeOrigin.value = '';
             syncRouteFuelSelector();
-            routeFuelFill.value = '';
-            routeFuelEconomy.value = '';
+            routeFuelFill.value = String(routePlannerDefaultFuelFillL);
+            routeFuelEconomy.value = String(routePlannerDefaultFuelEconomyLPer100km);
             routeReturnDirect.checked = true;
             routeReturnReverses.checked = false;
             routeStatus.classList.remove('route-status-warning');
