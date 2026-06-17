@@ -4538,7 +4538,14 @@ try {
 
             try {
                 const origin = await resolveRouteLocation(originValue);
-                const destinations = await Promise.all(destinationValues.map((value) => resolveRouteLocation(value)));
+                const destinations = [];
+                for (const value of destinationValues) {
+                    try {
+                        destinations.push(await resolveRouteLocation(value));
+                    } catch (error) {
+                        throw new Error(`Geocoding failed for "${value}": ${error.message}`);
+                    }
+                }
                 const tripSequence = buildRouteSequence(origin, destinations);
                 const plan = await buildRoutePlan(tripSequence, routeFuelQueryLabel(), fuelFill, fuelEconomy);
                 renderRouteSummary(plan);
@@ -4682,10 +4689,13 @@ try {
             fuelStopFinderLegs.innerHTML = renderRouteEmpty('Building route...');
 
             try {
-                const [origin, destination] = await Promise.all([
-                    resolveRouteLocation(originValue),
-                    resolveRouteLocation(destinationValue),
-                ]);
+                const origin = await resolveRouteLocation(originValue);
+                let destination = null;
+                try {
+                    destination = await resolveRouteLocation(destinationValue);
+                } catch (error) {
+                    throw new Error(`Geocoding failed for "${destinationValue}": ${error.message}`);
+                }
                 const plan = await buildFuelStopFinderPlan(origin, destination, fuelQuery, economy);
                 const stop = plan.selectedStop || (Array.isArray(plan.segments) ? plan.segments.flatMap((segment) => segment.stops || [])[0] : null);
                 renderFuelStopFinderSummary(plan, stop, fuelQuery);
