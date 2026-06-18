@@ -755,6 +755,8 @@ Current services:
 - `map-server`: local TileServer GL light instance that serves the rebuilt tiles and style JSON
 - `map-scheduler`: weekly Docker CLI scheduler that runs the map build through Compose
 
+The `map-server` healthcheck now probes both the style document and a real Australia vector tile so an empty `australia.mbtiles` file is marked unhealthy instead of rendering a blank map.
+
 The app exposes the tile server config at `/api/map/config`. The default local settings are:
 
 - `MAP_TILE_SERVER_URL=/tiles`

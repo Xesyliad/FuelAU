@@ -210,7 +210,11 @@ services:
     volumes:
       - ./var/docker/map-tiles:/data
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"const http=require('http');http.get('http://127.0.0.1:8080/styles.json',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"const http=require('http'); const checks=['http://127.0.0.1:8080/styles.json','http://127.0.0.1:8080/data/australia.json','http://127.0.0.1:8080/data/australia/13/7536/4916.pbf']; const check=(url)=>new Promise((resolve,reject)=>{http.get(url,res=>{res.resume(); if(res.statusCode===200) resolve(); else reject(new Error(url+' status '+res.statusCode));}).on('error',reject);}); Promise.all(checks.map(check)).then(()=>process.exit(0)).catch(()=>process.exit(1));\""
+        ]
       interval: 30s
       timeout: 10s
       retries: 10
