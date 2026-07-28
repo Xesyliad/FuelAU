@@ -1,0 +1,18 @@
+parameters:
+    level: 3
+    scanFiles:
+        - src/docker.php
+        - src/fuel.php
+    paths:
+        - src/api.php
+        - src/bootstrap.php
+        - src/http.php
+        - src/migrations.php
+        - src/request.php
+        - src/routing.php
+        - src/web.php
+        - templates/app.php
+    excludePaths:
+        analyse:
+            - public/resources/*
+    treatPhpDocTypesAsCertain: false

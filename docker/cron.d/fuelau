@@ -7,23 +7,23 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Fuel Prices QLD: refresh reference data and current prices every 30 minutes.
 # The importer self-skips when the sample placeholder token is still configured.
-0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
+0,30 * * * * flock -n /run/lock/fuelau-fpq-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all' >> /var/log/fuelapi/fpq_sync.log 2>&1 || echo 'fpq_sync: skipped overlapping run' >> /var/log/fuelapi/fpq_sync.log
 
 # South Australia Fuel Pricing Information Scheme: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample placeholder token is still configured.
-20,50 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m sa_sync.cli all >> /var/log/fuelapi/sa_sync.log 2>&1
+20,50 * * * * flock -n /run/lock/fuelau-sa-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m sa_sync.cli all' >> /var/log/fuelapi/sa_sync.log 2>&1 || echo 'sa_sync: skipped overlapping run' >> /var/log/fuelapi/sa_sync.log
 
 # NSW Fuel API: reuse cached OAuth token, refresh reference data daily, and sync prices every 30 minutes.
 # The importer self-skips when the sample placeholder auth header or API key is still configured.
-15,45 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nsw_sync.cli all >> /var/log/fuelapi/nsw_sync.log 2>&1
+15,45 * * * * flock -n /run/lock/fuelau-nsw-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nsw_sync.cli all' >> /var/log/fuelapi/nsw_sync.log 2>&1 || echo 'nsw_sync: skipped overlapping run' >> /var/log/fuelapi/nsw_sync.log
 
 # Victoria Servo Saver Open Data: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample placeholder key is still configured.
-5,35 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all >> /var/log/fuelapi/vic_sync.log 2>&1
+5,35 * * * * flock -n /run/lock/fuelau-vic-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m vic_sync.cli all' >> /var/log/fuelapi/vic_sync.log 2>&1 || echo 'vic_sync: skipped overlapping run' >> /var/log/fuelapi/vic_sync.log
 
 # Northern Territory MyFuel API: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample username or password is still configured.
-10,40 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nt_sync.cli all >> /var/log/fuelapi/nt_sync.log 2>&1
+10,40 * * * * flock -n /run/lock/fuelau-nt-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m nt_sync.cli all' >> /var/log/fuelapi/nt_sync.log 2>&1 || echo 'nt_sync: skipped overlapping run' >> /var/log/fuelapi/nt_sync.log
 
 # Western Australia FuelWatch RSS: refresh after the 2:30pm AWST release window.
-35 16 * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m wa_sync.cli all >> /var/log/fuelapi/wa_sync.log 2>&1
+35 16 * * * flock -n /run/lock/fuelau-wa-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m wa_sync.cli all' >> /var/log/fuelapi/wa_sync.log 2>&1 || echo 'wa_sync: skipped overlapping run' >> /var/log/fuelapi/wa_sync.log

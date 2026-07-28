@@ -1,0 +1,30 @@
+{
+  "name": "fuelau/fuelau",
+  "description": "Australian fuel price and route-planning application",
+  "type": "project",
+  "require": {
+    "php": "^8.3"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.80",
+    "phpstan/phpstan": "^2.1",
+    "phpunit/phpunit": "^11.5"
+  },
+  "config": {
+    "sort-packages": true,
+    "platform": {
+      "php": "8.3.0"
+    }
+  },
+  "scripts": {
+    "test": [
+      "@php tests/php/regression.php",
+      "@php tests/php/api-contract.php",
+      "@php tests/php/admin-contract.php",
+      "phpunit"
+    ],
+    "analyse": "phpstan analyse --no-progress",
+    "analyse:new": "phpstan analyse --no-progress --level=9 src/request.php src/api.php src/web.php templates/app.php",
+    "format:check": "php-cs-fixer check --diff"
+  }
+}

@@ -2,39 +2,106 @@
 
 declare(strict_types=1);
 
+const FUELAU_FUEL_SOURCES = ['all', 'qld', 'sa', 'nsw', 'tas', 'vic', 'wa', 'nt'];
+const FUELAU_FUEL_STATES = ['QLD', 'SA', 'NSW', 'TAS', 'VIC', 'WA', 'NT'];
+
 function fuelauClampInt(int $value, int $minimum, int $maximum): int
 {
     return max($minimum, min($maximum, $value));
 }
 
-function fuelauFuelRequestFilters(): array
+function fuelauFuelSourceForState(string $state): string
 {
-    $search = trim((string) ($_GET['q'] ?? ''));
-    $state = strtoupper(trim((string) ($_GET['state'] ?? '')));
-    $requestedSource = trim((string) ($_GET['source'] ?? ''));
-    $fuel = trim((string) ($_GET['fuel'] ?? ''));
-    $brand = trim((string) ($_GET['brand'] ?? ''));
-    $limit = fuelauClampInt((int) ($_GET['limit'] ?? 100), 1, 500);
-    $latitude = $_GET['lat'] ?? null;
-    $longitude = $_GET['lon'] ?? null;
-    $radiusKm = isset($_GET['radius_km']) ? max(0.1, (float) $_GET['radius_km']) : null;
-    $source = strtolower($requestedSource);
-    if ($source === '') {
-        $source = match ($state) {
-            'QLD' => 'qld',
-            'SA' => 'sa',
-            'NSW' => 'nsw',
-            'WA' => 'wa',
-            'TAS' => 'tas',
-            'NT' => 'nt',
-            default => 'all',
-        };
+    return match ($state) {
+        'QLD' => 'qld',
+        'SA' => 'sa',
+        'NSW' => 'nsw',
+        'TAS' => 'tas',
+        'VIC' => 'vic',
+        'WA' => 'wa',
+        'NT' => 'nt',
+        default => throw new InvalidArgumentException("Unsupported fuel state: {$state}"),
+    };
+}
+
+function fuelauFuelStateForSource(string $source): string
+{
+    return match ($source) {
+        'qld' => 'QLD',
+        'sa' => 'SA',
+        'nsw' => 'NSW',
+        'tas' => 'TAS',
+        'vic' => 'VIC',
+        'wa' => 'WA',
+        'nt' => 'NT',
+        default => throw new InvalidArgumentException("Unsupported state-specific fuel source: {$source}"),
+    };
+}
+
+function fuelauNormalizeFuelSourceAndState(string $requestedSource, string $requestedState): array
+{
+    $source = strtolower(trim($requestedSource));
+    $state = strtoupper(trim($requestedState));
+
+    if ($source !== '' && !in_array($source, FUELAU_FUEL_SOURCES, true)) {
+        throw new InvalidArgumentException("Unsupported fuel source: {$source}");
+    }
+    if ($state !== '' && !in_array($state, FUELAU_FUEL_STATES, true)) {
+        throw new InvalidArgumentException("Unsupported fuel state: {$state}");
     }
 
+    if ($source === '') {
+        $source = $state === '' ? 'all' : fuelauFuelSourceForState($state);
+    } elseif ($source !== 'all') {
+        $sourceState = fuelauFuelStateForSource($source);
+        if ($state === '') {
+            $state = $sourceState;
+        } elseif ($state !== $sourceState) {
+            throw new InvalidArgumentException(
+                sprintf('Fuel source %s does not provide state %s.', $source, $state)
+            );
+        }
+    }
+
+    return ['source' => $source, 'state' => $state];
+}
+
+function fuelauFuelSourcesForFilters(array $filters): array
+{
+    $source = strtolower(trim((string) ($filters['source'] ?? 'all')));
+    $state = strtoupper(trim((string) ($filters['state'] ?? '')));
+
+    if ($source === 'all') {
+        if ($state === '') {
+            return ['qld', 'sa', 'nsw', 'vic', 'wa', 'nt'];
+        }
+
+        $stateSource = fuelauFuelSourceForState($state);
+        return [$stateSource === 'tas' ? 'nsw' : $stateSource];
+    }
+
+    return [$source === 'tas' ? 'nsw' : $source];
+}
+
+function fuelauFuelRequestFilters(?array $query = null): array
+{
+    $query ??= $_GET;
+    $search = trim((string) ($query['q'] ?? ''));
+    $fuel = trim((string) ($query['fuel'] ?? ''));
+    $brand = trim((string) ($query['brand'] ?? ''));
+    $limit = fuelauClampInt((int) ($query['limit'] ?? 100), 1, 500);
+    $latitude = $query['lat'] ?? null;
+    $longitude = $query['lon'] ?? null;
+    $radiusKm = isset($query['radius_km']) ? max(0.1, (float) $query['radius_km']) : null;
+    $sourceAndState = fuelauNormalizeFuelSourceAndState(
+        (string) ($query['source'] ?? ''),
+        (string) ($query['state'] ?? '')
+    );
+
     return [
-        'source' => $source,
+        'source' => $sourceAndState['source'],
         'search' => $search,
-        'state' => $state,
+        'state' => $sourceAndState['state'],
         'fuel' => $fuel,
         'brand' => $brand,
         'limit' => $limit,
@@ -52,7 +119,96 @@ function fuelauDistanceExpression(string $latField, string $lonField): string
         . "))))";
 }
 
-function fuelauBindFuelFilters(PDOStatement $statement, array $filters): void
+function fuelauHistoricalLocationBounds(array $filters): ?array
+{
+    if (
+        !is_numeric((string) ($filters['lat'] ?? null))
+        || !is_numeric((string) ($filters['lon'] ?? null))
+        || !is_numeric((string) ($filters['radius_km'] ?? null))
+    ) {
+        return null;
+    }
+
+    $latitude = (float) $filters['lat'];
+    $longitude = (float) $filters['lon'];
+    $radiusKm = max(0.1, (float) $filters['radius_km']);
+    $latitudeDelta = $radiusKm / 110.574;
+    $longitudeScale = max(0.1, abs(cos(deg2rad($latitude))));
+    $longitudeDelta = $radiusKm / (111.320 * $longitudeScale);
+
+    return [
+        'min_lat' => max(-90.0, $latitude - $latitudeDelta),
+        'max_lat' => min(90.0, $latitude + $latitudeDelta),
+        'min_lon' => max(-180.0, $longitude - $longitudeDelta),
+        'max_lon' => min(180.0, $longitude + $longitudeDelta),
+    ];
+}
+
+function fuelauApplyHistoricalLocationFilters(
+    array &$where,
+    array $filters,
+    string $latField,
+    string $lonField
+): void {
+    if ($filters['lat'] === null || $filters['lon'] === null) {
+        return;
+    }
+
+    $where[] = "{$latField} IS NOT NULL AND {$lonField} IS NOT NULL";
+    $bounds = fuelauHistoricalLocationBounds($filters);
+    if ($bounds === null) {
+        return;
+    }
+
+    $where[] = "{$latField} BETWEEN :history_min_lat AND :history_max_lat";
+    $where[] = "{$lonField} BETWEEN :history_min_lon AND :history_max_lon";
+    $where[] = fuelauDistanceExpression($latField, $lonField) . ' <= :radius_km';
+}
+
+function fuelauFuelFiltersHaveBounds(array $filters): bool
+{
+    foreach (['min_lat', 'max_lat', 'min_lon', 'max_lon'] as $key) {
+        if (!isset($filters[$key]) || !is_numeric((string) $filters[$key])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function fuelauNumericFuelFilterCondition(
+    array $filters,
+    string $fuelIdField,
+    string $fuelNameField
+): string {
+    return ctype_digit((string) ($filters['fuel'] ?? ''))
+        ? "{$fuelIdField} = :fuel"
+        : "{$fuelNameField} = :fuel";
+}
+
+function fuelauApplyFuelLocationFilters(
+    array &$where,
+    string &$distanceSelect,
+    array $filters,
+    string $latField,
+    string $lonField
+): void {
+    if ($filters['lat'] !== null && $filters['lon'] !== null) {
+        $distanceSelect = fuelauDistanceExpression($latField, $lonField) . ' AS distance_km';
+        $where[] = "{$latField} IS NOT NULL AND {$lonField} IS NOT NULL";
+        if ($filters['radius_km'] !== null) {
+            $where[] = fuelauDistanceExpression($latField, $lonField) . ' <= :radius_km';
+        }
+        return;
+    }
+
+    if (fuelauFuelFiltersHaveBounds($filters)) {
+        $where[] = "{$latField} BETWEEN :min_lat AND :max_lat";
+        $where[] = "{$lonField} BETWEEN :min_lon AND :max_lon";
+    }
+}
+
+function fuelauBindFuelFilters(PDOStatement $statement, array $filters, bool $bindState = false): void
 {
     if ($filters['search'] !== '') {
         $statement->bindValue(':search', '%' . $filters['search'] . '%');
@@ -60,7 +216,7 @@ function fuelauBindFuelFilters(PDOStatement $statement, array $filters): void
     if ($filters['brand'] !== '') {
         $statement->bindValue(':brand', '%' . $filters['brand'] . '%');
     }
-    if ($filters['state'] !== '') {
+    if ($bindState && $filters['state'] !== '') {
         $statement->bindValue(':state', $filters['state']);
     }
     if ($filters['fuel'] !== '') {
@@ -72,6 +228,11 @@ function fuelauBindFuelFilters(PDOStatement $statement, array $filters): void
         if ($filters['radius_km'] !== null) {
             $statement->bindValue(':radius_km', $filters['radius_km']);
         }
+    } elseif (fuelauFuelFiltersHaveBounds($filters)) {
+        $statement->bindValue(':min_lat', $filters['min_lat']);
+        $statement->bindValue(':max_lat', $filters['max_lat']);
+        $statement->bindValue(':min_lon', $filters['min_lon']);
+        $statement->bindValue(':max_lon', $filters['max_lon']);
     }
     $statement->bindValue(':limit', $filters['limit'], PDO::PARAM_INT);
 }
@@ -86,6 +247,13 @@ function fuelauBindHistoricalFilters(PDOStatement $statement, array $filters): v
         $statement->bindValue(':lon', $filters['lon']);
         if ($filters['radius_km'] !== null) {
             $statement->bindValue(':radius_km', $filters['radius_km']);
+            $bounds = fuelauHistoricalLocationBounds($filters);
+            if ($bounds !== null) {
+                $statement->bindValue(':history_min_lat', $bounds['min_lat']);
+                $statement->bindValue(':history_max_lat', $bounds['max_lat']);
+                $statement->bindValue(':history_min_lon', $bounds['min_lon']);
+                $statement->bindValue(':history_max_lon', $bounds['max_lon']);
+            }
         }
     }
 }
@@ -101,15 +269,9 @@ function fuelauQldFuelRows(PDO $pdo, array $filters): array
         $where[] = 'b.name LIKE :brand';
     }
     if ($filters['fuel'] !== '') {
-        $where[] = '(CAST(c.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -163,15 +325,9 @@ function fuelauSaFuelRows(PDO $pdo, array $filters): array
         $where[] = 'b.name LIKE :brand';
     }
     if ($filters['fuel'] !== '') {
-        $where[] = '(CAST(c.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -230,13 +386,7 @@ function fuelauNswFuelRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -278,7 +428,7 @@ function fuelauNswFuelRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    fuelauBindFuelFilters($statement, $filters);
+    fuelauBindFuelFilters($statement, $filters, true);
     $statement->execute();
     return $statement->fetchAll();
 }
@@ -296,13 +446,7 @@ function fuelauVicFuelRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -365,13 +509,7 @@ function fuelauWaFuelRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(CAST(c.fuel_code AS CHAR) = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -435,13 +573,7 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(CAST(c.fuel_code AS CHAR) = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $distanceSelect = fuelauDistanceExpression('s.latitude', 's.longitude') . ' AS distance_km';
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
 
     $sql = "
         SELECT
@@ -475,7 +607,9 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
         INNER JOIN nt_stations s ON s.station_id = c.station_id
         INNER JOIN nt_fuel_types f ON f.fuel_code = c.fuel_code
         LEFT JOIN nt_brands b ON b.brand_id = s.brand_id
-        WHERE " . implode(' AND ', $where) . "
+        WHERE c.is_available = 1
+          AND c.price IS NOT NULL
+          AND " . implode(' AND ', $where) . "
         ORDER BY " . ($filters['lat'] !== null && $filters['lon'] !== null ? 'distance_km ASC,' : '') . " c.observed_at_utc DESC
         LIMIT :limit
     ";
@@ -488,46 +622,21 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
 
 function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
 {
-    $source = strtolower($filters['source']);
     $rows = [];
 
-    if ($source === 'all' || $source === 'qld') {
-        $rows = array_merge($rows, fuelauQldFuelRows($pdo, $filters));
-    }
-    if ($source === 'all' || $source === 'sa') {
-        $saFilters = $filters;
-        if ($source === 'sa') {
-            $saFilters['state'] = 'SA';
+    foreach (fuelauFuelSourcesForFilters($filters) as $source) {
+        $sourceRows = match ($source) {
+            'qld' => fuelauQldFuelRows($pdo, $filters),
+            'sa' => fuelauSaFuelRows($pdo, $filters),
+            'nsw' => fuelauNswFuelRows($pdo, $filters),
+            'vic' => fuelauVicFuelRows($pdo, $filters),
+            'wa' => fuelauWaFuelRows($pdo, $filters),
+            'nt' => fuelauNtFuelRows($pdo, $filters),
+            default => throw new LogicException("Unsupported normalized fuel provider: {$source}"),
+        };
+        if ($sourceRows !== []) {
+            $rows = array_merge($rows, $sourceRows);
         }
-        $rows = array_merge($rows, fuelauSaFuelRows($pdo, $saFilters));
-    }
-    if ($source === 'all' || $source === 'nsw' || $source === 'tas') {
-        $nswFilters = $filters;
-        if ($source === 'tas') {
-            $nswFilters['state'] = 'TAS';
-        }
-        $rows = array_merge($rows, fuelauNswFuelRows($pdo, $nswFilters));
-    }
-    if ($source === 'all' || $source === 'vic') {
-        $vicFilters = $filters;
-        if ($source === 'vic') {
-            $vicFilters['state'] = 'VIC';
-        }
-        $rows = array_merge($rows, fuelauVicFuelRows($pdo, $vicFilters));
-    }
-    if ($source === 'all' || $source === 'wa') {
-        $waFilters = $filters;
-        if ($source === 'wa') {
-            $waFilters['state'] = 'WA';
-        }
-        $rows = array_merge($rows, fuelauWaFuelRows($pdo, $waFilters));
-    }
-    if ($source === 'all' || $source === 'nt') {
-        $ntFilters = $filters;
-        if ($source === 'nt') {
-            $ntFilters['state'] = 'NT';
-        }
-        $rows = array_merge($rows, fuelauNtFuelRows($pdo, $ntFilters));
     }
 
     usort(
@@ -551,6 +660,306 @@ function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
     );
 
     return array_slice($rows, 0, $filters['limit']);
+}
+
+function fuelauRouteCandidateDistanceKm(array $left, array $right): float
+{
+    $earthRadiusKm = 6371.0;
+    $lat1 = deg2rad((float) $left['lat']);
+    $lat2 = deg2rad((float) $right['lat']);
+    $latDelta = $lat2 - $lat1;
+    $lonDelta = deg2rad((float) $right['lon'] - (float) $left['lon']);
+    $haversine = sin($latDelta / 2) ** 2
+        + cos($lat1) * cos($lat2) * sin($lonDelta / 2) ** 2;
+
+    return $earthRadiusKm * 2 * atan2(sqrt($haversine), sqrt(max(0.0, 1 - $haversine)));
+}
+
+/**
+ * @param array<mixed> $points
+ * @return list<array{lat: float, lon: float}>
+ */
+function fuelauNormalizeRouteCandidatePoints(array $points): array
+{
+    if ($points === [] || count($points) > 100) {
+        throw new InvalidArgumentException('Route candidate lookup requires between 1 and 100 points.');
+    }
+
+    $normalized = [];
+    foreach ($points as $point) {
+        if (!is_array($point) || !is_numeric((string) ($point['lat'] ?? null)) || !is_numeric((string) ($point['lon'] ?? null))) {
+            throw new InvalidArgumentException('Each route candidate point requires numeric lat and lon values.');
+        }
+
+        $lat = (float) $point['lat'];
+        $lon = (float) $point['lon'];
+        if ($lat < -90 || $lat > 90 || $lon < -180 || $lon > 180) {
+            throw new InvalidArgumentException('Route candidate point coordinates are out of range.');
+        }
+        $normalized[] = ['lat' => $lat, 'lon' => $lon];
+    }
+
+    return $normalized;
+}
+
+function fuelauRouteCandidateBounds(array $points, float $radiusKm): array
+{
+    $minLat = 90.0;
+    $maxLat = -90.0;
+    $minLon = 180.0;
+    $maxLon = -180.0;
+
+    foreach ($points as $point) {
+        $latDelta = $radiusKm / 111.0;
+        $longitudeScale = max(0.1, abs(cos(deg2rad((float) $point['lat']))));
+        $lonDelta = $radiusKm / (111.0 * $longitudeScale);
+        $minLat = min($minLat, (float) $point['lat'] - $latDelta);
+        $maxLat = max($maxLat, (float) $point['lat'] + $latDelta);
+        $minLon = min($minLon, (float) $point['lon'] - $lonDelta);
+        $maxLon = max($maxLon, (float) $point['lon'] + $lonDelta);
+    }
+
+    return [
+        'min_lat' => max(-90.0, $minLat),
+        'max_lat' => min(90.0, $maxLat),
+        'min_lon' => max(-180.0, $minLon),
+        'max_lon' => min(180.0, $maxLon),
+    ];
+}
+
+function fuelauRouteCandidateRows(
+    PDO $pdo,
+    array $points,
+    string $fuel,
+    float $radiusKm = 25.0,
+    int $limit = 2000
+): array {
+    $points = fuelauNormalizeRouteCandidatePoints($points);
+    $radiusKm = max(0.1, min(100.0, $radiusKm));
+    $limit = fuelauClampInt($limit, 1, 5000);
+    $bounds = fuelauRouteCandidateBounds($points, $radiusKm);
+    $filters = array_merge(
+        fuelauFuelRequestFilters([
+            'source' => 'all',
+            'fuel' => trim($fuel),
+            'limit' => 5000,
+        ]),
+        $bounds
+    );
+    $rows = fuelauNormalizedFuelRows($pdo, $filters);
+    $candidates = [];
+
+    foreach ($rows as $row) {
+        if (!is_numeric((string) ($row['latitude'] ?? null)) || !is_numeric((string) ($row['longitude'] ?? null))) {
+            continue;
+        }
+
+        $stationPoint = [
+            'lat' => (float) $row['latitude'],
+            'lon' => (float) $row['longitude'],
+        ];
+        $nearestDistanceKm = INF;
+        foreach ($points as $point) {
+            $nearestDistanceKm = min(
+                $nearestDistanceKm,
+                fuelauRouteCandidateDistanceKm($point, $stationPoint)
+            );
+        }
+        if ($nearestDistanceKm > $radiusKm) {
+            continue;
+        }
+
+        $row['distance_km'] = round($nearestDistanceKm, 3);
+        $key = implode('|', [
+            (string) ($row['source'] ?? ''),
+            (string) ($row['station_id'] ?? ''),
+            (string) ($row['fuel_code'] ?? ''),
+        ]);
+        $existing = $candidates[$key] ?? null;
+        if (
+            !is_array($existing)
+            || (float) $row['distance_km'] < (float) $existing['distance_km']
+            || (
+                (float) $row['distance_km'] === (float) $existing['distance_km']
+                && (float) ($row['price'] ?? INF) < (float) ($existing['price'] ?? INF)
+            )
+        ) {
+            $candidates[$key] = $row;
+        }
+    }
+
+    $candidates = array_values($candidates);
+    usort(
+        $candidates,
+        static function (array $left, array $right): int {
+            $distanceComparison = (float) $left['distance_km'] <=> (float) $right['distance_km'];
+            if ($distanceComparison !== 0) {
+                return $distanceComparison;
+            }
+
+            return (float) ($left['price'] ?? INF) <=> (float) ($right['price'] ?? INF);
+        }
+    );
+
+    return array_slice($candidates, 0, $limit);
+}
+
+function fuelauCachedRouteCandidateRows(
+    PDO $pdo,
+    array $points,
+    string $fuel,
+    float $radiusKm,
+    int $limit,
+    string $cacheDirectory,
+    int $ttlSeconds = 30
+): array {
+    $normalizedPoints = fuelauNormalizeRouteCandidatePoints($points);
+    $cacheKey = hash('sha256', json_encode([
+        'points' => $normalizedPoints,
+        'fuel' => trim($fuel),
+        'radius_km' => round($radiusKm, 2),
+        'limit' => $limit,
+    ], JSON_UNESCAPED_SLASHES) ?: '');
+    $cachePath = rtrim($cacheDirectory, '/') . "/{$cacheKey}.json";
+
+    if (is_file($cachePath) && filemtime($cachePath) >= time() - max(1, $ttlSeconds)) {
+        $cached = json_decode((string) file_get_contents($cachePath), true);
+        if (is_array($cached)) {
+            return $cached;
+        }
+    }
+
+    $rows = fuelauRouteCandidateRows($pdo, $normalizedPoints, $fuel, $radiusKm, $limit);
+    if (!is_dir($cacheDirectory) && !mkdir($cacheDirectory, 0775, true) && !is_dir($cacheDirectory)) {
+        return $rows;
+    }
+
+    if (random_int(1, 100) === 1) {
+        $expiration = time() - max(600, $ttlSeconds * 10);
+        foreach (glob(rtrim($cacheDirectory, '/') . '/*.json') ?: [] as $candidate) {
+            if (is_file($candidate) && filemtime($candidate) < $expiration) {
+                unlink($candidate);
+            }
+        }
+    }
+
+    $encoded = json_encode($rows, JSON_UNESCAPED_SLASHES);
+    if ($encoded === false) {
+        return $rows;
+    }
+
+    $temporaryPath = $cachePath . '.' . getmypid() . '.tmp';
+    if (file_put_contents($temporaryPath, $encoded, LOCK_EX) !== false) {
+        chmod($temporaryPath, 0664);
+        rename($temporaryPath, $cachePath);
+    }
+
+    return $rows;
+}
+
+function fuelauRememberArray(
+    string $cachePath,
+    int $ttlSeconds,
+    callable $loader
+): array {
+    $ttlSeconds = max(1, $ttlSeconds);
+    $readCache = static function () use ($cachePath, $ttlSeconds): ?array {
+        if (!is_file($cachePath) || filemtime($cachePath) < time() - $ttlSeconds) {
+            return null;
+        }
+        $decoded = json_decode((string) file_get_contents($cachePath), true);
+        return is_array($decoded) ? $decoded : null;
+    };
+
+    $cached = $readCache();
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    $directory = dirname($cachePath);
+    if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+        return $loader();
+    }
+    $lock = fopen($cachePath . '.lock', 'c+');
+    if ($lock === false || !flock($lock, LOCK_EX)) {
+        if (is_resource($lock)) {
+            fclose($lock);
+        }
+        return $loader();
+    }
+
+    try {
+        $cached = $readCache();
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $value = $loader();
+        if (!is_array($value)) {
+            throw new RuntimeException('Cached loader must return an array.');
+        }
+        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            return $value;
+        }
+
+        $temporaryPath = $cachePath . '.' . getmypid() . '.tmp';
+        if (file_put_contents($temporaryPath, $encoded, LOCK_EX) !== false) {
+            chmod($temporaryPath, 0664);
+            rename($temporaryPath, $cachePath);
+        }
+        return $value;
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+
+function fuelauCachedFuelSourceSummary(
+    PDO $pdo,
+    string $cacheDirectory,
+    int $ttlSeconds = 300
+): array {
+    return fuelauRememberArray(
+        rtrim($cacheDirectory, '/') . '/fuel-source-summary.json',
+        $ttlSeconds,
+        static fn (): array => fuelauFuelSourceSummary($pdo)
+    );
+}
+
+function fuelauCachedFuelOptions(
+    PDO $pdo,
+    string $cacheDirectory,
+    int $ttlSeconds = 300
+): array {
+    return fuelauRememberArray(
+        rtrim($cacheDirectory, '/') . '/fuel-options.json',
+        $ttlSeconds,
+        static fn (): array => fuelauFuelOptions($pdo)
+    );
+}
+
+function fuelauCachedHistoricalSeries(
+    PDO $pdo,
+    array $filters,
+    string $cacheDirectory,
+    int $ttlSeconds = 300
+): array {
+    $cacheKey = hash('sha256', json_encode([
+        'source' => (string) ($filters['source'] ?? ''),
+        'state' => (string) ($filters['state'] ?? ''),
+        'fuel' => (string) ($filters['fuel'] ?? ''),
+        'period' => (string) ($filters['period'] ?? ''),
+        'lat' => isset($filters['lat']) ? round((float) $filters['lat'], 4) : null,
+        'lon' => isset($filters['lon']) ? round((float) $filters['lon'], 4) : null,
+        'radius_km' => isset($filters['radius_km']) ? round((float) $filters['radius_km'], 1) : null,
+    ], JSON_UNESCAPED_SLASHES) ?: '');
+
+    return fuelauRememberArray(
+        rtrim($cacheDirectory, '/') . "/fuel-history-{$cacheKey}.json",
+        $ttlSeconds,
+        static fn (): array => fuelauHistoricalSeries($pdo, $filters)
+    );
 }
 
 function fuelauFuelSourceSummary(PDO $pdo): array
@@ -724,34 +1133,25 @@ function fuelauFuelOptions(PDO $pdo): array
     ];
 }
 
-function fuelauHistoricalFilters(): array
+function fuelauHistoricalFilters(?array $query = null): array
 {
-    $state = strtoupper(trim((string) ($_GET['state'] ?? '')));
-    $requestedSource = strtolower(trim((string) ($_GET['source'] ?? '')));
-    $fuel = trim((string) ($_GET['fuel'] ?? ''));
-    $period = strtolower(trim((string) ($_GET['period'] ?? 'weekly')));
+    $query ??= $_GET;
+    $fuel = trim((string) ($query['fuel'] ?? ''));
+    $period = strtolower(trim((string) ($query['period'] ?? 'weekly')));
     if (!in_array($period, ['weekly', 'monthly'], true)) {
         $period = 'weekly';
     }
-    $latitude = $_GET['lat'] ?? null;
-    $longitude = $_GET['lon'] ?? null;
-    $radiusKm = isset($_GET['radius_km']) ? max(0.1, (float) $_GET['radius_km']) : null;
-    $source = $requestedSource !== ''
-        ? $requestedSource
-        : match ($state) {
-            'QLD' => 'qld',
-            'SA' => 'sa',
-            'NSW' => 'nsw',
-            'TAS' => 'tas',
-            'VIC' => 'vic',
-            'WA' => 'wa',
-            'NT' => 'nt',
-            default => 'all',
-        };
+    $latitude = $query['lat'] ?? null;
+    $longitude = $query['lon'] ?? null;
+    $radiusKm = isset($query['radius_km']) ? max(0.1, (float) $query['radius_km']) : null;
+    $sourceAndState = fuelauNormalizeFuelSourceAndState(
+        (string) ($query['source'] ?? ''),
+        (string) ($query['state'] ?? '')
+    );
 
     return [
-        'source' => $source,
-        'state' => $state,
+        'source' => $sourceAndState['source'],
+        'state' => $sourceAndState['state'],
         'fuel' => $fuel,
         'period' => $period,
         'lat' => is_numeric((string) $latitude) ? (float) $latitude : null,
@@ -764,14 +1164,9 @@ function fuelauQldHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
-        $where[] = '(CAST(h.fuel_id AS CHAR) = :fuel OR f.name = :fuel)';
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'h.fuel_id', 'f.name');
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
@@ -812,12 +1207,7 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.last_updated_at, '%Y-%m-01')"
@@ -862,12 +1252,7 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.updated_at_utc, '%Y-%m-01')"
@@ -908,12 +1293,7 @@ function fuelauWaHistoryRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.price_date, '%Y-%m-01')"
@@ -940,16 +1320,7 @@ function fuelauWaHistoryRows(PDO $pdo, array $filters): array
     ";
 
     $statement = $pdo->prepare($sql);
-    if ($filters['fuel'] !== '') {
-        $statement->bindValue(':fuel', $filters['fuel']);
-    }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $statement->bindValue(':lat', $filters['lat']);
-        $statement->bindValue(':lon', $filters['lon']);
-        if ($filters['radius_km'] !== null) {
-            $statement->bindValue(':radius_km', $filters['radius_km']);
-        }
-    }
+    fuelauBindHistoricalFilters($statement, $filters);
     $statement->execute();
     return $statement->fetchAll();
 }
@@ -963,12 +1334,7 @@ function fuelauNtHistoryRows(PDO $pdo, array $filters): array
     if ($filters['fuel'] !== '') {
         $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.observed_at_utc, '%Y-%m-01')"
@@ -1005,14 +1371,9 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
-        $where[] = '(h.fuel_id = :fuel OR f.name = :fuel)';
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'h.fuel_id', 'f.name');
     }
-    if ($filters['lat'] !== null && $filters['lon'] !== null) {
-        $where[] = 's.latitude IS NOT NULL AND s.longitude IS NOT NULL';
-        if ($filters['radius_km'] !== null) {
-            $where[] = fuelauDistanceExpression('s.latitude', 's.longitude') . ' <= :radius_km';
-        }
-    }
+    fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
     $selectPeriod = $filters['period'] === 'monthly'
         ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
@@ -1044,57 +1405,31 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
     return $statement->fetchAll();
 }
 
-function fuelauHistoricalSeries(PDO $pdo, array $filters): array
+function fuelauHistoricalRows(PDO $pdo, array $filters): array
 {
-    $source = $filters['source'];
     $rows = [];
-    if ($source === 'all' || $source === 'qld') {
-        $rows = array_merge($rows, fuelauQldHistoryRows($pdo, $filters));
-    }
-    if ($source === 'all' || $source === 'sa') {
-        $saFilters = $filters;
-        if ($source === 'sa') {
-            $saFilters['state'] = 'SA';
-        } elseif ($filters['state'] === '') {
-            $saFilters['state'] = 'SA';
+
+    foreach (fuelauFuelSourcesForFilters($filters) as $source) {
+        $sourceRows = match ($source) {
+            'qld' => fuelauQldHistoryRows($pdo, $filters),
+            'sa' => fuelauSaHistoryRows($pdo, $filters),
+            'nsw' => fuelauNswHistoryRows($pdo, $filters),
+            'vic' => fuelauVicHistoryRows($pdo, $filters),
+            'wa' => fuelauWaHistoryRows($pdo, $filters),
+            'nt' => fuelauNtHistoryRows($pdo, $filters),
+            default => throw new LogicException("Unsupported historical fuel provider: {$source}"),
+        };
+        if ($sourceRows !== []) {
+            $rows = array_merge($rows, $sourceRows);
         }
-        $rows = array_merge($rows, fuelauSaHistoryRows($pdo, $saFilters));
-    }
-    if ($source === 'all' || $source === 'nsw' || $source === 'tas') {
-        $nswFilters = $filters;
-        if ($source === 'tas') {
-            $nswFilters['state'] = 'TAS';
-        } elseif ($source === 'nsw' && $filters['state'] === '') {
-            $nswFilters['state'] = 'NSW';
-        }
-        $rows = array_merge($rows, fuelauNswHistoryRows($pdo, $nswFilters));
-    }
-    if ($source === 'all' || $source === 'vic') {
-        $vicFilters = $filters;
-        if ($source === 'vic') {
-            $vicFilters['state'] = 'VIC';
-        }
-        $rows = array_merge($rows, fuelauVicHistoryRows($pdo, $vicFilters));
-    }
-    if ($source === 'all' || $source === 'wa') {
-        $waFilters = $filters;
-        if ($source === 'wa') {
-            $waFilters['state'] = 'WA';
-        } elseif ($filters['state'] === '') {
-            $waFilters['state'] = 'WA';
-        }
-        $rows = array_merge($rows, fuelauWaHistoryRows($pdo, $waFilters));
-    }
-    if ($source === 'all' || $source === 'nt') {
-        $ntFilters = $filters;
-        if ($source === 'nt') {
-            $ntFilters['state'] = 'NT';
-        } elseif ($filters['state'] === '') {
-            $ntFilters['state'] = 'NT';
-        }
-        $rows = array_merge($rows, fuelauNtHistoryRows($pdo, $ntFilters));
     }
 
+    return $rows;
+}
+
+function fuelauHistoricalSeries(PDO $pdo, array $filters): array
+{
+    $rows = fuelauHistoricalRows($pdo, $filters);
     $buckets = [];
     foreach ($rows as $row) {
         $bucket = (string) $row['bucket_date'];

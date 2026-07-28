@@ -12,9 +12,13 @@ from datetime import timedelta
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
-from urllib.request import urlopen
 
+from sync_utils import build_atomic_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import retry_urlopen
+from sync_utils import sync_duration_message
+from sync_utils import sync_mysql_credentials
+from sync_utils import sync_monotonic
 
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
@@ -51,22 +55,23 @@ def mysql_escape(value: object | None) -> str:
 
 def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]:
     config = parse_env_file(Path(mysql_env_path))
-    required = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE", "MYSQL_USERNAME", "MYSQL_PASSWORD")
+    required = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE")
     missing = [key for key in required if not config.get(key)]
     if missing:
         raise ValueError(f"MySQL env file is missing required keys: {', '.join(missing)}")
 
+    username, password = sync_mysql_credentials(config)
     command = [
         "mysql",
         f"--host={config['MYSQL_HOST']}",
         f"--port={config['MYSQL_PORT']}",
-        f"--user={config['MYSQL_USERNAME']}",
+        f"--user={username}",
         f"--default-character-set={config.get('MYSQL_CHARSET', 'utf8mb4')}",
         "--protocol=TCP",
         config["MYSQL_DATABASE"],
     ]
     env = os.environ.copy()
-    env["MYSQL_PWD"] = config["MYSQL_PASSWORD"]
+    env["MYSQL_PWD"] = password
     return command, env
 
 
@@ -122,7 +127,7 @@ def fetch_json(api_base_url: str, consumer_id: str, path: str) -> dict[str, obje
         },
     )
     try:
-        with urlopen(request, timeout=180) as response:
+        with retry_urlopen(request, timeout=180) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -139,6 +144,7 @@ def parse_vic_datetime(value: object | None) -> str | None:
 
 def log_sync_run(mysql_env_path: str, job_name: str, status: str, rows_processed: int, message: str) -> None:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "")
+    finished_at_sql = "NULL" if status == "started" else mysql_escape(now)
     sql = f"""
 INSERT INTO `vic_sync_runs` (
     `job_name`,
@@ -151,11 +157,13 @@ INSERT INTO `vic_sync_runs` (
 VALUES (
     {mysql_escape(job_name)},
     {mysql_escape(now)},
-    {mysql_escape(now)},
+    {finished_at_sql},
     {mysql_escape(status)},
     {rows_processed},
     {mysql_escape(message[:65535])}
 );
+DELETE FROM `vic_sync_runs`
+WHERE `started_at_utc` < UTC_TIMESTAMP() - INTERVAL 90 DAY;
 """.strip()
     run_mysql_sql(mysql_env_path, sql)
 
@@ -282,8 +290,6 @@ ON DUPLICATE KEY UPDATE
 
 
 def build_prices_current_sql(items: list[dict[str, object]]) -> str:
-    if not items:
-        return ""
     latest_by_key: dict[tuple[object, object], dict[str, object]] = {}
     for item in items:
         key = (item.get("station_id"), item.get("fuel_code"))
@@ -311,21 +317,13 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return f"""
-INSERT INTO `vic_site_prices_current` (
-    `station_id`,
-    `fuel_code`,
-    `updated_at_utc`,
-    `is_available`,
-    `price`
-)
-VALUES
-{",\n".join(values)}
-ON DUPLICATE KEY UPDATE
-    `updated_at_utc` = VALUES(`updated_at_utc`),
-    `is_available` = VALUES(`is_available`),
-    `price` = VALUES(`price`);
-""".strip()
+    return build_atomic_snapshot_sql(
+        table="vic_site_prices_current",
+        columns=["station_id", "fuel_code", "updated_at_utc", "is_available", "price"],
+        key_columns=["station_id", "fuel_code"],
+        freshness_column="updated_at_utc",
+        values=values,
+    )
 
 
 def station_rows_from_price_details(items: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -418,6 +416,8 @@ def sync_prices(mysql_env_path: str, api_base_url: str, consumer_id: str) -> Syn
         current_sql = build_prices_current_sql(prices)
         if current_sql:
             run_mysql_sql(mysql_env_path, current_sql)
+    else:
+        build_prices_current_sql([])
 
     message = f"stations={len(stations)}, prices={len(prices)}"
     return SyncResult(job_name="vic_prices", rows_processed=len(prices), message=message)
@@ -504,6 +504,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
+    started_at = sync_monotonic()
+    run_job_name = f"vic_{args.job.replace('-', '_')}"
     app_config = parse_env_file(Path(args.app_env))
     try:
         consumer_id = required_app_config(app_config, "VIC_SERVO_SAVER_API_KEY")
@@ -514,6 +516,12 @@ def main(argv: list[str] | None = None) -> int:
     if is_unconfigured_value(consumer_id):
         print("info: VIC_SERVO_SAVER_API_KEY is not configured; skipping VIC sync", file=os.sys.stderr)
         return 0
+
+    if args.job != "diagnose":
+        try:
+            log_sync_run(args.mysql_env, run_job_name, "started", 0, "sync started")
+        except Exception:
+            pass
 
     try:
         results: list[SyncResult] = []
@@ -534,19 +542,31 @@ def main(argv: list[str] | None = None) -> int:
         if args.job in ("prices", "all"):
             results.append(sync_prices(args.mysql_env, args.api_base_url, consumer_id))
     except Exception as exc:
+        error_message = sync_duration_message(str(exc), started_at)
         try:
-            log_sync_run(args.mysql_env, f"vic_{args.job.replace('-', '_')}", "error", 0, str(exc))
+            log_sync_run(args.mysql_env, run_job_name, "error", 0, error_message)
         except Exception:
             pass
         print(f"error: {exc}", file=os.sys.stderr)
         return 1
 
     for result in results:
+        result_message = sync_duration_message(result.message, started_at)
         try:
-            log_sync_run(args.mysql_env, result.job_name, "success", result.rows_processed, result.message)
+            log_sync_run(args.mysql_env, result.job_name, "success", result.rows_processed, result_message)
         except Exception:
             pass
         print(f"{result.job_name}: {result.message}")
+    try:
+        log_sync_run(
+            args.mysql_env,
+            run_job_name,
+            "success",
+            sum(result.rows_processed for result in results),
+            sync_duration_message("sync completed", started_at),
+        )
+    except Exception:
+        pass
 
     return 0
 

@@ -4,7 +4,7 @@ Australian fuel price and routing API project.
 
 FuelAU is a Docker-first PHP application based on the previous Fuel app structure. It currently provides:
 
-- A fixed-width-font web UI with tabs for Fuel Prices, Route Planning, and Container Management.
+- A fixed-width-font web UI for fuel prices and route planning.
 - Fuel price graphs, a region-based station map, and clickable station price popups for the selected fuel.
 - Route planning with Nominatim geocoding, OSRM routing, local map display, and fuel-stop planning.
 - A PHP/Apache app container with cron.
@@ -12,10 +12,10 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 - MariaDB-backed South Australia fuel imports.
 - MariaDB-backed NSW Fuel API imports for NSW and Tasmania.
 - Victoria Servo Saver open-data imports.
-- Docker container status, logs, restart controls, and safe prune actions through the Container Management tab.
+- Docker container status, logs, restart controls, and constrained prune actions through an opt-in admin service.
 - Optional Australia routing/geocoding services using OSRM and Nominatim.
 - Optional local Australia vector basemap using Planetiler and TileServer GL.
-- Optional Container Management tab for local admin use; disabled by default.
+- Optional Container Management tab on a separate loopback-only admin service; disabled by default.
 
 All services are managed from the single root `docker-compose.yml`.
 
@@ -30,9 +30,8 @@ The intended access model is LAN-only:
 - Not safe: treating the app as a general internet-facing service.
 - Optional routing and map profiles can remain disabled if you only need the fuel price UI and sync jobs.
 
-If this app is exposed to the internet and compromised, the attacker may be able to:
+If this app is exposed to the internet and compromised, an attacker may be able to:
 
-- control Docker-backed services on the host,
 - read local application data and logs,
 - interfere with routing, map, and sync jobs,
 - and potentially pivot into other devices or services on the same local network.
@@ -43,9 +42,10 @@ Recommended controls before first use:
 - Keep the Docker host behind a firewall and block inbound access from the internet.
 - Allow only trusted LAN devices to reach the app port.
 - If you need remote access, use a VPN or other private tunnel rather than opening the app to the internet.
-- Treat the Container Management tab as a local-admin tool only; it can control Docker resources on the host.
+- Treat the separate Container Management service as a local-admin tool only; it can control allowlisted Docker resources on the host.
 - Keep `MYSQL_HOST_PORT` bound to `127.0.0.1` unless you have a specific reason to expose MariaDB on a trusted private network.
-- To enable the Container Management tab, set `CONTAINER_MANAGEMENT_ENABLED=true` in `.env` and set `CONTAINER_MANAGEMENT_TOKEN` to a strong local secret. When you open the tab, the browser will prompt for that token.
+- The application and admin ports bind to `127.0.0.1` by default. Set `APP_BIND_ADDRESS` or `ADMIN_BIND_ADDRESS` only when deliberate network access is required.
+- To enable the Container Management tab, set `CONTAINER_MANAGEMENT_TOKEN` to a strong local secret and start the `admin` profile. Open `http://localhost:18083/`; the browser exchanges the secret for a 30-minute HttpOnly session and does not persist it in local storage.
 
 If the app is reachable beyond your trusted LAN, that is a misconfiguration that should be corrected before launch.
 
@@ -88,6 +88,47 @@ docker compose up -d --build
 docker compose exec app php setup.php
 ```
 
+### Database migrations
+
+`setup.php` applies ordered files from `migrations/` under a MariaDB advisory lock. It checks already-applied migration checksums, runs transactional migrations inside a transaction, records a version only after its callback and schema assertions pass, and leaves failed versions unapplied. DDL migrations use idempotent statements because MariaDB implicitly commits most DDL.
+
+Fresh databases apply the version-7 baseline followed by later migrations. Existing version-7 installations take the explicit version-8 coordinate-index migration. Re-running setup is safe:
+
+```bash
+docker compose exec app php setup.php
+```
+
+Back up before applying migrations:
+
+```bash
+docker compose exec -T db sh -c \
+  'mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction "$MYSQL_DATABASE"' \
+  > fuelau-before-migration.sql
+```
+
+Migrations are forward-only. If an upgrade must be rolled back, stop the application, preserve the failed database for diagnosis, and restore the backup:
+
+```bash
+docker compose stop app admin
+docker compose exec -T db sh -c \
+  'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' \
+  < fuelau-before-migration.sql
+```
+
+Fresh database initialization can also create separate least-privilege accounts when the `MYSQL_APP_*` and `MYSQL_SYNC_*` values from both `.env.sample` and `config/mysql-sample.env` are configured consistently:
+
+- `MYSQL_USERNAME` / `MYSQL_PASSWORD`: schema migrator used only by `setup.php`.
+- `MYSQL_APP_USERNAME` / `MYSQL_APP_PASSWORD`: public API account with `SELECT` only.
+- `MYSQL_SYNC_USERNAME` / `MYSQL_SYNC_PASSWORD`: importer account with row read/write and temporary-table privileges, but no permanent DDL.
+
+Legacy configurations without the new keys continue to use `MYSQL_USERNAME`. To provision the restricted accounts on an existing database volume, first back up the database, add the matching credentials to both config files, then recreate the database container so it receives the new environment and mounted provisioning script:
+
+```bash
+docker compose up -d --force-recreate db
+docker compose exec db /docker-entrypoint-initdb.d/010-least-privilege-users.sh
+docker compose up -d --force-recreate app
+```
+
 5. Open the web UI:
 
 ```text
@@ -111,9 +152,9 @@ docker compose --profile map up -d map-server map-scheduler
 
 FuelAU can be tested in stages. Start with the base stack first, then add the large routing and map services only when the basic app is working.
 
-### Stage 1: Base App and Container Panel
+### Stage 1: Base App
 
-Use this stage to confirm Docker, PHP, MariaDB, cron, and the Container Management tab work.
+Use this stage to confirm Docker, PHP, MariaDB, and cron work.
 
 1. Clone the repository and enter the project directory.
 
@@ -156,9 +197,17 @@ http://localhost:18080/
 Expected result:
 
 - The UI loads.
-- The Container Management tab shows `app` and `db`.
+- The public application has no Container Management tab or Docker socket access.
 - `/api/health` responds.
 - Fuel charts may be empty until API keys are added and sync jobs run.
+
+To test the optional admin service, set `CONTAINER_MANAGEMENT_TOKEN` in `.env`, then run:
+
+```bash
+docker compose --profile admin up -d --build admin docker-proxy
+```
+
+Open `http://localhost:18083/`. The Container Management tab should show `app`, `admin`, and `db`.
 
 ### Stage 2: Fuel Price Imports
 
@@ -477,6 +526,7 @@ Current core endpoints:
 - `/api/fuel/sources`
 - `/api/fuel/current?source=all&limit=100`
 - `/api/fuel/current?source=all&q=sydney&fuel=DL&state=NSW&lat=-33.8688&lon=151.2093&radius_km=5`
+- `POST /api/fuel/route-candidates` with sampled route points, fuel, and corridor radius
 - `/api/geo/search?q=Sydney&limit=5`
 - `/api/geo/reverse?lat=-33.8688&lon=151.2093`
 - `/api/route?coordinates=151.2093,-33.8688;151.2069,-33.8731`
@@ -658,6 +708,12 @@ Current jobs:
 - Every 30 minutes at `:05` and `:35`: Victoria Servo Saver sync to `/var/log/fuelapi/vic_sync.log`.
 - Daily at 16:35 Brisbane time: Western Australia FuelWatch RSS sync to `/var/log/fuelapi/wa_sync.log`.
 
+Every importer cron entry uses its own non-blocking `flock`; if a previous run is still active, the new invocation records that it skipped the overlap instead of running concurrently. Transient HTTP failures retry up to four times with bounded exponential backoff.
+
+Current-price feeds are validated and loaded into connection-local staging tables before publication. A valid full snapshot is merged in one transaction, older incoming timestamps cannot overwrite newer live prices, and keys absent from the new full snapshot are expired. Empty or duplicate-key snapshots fail before the live transaction. NSW incremental price updates use the same freshness-protected staging merge without expiring keys that are naturally absent from an incremental response.
+
+Sync-run records include start, success/error, row count, and duration events and are retained for 90 days. FPQ diagnostic staging rows are retained for seven days. Fuel price history is intentionally retained indefinitely because it powers the trend views; operators with storage constraints should archive it before introducing a local deletion policy.
+
 The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
 
 Useful checks:
@@ -676,11 +732,12 @@ docker compose --profile map logs -f map-scheduler
 
 ## Container Management
 
-The Container Management tab uses the Docker socket mounted into the `app` container:
+The base `app` service cannot access the Docker socket and always disables management. The opt-in `admin` profile starts:
 
-```yaml
-/var/run/docker.sock:/var/run/docker.sock
-```
+- an `admin` web service on `127.0.0.1:18083` by default; and
+- an internal-only HAProxy service with the Docker socket mounted read-only.
+
+The proxy allowlists only container listing/logs, disk usage, project-container restart, stopped-container prune, and dangling-image prune paths. Docker version, container creation, exec, build, network, volume, and other daemon endpoints are denied. The admin secret is exchanged for a 30-minute HttpOnly, SameSite session; restart and prune requests also require a per-session CSRF token.
 
 It shows configured services even before a container exists, including app, database, Nominatim, OSRM setup/runtime services, and local map services. It currently supports:
 
@@ -700,7 +757,11 @@ The local map services are shown as:
 
 Expected states distinguish always-on runtime services, optional profile runtime services, and one-shot setup jobs. For example, `app` and `db` are expected to be running in the base stack, OSRM setup jobs are expected to be exited successfully or prepared, and `map-server` is expected to run only when the map profile is enabled.
 
-Because this UI can control Docker on the host, only run it in a trusted local environment.
+Because this UI can control allowlisted Docker operations on the host, only run the `admin` profile in a trusted local environment. Stop it when it is not needed:
+
+```bash
+docker compose --profile admin stop admin docker-proxy
+```
 
 ## Routing Services
 
@@ -755,7 +816,7 @@ Current services:
 - `map-server`: local TileServer GL light instance that serves the rebuilt tiles and style JSON
 - `map-scheduler`: weekly Docker CLI scheduler that runs the map build through Compose
 
-The `map-server` healthcheck now probes both the style document and a real Australia vector tile so an empty `australia.mbtiles` file is marked unhealthy instead of rendering a blank map.
+The `map-server` healthcheck now probes both the style document and a real Australia vector tile so an empty `australia.mbtiles` file is marked unhealthy instead of rendering a blank map. Basemap and terrain rebuilds are written to temporary files, validated, and atomically published so a failed rebuild leaves the currently served map intact. The weekly scheduler restarts `map-server` only after a successful basemap publication.
 
 The app exposes the tile server config at `/api/map/config`. The default local settings are:
 
@@ -772,12 +833,14 @@ Rebuild the basemap manually:
 
 ```bash
 docker compose --profile map-setup run --rm map-build
+docker compose --profile map restart map-server
 ```
 
 Rebuild the local terrain tiles manually:
 
 ```bash
 docker compose --profile map-setup run --rm terrain-build
+docker compose --profile map restart map-server
 ```
 
 Start the local tile server and weekly rebuild scheduler:
@@ -816,9 +879,41 @@ docker compose --profile routing-setup up osrm-customize
 docker compose --profile routing up -d nominatim osrm-routed
 docker compose --profile map-setup run --rm map-build
 docker compose --profile map up -d map-server map-scheduler
+docker compose --profile admin up -d admin docker-proxy
 docker compose --profile routing ps
 docker compose down
 ```
+
+## Development Quality Checks
+
+Run the dependency-light regression suite:
+
+```bash
+tests/run
+```
+
+Install the PHP development tools and run the full PHP checks:
+
+```bash
+composer install
+composer test
+composer analyse
+composer analyse:new
+composer format:check
+```
+
+Run the Python and shell checks used by CI:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests/python -p 'test_*.py' -v
+ruff check src tests/python scripts/build-terrain-mbtiles.py
+mypy
+find docker scripts tests -type f \( -name '*.sh' -o -name run \) -print0 | xargs -0 shellcheck
+docker compose --env-file .env.sample --profile admin config --quiet
+node --check public/resources/app.js
+```
+
+GitHub Actions also builds the application and map-builder images. `public/index.php` is a bootstrap-only entry point; HTTP dispatch and controllers live in `src/web.php` and `src/api.php`, immutable request DTOs live in `src/request.php`, and the page markup lives in `templates/app.php`. Browser CSS and JavaScript live in `public/resources/app.css` and `public/resources/app.js`; the remaining inline script contains only server-rendered configuration protected by a per-request CSP nonce. New HTTP modules are checked separately at PHPStan level 9 without raising the existing codebase-wide level or introducing a baseline.
 
 ## Git Hygiene
 

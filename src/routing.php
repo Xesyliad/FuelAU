@@ -118,7 +118,9 @@ function fuelauNominatimUnavailableMessage(): string
 
 function fuelauNominatimSearch(string $query, int $limit = 10): array
 {
-    $payload = fuelauNominatimSearchPayload($query);
+    $query = fuelauValidateNominatimQuery($query);
+    $limit = max(1, min(50, $limit));
+    $payload = fuelauNominatimSearchPayload($query, min(50, max(10, $limit * 2)));
 
     $normalizedQuery = fuelauNormalizeLookupText($query);
     $results = [];
@@ -182,10 +184,45 @@ function fuelauNominatimSearch(string $query, int $limit = 10): array
         }
     );
 
-    return $results;
+    return fuelauLimitNominatimResults($results, $limit);
 }
 
-function fuelauNominatimSearchPayload(string $query): array
+function fuelauCachedNominatimSearch(
+    string $query,
+    int $limit,
+    string $cacheDirectory,
+    int $ttlSeconds = 3600
+): array {
+    $query = fuelauValidateNominatimQuery($query);
+    $limit = max(1, min(50, $limit));
+    $cacheKey = hash('sha256', strtolower($query) . '|' . $limit);
+
+    return fuelauRememberArray(
+        rtrim($cacheDirectory, '/') . "/geo-search-{$cacheKey}.json",
+        $ttlSeconds,
+        static fn (): array => fuelauNominatimSearch($query, $limit)
+    );
+}
+
+function fuelauValidateNominatimQuery(string $query): string
+{
+    $query = trim(preg_replace('/\s+/', ' ', $query) ?? $query);
+    if ($query === '') {
+        throw new FuelauValidationException('Search query must not be empty.');
+    }
+    if (strlen($query) > 200) {
+        throw new FuelauValidationException('Search query must not exceed 200 characters.');
+    }
+
+    return $query;
+}
+
+function fuelauLimitNominatimResults(array $results, int $limit): array
+{
+    return array_slice($results, 0, max(1, min(50, $limit)));
+}
+
+function fuelauNominatimSearchPayload(string $query, int $upstreamLimit = 20): array
 {
     $lastException = null;
     foreach (fuelauNominatimSearchCandidates($query) as $candidate) {
@@ -195,7 +232,7 @@ function fuelauNominatimSearchPayload(string $query): array
                     'format' => 'jsonv2',
                     'addressdetails' => 1,
                     'countrycodes' => 'au',
-                    'limit' => 50,
+                    'limit' => max(1, min(50, $upstreamLimit)),
                     'q' => $candidate,
                 ]),
                 [],
@@ -213,7 +250,7 @@ function fuelauNominatimSearchPayload(string $query): array
         throw $lastException;
     }
 
-    throw new RuntimeException('Nominatim search failed.');
+    throw new FuelauUpstreamException('Nominatim search failed.');
 }
 
 function fuelauNominatimSearchCandidates(string $query): array
@@ -243,7 +280,8 @@ function fuelauNominatimShouldRetrySearch(Throwable $exception): bool
 {
     $message = strtolower($exception->getMessage());
     return str_contains($message, 'query took too long to process')
-        || str_contains($message, 'http 503');
+        || str_contains($message, 'invalid json response')
+        || preg_match('/http 5\d\d/', $message) === 1;
 }
 
 function fuelauNormalizeLookupText(string $text): string
@@ -395,6 +433,8 @@ function fuelauNominatimLookupScore(int $tier, float $importance, float $similar
 
 function fuelauNominatimReverse(float $latitude, float $longitude): array
 {
+    fuelauValidateCoordinates($latitude, $longitude);
+
     $payload = fuelauHttpJsonRequest(
         fuelauHttpBuildUrl(fuelauServiceBaseUrl('nominatim') . '/reverse', [
             'format' => 'jsonv2',
@@ -416,20 +456,50 @@ function fuelauNominatimReverse(float $latitude, float $longitude): array
     ];
 }
 
+function fuelauValidateCoordinates(float $latitude, float $longitude): void
+{
+    if (!is_finite($latitude) || $latitude < -90.0 || $latitude > 90.0) {
+        throw new FuelauValidationException('Latitude must be between -90 and 90.');
+    }
+    if (!is_finite($longitude) || $longitude < -180.0 || $longitude > 180.0) {
+        throw new FuelauValidationException('Longitude must be between -180 and 180.');
+    }
+}
+
+/**
+ * @return list<array{lon: float, lat: float}>
+ */
 function fuelauParseCoordinates(string $coordinates): array
 {
-    $parts = array_values(array_filter(array_map('trim', explode(';', $coordinates))));
+    if (strlen($coordinates) > 8192) {
+        throw new FuelauValidationException('Route coordinates must not exceed 8192 characters.');
+    }
+
+    $parts = array_map('trim', explode(';', $coordinates));
+    if (in_array('', $parts, true)) {
+        throw new FuelauValidationException('Coordinate pairs must not be empty.');
+    }
     if (count($parts) < 2) {
-        throw new RuntimeException('At least two coordinates are required.');
+        throw new FuelauValidationException('At least two coordinates are required.');
+    }
+    if (count($parts) > 100) {
+        throw new FuelauValidationException('At most 100 coordinates are allowed.');
     }
 
     $normalized = [];
     foreach ($parts as $part) {
-        [$longitude, $latitude] = array_map('trim', explode(',', $part, 2) + ['', '']);
-        if (!is_numeric($latitude) || !is_numeric($longitude)) {
-            throw new RuntimeException("Invalid coordinate pair: {$part}");
+        $pair = array_map('trim', explode(',', $part));
+        if (count($pair) !== 2) {
+            throw new FuelauValidationException("Invalid coordinate pair: {$part}");
         }
-        $normalized[] = ['lon' => (float) $longitude, 'lat' => (float) $latitude];
+        [$longitude, $latitude] = $pair;
+        if (!is_numeric($latitude) || !is_numeric($longitude)) {
+            throw new FuelauValidationException("Invalid coordinate pair: {$part}");
+        }
+        $normalizedLongitude = (float) $longitude;
+        $normalizedLatitude = (float) $latitude;
+        fuelauValidateCoordinates($normalizedLatitude, $normalizedLongitude);
+        $normalized[] = ['lon' => $normalizedLongitude, 'lat' => $normalizedLatitude];
     }
 
     return $normalized;
@@ -449,17 +519,38 @@ function fuelauRoutePlan(array $coordinates, bool $steps = true): array
         fuelauHttpBuildUrl(fuelauServiceBaseUrl('osrm') . "/route/v1/driving/{$encodedCoordinates}", [
             'alternatives' => 'false',
             'geometries' => 'geojson',
-            'overview' => 'full',
+            'overview' => 'simplified',
             'steps' => $steps ? 'true' : 'false',
         ]),
         [],
         30
     );
 
+    $routes = is_array($payload['routes'] ?? null) ? $payload['routes'] : [];
+    foreach ($routes as &$route) {
+        if (!is_array($route) || !is_array($route['legs'] ?? null)) {
+            continue;
+        }
+        foreach ($route['legs'] as &$leg) {
+            if (!is_array($leg) || !is_array($leg['steps'] ?? null)) {
+                continue;
+            }
+            foreach ($leg['steps'] as &$step) {
+                if (!is_array($step)) {
+                    continue;
+                }
+                unset($step['geometry'], $step['intersections']);
+            }
+            unset($step);
+        }
+        unset($leg);
+    }
+    unset($route);
+
     return [
         'provider' => 'osrm',
         'code' => (string) ($payload['code'] ?? ''),
-        'routes' => $payload['routes'] ?? [],
+        'routes' => $routes,
         'waypoints' => $payload['waypoints'] ?? [],
     ];
 }
