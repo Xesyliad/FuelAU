@@ -5,6 +5,25 @@ declare(strict_types=1);
 define('FUELAU_MYSQL_ENV_PATH', getenv('FUELAU_MYSQL_ENV_PATH') ?: '/etc/fuelapi/mysql.env');
 define('FUELAU_APP_ENV_PATH', getenv('FUELAU_APP_ENV_PATH') ?: '/etc/fuelapi/app.env');
 
+final class FuelauValidationException extends InvalidArgumentException {}
+
+final class FuelauRateLimitException extends RuntimeException
+{
+    public function __construct(
+        string $message,
+        private readonly int $retryAfterSeconds,
+    ) {
+        parent::__construct($message);
+    }
+
+    public function retryAfterSeconds(): int
+    {
+        return $this->retryAfterSeconds;
+    }
+}
+
+final class FuelauUpstreamException extends RuntimeException {}
+
 function fuelauParseEnvFile(string $path): array
 {
     if (!is_readable($path)) {
@@ -75,18 +94,112 @@ function fuelauConfigBool(array $config, string $key, bool $default = false): bo
     return in_array($value, ['1', 'true', 'yes', 'on'], true);
 }
 
+function fuelauStartContainerManagementSession(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+
+    session_name('fuelau_admin');
+    if (!session_start([
+        'cookie_httponly' => true,
+        'cookie_samesite' => 'Strict',
+        'cookie_secure' => (($_SERVER['HTTPS'] ?? '') === 'on'),
+        'cookie_path' => '/',
+        'gc_maxlifetime' => 1800,
+        'use_strict_mode' => true,
+        'use_only_cookies' => true,
+    ])) {
+        throw new RuntimeException('Unable to start the container management session.');
+    }
+}
+
+function fuelauContainerManagementLogin(array $config, string $providedToken): ?string
+{
+    $expectedToken = trim((string) ($config['CONTAINER_MANAGEMENT_TOKEN'] ?? ''));
+    $providedToken = trim($providedToken);
+    if (
+        $expectedToken === ''
+        || $providedToken === ''
+        || !hash_equals($expectedToken, $providedToken)
+    ) {
+        return null;
+    }
+
+    fuelauStartContainerManagementSession();
+    if (!session_regenerate_id(true)) {
+        throw new RuntimeException('Unable to rotate the container management session.');
+    }
+
+    $csrfToken = bin2hex(random_bytes(32));
+    $_SESSION['fuelau_container_management'] = [
+        'authenticated_at' => time(),
+        'last_activity_at' => time(),
+        'token_fingerprint' => hash('sha256', $expectedToken),
+        'csrf_token' => $csrfToken,
+    ];
+
+    return $csrfToken;
+}
+
 function fuelauContainerManagementAuthorized(array $config): bool
 {
-    $expected = trim((string) ($config['CONTAINER_MANAGEMENT_TOKEN'] ?? ''));
-    if ($expected === '') {
+    fuelauStartContainerManagementSession();
+    $session = $_SESSION['fuelau_container_management'] ?? null;
+    if (!is_array($session)) {
         return false;
     }
 
-    $provided = trim((string) ($_SERVER['HTTP_X_FUELAU_CONTAINER_TOKEN'] ?? ''));
-    return $provided !== '' && hash_equals($expected, $provided);
+    $expectedToken = trim((string) ($config['CONTAINER_MANAGEMENT_TOKEN'] ?? ''));
+    $lastActivityAt = (int) ($session['last_activity_at'] ?? 0);
+    $fingerprint = (string) ($session['token_fingerprint'] ?? '');
+    if (
+        $expectedToken === ''
+        || $lastActivityAt <= 0
+        || time() - $lastActivityAt > 1800
+        || $fingerprint === ''
+        || !hash_equals(hash('sha256', $expectedToken), $fingerprint)
+    ) {
+        unset($_SESSION['fuelau_container_management']);
+        return false;
+    }
+
+    $_SESSION['fuelau_container_management']['last_activity_at'] = time();
+    return true;
 }
 
-function fuelauPdo(): PDO
+function fuelauContainerManagementCsrfToken(): string
+{
+    fuelauStartContainerManagementSession();
+    return (string) ($_SESSION['fuelau_container_management']['csrf_token'] ?? '');
+}
+
+function fuelauContainerManagementCsrfValid(): bool
+{
+    $expected = fuelauContainerManagementCsrfToken();
+    $provided = trim((string) ($_SERVER['HTTP_X_FUELAU_CSRF_TOKEN'] ?? ''));
+    return $expected !== '' && $provided !== '' && hash_equals($expected, $provided);
+}
+
+function fuelauContainerManagementLogout(): void
+{
+    fuelauStartContainerManagementSession();
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $parameters = session_get_cookie_params();
+        setcookie(session_name(), '', [
+            'expires' => time() - 3600,
+            'path' => $parameters['path'],
+            'domain' => $parameters['domain'],
+            'secure' => $parameters['secure'],
+            'httponly' => $parameters['httponly'],
+            'samesite' => $parameters['samesite'] ?? 'Strict',
+        ]);
+    }
+    session_destroy();
+}
+
+function fuelauConfiguredPdo(string $usernameKey, string $passwordKey): PDO
 {
     $config = fuelauConfig();
     $dsn = sprintf(
@@ -94,19 +207,43 @@ function fuelauPdo(): PDO
         fuelauRequiredConfig($config, 'MYSQL_HOST'),
         fuelauRequiredConfig($config, 'MYSQL_PORT'),
         fuelauRequiredConfig($config, 'MYSQL_DATABASE'),
-        trim((string) ($config['MYSQL_CHARSET'] ?? 'utf8mb4'))
+        trim((string) ($config['MYSQL_CHARSET'] ?? 'utf8mb4')),
     );
 
     return new PDO(
         $dsn,
-        fuelauRequiredConfig($config, 'MYSQL_USERNAME'),
-        fuelauRequiredConfig($config, 'MYSQL_PASSWORD'),
+        fuelauRequiredConfig($config, $usernameKey),
+        fuelauRequiredConfig($config, $passwordKey),
         [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => true,
-        ]
+        ],
     );
+}
+
+function fuelauPdo(): PDO
+{
+    $config = fuelauConfig();
+    $useAppCredentials = trim((string) ($config['MYSQL_APP_USERNAME'] ?? '')) !== ''
+        && trim((string) ($config['MYSQL_APP_PASSWORD'] ?? '')) !== '';
+    $usernameKey = $useAppCredentials ? 'MYSQL_APP_USERNAME' : 'MYSQL_USERNAME';
+    $passwordKey = $useAppCredentials ? 'MYSQL_APP_PASSWORD' : 'MYSQL_PASSWORD';
+    return fuelauConfiguredPdo($usernameKey, $passwordKey);
+}
+
+function fuelauMigrationPdo(): PDO
+{
+    $config = fuelauConfig();
+    $useMigrationCredentials = trim((string) ($config['MYSQL_MIGRATION_USERNAME'] ?? '')) !== ''
+        && trim((string) ($config['MYSQL_MIGRATION_PASSWORD'] ?? '')) !== '';
+    $usernameKey = $useMigrationCredentials
+        ? 'MYSQL_MIGRATION_USERNAME'
+        : 'MYSQL_USERNAME';
+    $passwordKey = $useMigrationCredentials
+        ? 'MYSQL_MIGRATION_PASSWORD'
+        : 'MYSQL_PASSWORD';
+    return fuelauConfiguredPdo($usernameKey, $passwordKey);
 }
 
 function fuelauRateLimit(string $bucket, int $limit, int $windowSeconds): void
@@ -137,7 +274,7 @@ function fuelauRateLimit(string $bucket, int $limit, int $windowSeconds): void
         if ($payload !== false && $payload !== '') {
             $decoded = json_decode($payload, true);
             if (is_array($decoded)) {
-                $timestamps = array_values(array_filter(array_map('intval', $decoded), static fn (int $value): bool => $value > 0));
+                $timestamps = array_values(array_filter(array_map('intval', $decoded), static fn(int $value): bool => $value > 0));
             }
         }
 
@@ -145,11 +282,18 @@ function fuelauRateLimit(string $bucket, int $limit, int $windowSeconds): void
         $threshold = $now - $windowSeconds;
         $timestamps = array_values(array_filter(
             $timestamps,
-            static fn (int $timestamp): bool => $timestamp >= $threshold
+            static fn(int $timestamp): bool => $timestamp >= $threshold,
         ));
 
         if (count($timestamps) >= $limit) {
-            throw new RuntimeException('Rate limit exceeded.');
+            $retryAfterSeconds = max(
+                1,
+                ((int) min($timestamps) + $windowSeconds) - $now,
+            );
+            throw new FuelauRateLimitException(
+                'Rate limit exceeded.',
+                $retryAfterSeconds,
+            );
         }
 
         $timestamps[] = $now;

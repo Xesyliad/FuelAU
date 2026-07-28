@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
+import fcntl
 import math
 import os
 import sqlite3
@@ -99,6 +101,75 @@ def init_db(path: str) -> sqlite3.Connection:
     return connection
 
 
+def remove_sqlite_files(path: str) -> None:
+    for suffix in ("", "-wal", "-shm"):
+        candidate = f"{path}{suffix}"
+        try:
+            os.remove(candidate)
+        except FileNotFoundError:
+            pass
+
+
+@contextlib.contextmanager
+def build_lock(output: str):
+    lock_path = f"{output}.lock"
+    lock_handle = open(lock_path, "a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError(f"another terrain build is already publishing {output}") from error
+        yield
+    finally:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+        lock_handle.close()
+
+
+def validate_db(path: str, min_zoom: int, max_zoom: int, expected_tiles: int) -> None:
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        if integrity is None or integrity[0] != "ok":
+            raise RuntimeError(f"terrain database integrity check failed: {integrity}")
+
+        metadata = dict(connection.execute("SELECT name, value FROM metadata").fetchall())
+        expected_metadata = {
+            "format": "png",
+            "minzoom": str(min_zoom),
+            "maxzoom": str(max_zoom),
+            "encoding": "terrarium",
+        }
+        for key, expected in expected_metadata.items():
+            if metadata.get(key) != expected:
+                raise RuntimeError(
+                    f"terrain metadata {key} expected {expected!r}, got {metadata.get(key)!r}"
+                )
+
+        tile_count = int(connection.execute("SELECT COUNT(*) FROM tiles").fetchone()[0])
+        if tile_count != expected_tiles:
+            raise RuntimeError(
+                f"terrain database expected {expected_tiles:,} tiles, found {tile_count:,}"
+            )
+    finally:
+        connection.close()
+
+
+def durable_replace(source: str, destination: str) -> None:
+    source_handle = os.open(source, os.O_RDONLY)
+    try:
+        os.fsync(source_handle)
+    finally:
+        os.close(source_handle)
+
+    os.replace(source, destination)
+    directory = os.path.dirname(os.path.abspath(destination)) or "."
+    directory_handle = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(directory_handle)
+    finally:
+        os.close(directory_handle)
+
+
 def write_metadata(connection: sqlite3.Connection, min_zoom: int, max_zoom: int) -> None:
     entries = {
         "name": "FuelAU Terrain",
@@ -116,10 +187,15 @@ def write_metadata(connection: sqlite3.Connection, min_zoom: int, max_zoom: int)
     connection.commit()
 
 
-def build(output: str, min_zoom: int, max_zoom: int, workers: int, retries: int, timeout: int) -> None:
+def build_temporary_database(
+    output: str,
+    min_zoom: int,
+    max_zoom: int,
+    workers: int,
+    retries: int,
+    timeout: int,
+) -> int:
     connection = init_db(output)
-    write_metadata(connection, min_zoom, max_zoom)
-
     tile_tasks: list[tuple[int, int, int, str]] = []
     for zoom in range(min_zoom, max_zoom + 1):
         x_min, x_max, y_min, y_max = tile_bounds(zoom)
@@ -134,42 +210,76 @@ def build(output: str, min_zoom: int, max_zoom: int, workers: int, retries: int,
     failures = 0
     batch: list[tuple[int, int, int, bytes]] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        iterator = executor.map(
-            lambda task: fetch_task(task, retries, timeout),
-            tile_tasks,
-            chunksize=64,
-        )
-        for zoom, x, y, data, error in iterator:
-            if error is not None or data is None:
-                failures += 1
-                print(f"failed z{zoom}/{x}/{y}: {error}", file=sys.stderr)
-                continue
-            batch.append((zoom, x, tms_y(zoom, y), data))
-            inserted += 1
-            if len(batch) >= 1000:
-                connection.executemany(
-                    "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
-                    batch,
-                )
-                connection.commit()
-                batch.clear()
-            if inserted % 5000 == 0 or inserted == total:
-                print(f"downloaded {inserted:,}/{total:,}", file=sys.stderr)
+    try:
+        write_metadata(connection, min_zoom, max_zoom)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            iterator = executor.map(
+                lambda task: fetch_task(task, retries, timeout),
+                tile_tasks,
+                chunksize=64,
+            )
+            for zoom, x, y, data, error in iterator:
+                if error is not None or data is None:
+                    failures += 1
+                    print(f"failed z{zoom}/{x}/{y}: {error}", file=sys.stderr)
+                    continue
+                batch.append((zoom, x, tms_y(zoom, y), data))
+                inserted += 1
+                if len(batch) >= 1000:
+                    connection.executemany(
+                        "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                        batch,
+                    )
+                    connection.commit()
+                    batch.clear()
+                if inserted % 5000 == 0 or inserted == total:
+                    print(f"downloaded {inserted:,}/{total:,}", file=sys.stderr)
 
-    if batch:
-        connection.executemany(
-            "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
-            batch,
-        )
+        if batch:
+            connection.executemany(
+                "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                batch,
+            )
+            connection.commit()
+
+        connection.execute("ANALYZE")
         connection.commit()
-
-    connection.execute("ANALYZE")
-    connection.commit()
-    connection.close()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        connection.close()
 
     if failures:
-        raise SystemExit(f"terrain build completed with {failures} failed tiles")
+        raise RuntimeError(f"terrain build completed with {failures} failed tiles")
+
+    return total
+
+
+def build(output: str, min_zoom: int, max_zoom: int, workers: int, retries: int, timeout: int) -> None:
+    if min_zoom < 0 or max_zoom < min_zoom:
+        raise ValueError("zoom range is invalid")
+    if workers <= 0:
+        raise ValueError("workers must be positive")
+
+    output = os.path.abspath(output)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    temporary_output = f"{output}.building-{os.getpid()}"
+
+    with build_lock(output):
+        remove_sqlite_files(temporary_output)
+        try:
+            expected_tiles = build_temporary_database(
+                temporary_output,
+                min_zoom,
+                max_zoom,
+                workers,
+                retries,
+                timeout,
+            )
+            validate_db(temporary_output, min_zoom, max_zoom, expected_tiles)
+            durable_replace(temporary_output, output)
+            print(f"Published {expected_tiles:,} terrain tiles to {output}", file=sys.stderr)
+        finally:
+            remove_sqlite_files(temporary_output)
 
 
 def parse_args() -> argparse.Namespace:

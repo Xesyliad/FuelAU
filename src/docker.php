@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-const FUELAU_DOCKER_SOCKET = '/var/run/docker.sock';
-
 function fuelauProjectRoot(): string
 {
     return dirname(__DIR__);
@@ -43,13 +41,17 @@ function fuelauDockerChunkDecode(string $body): string
 
 function fuelauDockerRequest(string $method, string $path, ?array $payload = null): array
 {
-    if (!is_readable(FUELAU_DOCKER_SOCKET)) {
-        throw new RuntimeException('Docker socket is not available to the app container.');
+    $address = trim((string) getenv('FUELAU_DOCKER_API_ADDRESS'));
+    if (
+        $address === ''
+        || preg_match('/^[a-z0-9.-]+:[1-9][0-9]{0,4}$/i', $address) !== 1
+    ) {
+        throw new RuntimeException('The restricted Docker API proxy is not configured.');
     }
 
-    $socket = @stream_socket_client('unix://' . FUELAU_DOCKER_SOCKET, $errno, $errstr, 5);
+    $socket = @stream_socket_client('tcp://' . $address, $errno, $errstr, 5);
     if ($socket === false) {
-        throw new RuntimeException("Unable to connect to Docker socket: {$errstr}");
+        throw new RuntimeException("Unable to connect to the Docker API proxy: {$errstr}");
     }
 
     $body = $payload === null ? '' : json_encode($payload, JSON_UNESCAPED_SLASHES);
@@ -58,7 +60,7 @@ function fuelauDockerRequest(string $method, string $path, ?array $payload = nul
     }
 
     $request = "{$method} {$path} HTTP/1.1\r\n"
-        . "Host: docker\r\n"
+        . "Host: {$address}\r\n"
         . "Connection: close\r\n";
 
     if ($body !== '') {

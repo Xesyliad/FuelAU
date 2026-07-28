@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FuelAU">
+  <rect width="64" height="64" rx="14" fill="#0f766e"/>
+  <path d="M18 13h24a5 5 0 0 1 5 5v33H13V18a5 5 0 0 1 5-5Z" fill="#f8fafc"/>
+  <path d="M19 19h22v14H19z" fill="#bae6fd"/>
+  <path d="M17 45h26v6H17z" fill="#0f172a"/>
+  <path d="M47 24h3l5 6v15a4 4 0 0 1-8 0v-8h4v8" fill="none" stroke="#f8fafc" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  <path d="M24 39h12" stroke="#0f766e" stroke-linecap="round" stroke-width="4"/>
+</svg>

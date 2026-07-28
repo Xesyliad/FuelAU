@@ -1,0 +1,15 @@
+#!/bin/sh
+set -u
+
+project_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+status=0
+
+php "$project_root/tests/php/regression.php" || status=1
+php "$project_root/tests/php/api-contract.php" || status=1
+php "$project_root/tests/php/admin-contract.php" || status=1
+PYTHONPATH="$project_root/src" python3 -m unittest discover \
+    -s "$project_root/tests/python" \
+    -p 'test_*.py' \
+    -v || status=1
+
+exit "$status"

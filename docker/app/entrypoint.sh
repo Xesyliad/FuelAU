@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+if [ "${CONTAINER_MANAGEMENT_ENABLED:-false}" = "true" ] \
+    && [ -z "${CONTAINER_MANAGEMENT_TOKEN:-}" ]; then
+    echo "CONTAINER_MANAGEMENT_TOKEN must be set for the admin service." >&2
+    exit 1
+fi
+
 mkdir -p /var/log/fuelapi
 touch /var/log/fuelapi/cron.log
 chown -R www-data:www-data /var/log/fuelapi 2>/dev/null || true
@@ -32,17 +38,9 @@ if [ -e /var/www/html/public/index.php ]; then
     fi
 fi
 
-if [ -S /var/run/docker.sock ]; then
-    docker_gid="$(stat -c '%g' /var/run/docker.sock)"
-    docker_group="$(getent group "$docker_gid" | cut -d: -f1 || true)"
-    if [ -z "$docker_group" ]; then
-        docker_group="dockerhost"
-        groupadd -g "$docker_gid" "$docker_group"
-    fi
-    usermod -aG "$docker_group" www-data
+if [ "${FUELAU_CRON_ENABLED:-true}" = "true" ]; then
+    crontab /etc/cron.d/fuelau
+    service cron start
 fi
-
-crontab /etc/cron.d/fuelau
-service cron start
 
 exec "$@"

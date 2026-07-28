@@ -8,16 +8,19 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
-from datetime import timedelta
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request
-from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 from xml.etree import ElementTree
 
+from sync_utils import build_atomic_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import retry_urlopen
+from sync_utils import sync_duration_message
+from sync_utils import sync_mysql_credentials
+from sync_utils import sync_monotonic
 
 
 DEFAULT_MYSQL_ENV_PATH = "/etc/fuelapi/mysql.env"
@@ -80,22 +83,23 @@ def mysql_escape(value: object | None) -> str:
 
 def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]:
     config = parse_env_file(Path(mysql_env_path))
-    required = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE", "MYSQL_USERNAME", "MYSQL_PASSWORD")
+    required = ("MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE")
     missing = [key for key in required if not config.get(key)]
     if missing:
         raise ValueError(f"MySQL env file is missing required keys: {', '.join(missing)}")
 
+    username, password = sync_mysql_credentials(config)
     command = [
         "mysql",
         f"--host={config['MYSQL_HOST']}",
         f"--port={config['MYSQL_PORT']}",
-        f"--user={config['MYSQL_USERNAME']}",
+        f"--user={username}",
         f"--default-character-set={config.get('MYSQL_CHARSET', 'utf8mb4')}",
         "--protocol=TCP",
         config["MYSQL_DATABASE"],
     ]
     env = os.environ.copy()
-    env["MYSQL_PWD"] = config["MYSQL_PASSWORD"]
+    env["MYSQL_PWD"] = password
     return command, env
 
 
@@ -142,7 +146,7 @@ def request_json(url: str, timeout: int = 180) -> str:
         },
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with retry_urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8-sig")
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -243,6 +247,7 @@ def station_id_for(item: dict[str, object]) -> str:
 
 def log_sync_run(mysql_env_path: str, job_name: str, status: str, rows_processed: int, message: str) -> None:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "")
+    finished_at_sql = "NULL" if status == "started" else mysql_escape(now)
     sql = f"""
 INSERT INTO `wa_sync_runs` (
     `job_name`,
@@ -255,11 +260,13 @@ INSERT INTO `wa_sync_runs` (
 VALUES (
     {mysql_escape(job_name)},
     {mysql_escape(now)},
-    {mysql_escape(now)},
+    {finished_at_sql},
     {mysql_escape(status)},
     {rows_processed},
     {mysql_escape(message[:65535])}
 );
+DELETE FROM `wa_sync_runs`
+WHERE `started_at_utc` < UTC_TIMESTAMP() - INTERVAL 90 DAY;
 """.strip()
     run_mysql_sql(mysql_env_path, sql)
 
@@ -377,8 +384,6 @@ ON DUPLICATE KEY UPDATE
 
 
 def build_prices_current_sql(items: list[dict[str, object]]) -> str:
-    if not items:
-        return ""
     values = []
     for item in items:
         values.append(
@@ -393,19 +398,13 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return f"""
-START TRANSACTION;
-DELETE FROM `wa_site_prices_current`;
-INSERT INTO `wa_site_prices_current` (
-    `station_id`,
-    `fuel_code`,
-    `price_date`,
-    `price`
-)
-VALUES
-{",\n".join(values)};
-COMMIT;
-""".strip()
+    return build_atomic_snapshot_sql(
+        table="wa_site_prices_current",
+        columns=["station_id", "fuel_code", "price_date", "price"],
+        key_columns=["station_id", "fuel_code"],
+        freshness_column="price_date",
+        values=values,
+    )
 
 
 def extract_records_for_day(day: str, product: int, state_region: int, feed_base_url: str) -> list[dict[str, object]]:
@@ -531,10 +530,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or os.sys.argv[1:])
+    started_at = sync_monotonic()
+    run_job_name = f"wa_{args.job.replace('-', '_')}"
     app_config = parse_env_file(Path(args.app_env))
     feed_base_url = args.feed_base_url.strip() or app_config.get("WA_FUELWATCH_FEED_BASE_URL", DEFAULT_FEED_BASE_URL)
     if is_unconfigured_value(feed_base_url):
         feed_base_url = DEFAULT_FEED_BASE_URL
+
+    if args.job != "diagnose":
+        try:
+            log_sync_run(args.mysql_env, run_job_name, "started", 0, "sync started")
+        except Exception:
+            pass
 
     try:
         results: list[SyncResult] = []
@@ -551,13 +558,26 @@ def main(argv: list[str] | None = None) -> int:
         else:
             results.append(sync_prices(args.mysql_env, feed_base_url))
         for result in results:
-            log_sync_run(args.mysql_env, result.job_name, "success", result.rows_processed, result.message)
+            log_sync_run(
+                args.mysql_env,
+                result.job_name,
+                "success",
+                result.rows_processed,
+                sync_duration_message(result.message, started_at),
+            )
             print(f"{result.job_name}: rows={result.rows_processed} {result.message}")
+        log_sync_run(
+            args.mysql_env,
+            run_job_name,
+            "success",
+            sum(result.rows_processed for result in results),
+            sync_duration_message("sync completed", started_at),
+        )
         return 0
     except Exception as exc:
-        job_name = f"wa_{args.job}"
+        error_message = sync_duration_message(str(exc), started_at)
         try:
-            log_sync_run(args.mysql_env, job_name, "error", 0, str(exc))
+            log_sync_run(args.mysql_env, run_job_name, "error", 0, error_message)
         except Exception:
             pass
         print(f"error: {exc}", file=os.sys.stderr)

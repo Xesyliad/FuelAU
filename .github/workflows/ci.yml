@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: dom, mbstring, pdo_mysql, xmlwriter
+          coverage: none
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install quality tools
+        run: |
+          composer install --no-interaction --prefer-dist
+          python -m pip install mypy ruff
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run PHP tests and analysis
+        run: |
+          composer test
+          composer analyse
+          composer analyse:new
+          composer format:check
+          find src migrations tests/php tests/phpunit -name '*.php' -print0 |
+            xargs -0 -n1 php -l
+
+      - name: Run Python tests and analysis
+        run: |
+          PYTHONPATH=src python -m unittest discover -s tests/python -p 'test_*.py' -v
+          ruff check src tests/python scripts/build-terrain-mbtiles.py
+          mypy
+
+      - name: Validate shell, Compose, and rendered JavaScript
+        run: |
+          find docker scripts tests -type f \( -name '*.sh' -o -name run \) -print0 |
+            xargs -0 shellcheck
+          docker compose --env-file .env.sample --profile admin config --quiet
+          node --check public/resources/app.js
+          FUELAU_MYSQL_ENV_PATH="$PWD/config/mysql-sample.env" \
+            FUELAU_APP_ENV_PATH="$PWD/config/app-sample.env" \
+            php -r '$_SERVER["REQUEST_URI"]="/"; $_SERVER["REQUEST_METHOD"]="GET"; require "public/index.php";' |
+            node --input-type=module -e 'let source=""; for await (const chunk of process.stdin) source += chunk; const scripts=[...source.matchAll(/<script(?:\s+nonce="[^"]+")?>([\s\S]*?)<\/script>/g)].map((match)=>match[1]); scripts.forEach((script)=>new Function(script));'
+
+      - name: Build application containers
+        run: docker compose --env-file .env.sample build app map-build

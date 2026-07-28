@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 require __DIR__ . '/src/bootstrap.php';
+require __DIR__ . '/src/migrations.php';
 
-const FUELAU_SCHEMA_VERSION = 7;
+const FUELAU_SCHEMA_VERSION = 8;
 
 function fuelauEnsureRuntimeDirectories(): void
 {
@@ -12,6 +13,8 @@ function fuelauEnsureRuntimeDirectories(): void
         [__DIR__ . '/var/docker/app-logs', 0775, 'www-data', 'www-data'],
         [__DIR__ . '/var/docker/app-state', 0775, 'www-data', 'www-data'],
         [__DIR__ . '/var/docker/app-state/rate-limits', 0775, 'www-data', 'www-data'],
+        [__DIR__ . '/var/docker/app-state/route-candidate-cache', 0775, 'www-data', 'www-data'],
+        [__DIR__ . '/var/docker/app-state/aggregate-cache', 0775, 'www-data', 'www-data'],
         [__DIR__ . '/var/docker/db-data', 0777, 999, 999],
         [__DIR__ . '/var/docker/nominatim-db', 0755, 100, 103],
         [__DIR__ . '/var/docker/nominatim-db/16', 0755, 100, 103],
@@ -49,7 +52,7 @@ function fuelauApplyStatements(PDO $pdo, array $statements): void
     }
 }
 
-function fuelauEnsureSchema(PDO $pdo): void
+function fuelauEnsureBaselineSchema(PDO $pdo): void
 {
     fuelauApplyStatements(
         $pdo,
@@ -740,18 +743,24 @@ CREATE TABLE IF NOT EXISTS `wa_sync_runs` (
 SQL,
         ]
     );
-
-    $statement = $pdo->prepare(
-        'INSERT IGNORE INTO `schema_migrations` (`version`) VALUES (:version)'
-    );
-    foreach ([1, FUELAU_SCHEMA_VERSION] as $version) {
-        $statement->execute(['version' => $version]);
-    }
 }
 
-fuelauEnsureRuntimeDirectories();
+function fuelauSetupMain(): void
+{
+    fuelauEnsureRuntimeDirectories();
 
-$pdo = fuelauPdo();
-fuelauEnsureSchema($pdo);
+    $pdo = fuelauMigrationPdo();
+    $version = fuelauApplyMigrations($pdo, __DIR__ . '/migrations');
+    if ($version !== FUELAU_SCHEMA_VERSION) {
+        throw new RuntimeException(
+            "Migration directory ended at version {$version}; expected "
+            . FUELAU_SCHEMA_VERSION
+        );
+    }
 
-fwrite(STDOUT, 'FuelAU schema is up to date at version ' . FUELAU_SCHEMA_VERSION . PHP_EOL);
+    fwrite(STDOUT, 'FuelAU schema is up to date at version ' . FUELAU_SCHEMA_VERSION . PHP_EOL);
+}
+
+if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
+    fuelauSetupMain();
+}
