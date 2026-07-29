@@ -3807,6 +3807,7 @@ function formatDateTime(value) {
             return parsedDate.toLocaleDateString('en-AU', {
                 day: '2-digit',
                 month: 'short',
+                timeZone: 'Australia/Brisbane',
             });
         }
         return text;
@@ -3820,6 +3821,7 @@ function formatDateTime(value) {
         month: 'short',
         hour: '2-digit',
         minute: '2-digit',
+        timeZone: 'Australia/Brisbane',
     });
 }
 
@@ -3964,14 +3966,16 @@ function renderFuelSummary(summary) {
     cards.forEach(([label, item]) => {
         const currentPrices = Number(item?.current_prices || 0);
         const stations = Number(item?.stations || 0);
-        const latestUpdate = item?.latest_update || 'No data yet';
+        const latestUpdate = item?.latest_update ? formatDateTime(item.latest_update) : 'No data yet';
+        const lastChecked = item?.last_checked ? formatDateTime(item.last_checked) : '';
         const card = document.createElement('article');
         card.className = 'summary-card';
         card.innerHTML = `
             <strong>${escapeHtml(String(currentPrices))}</strong>
             <span>${escapeHtml(label)} current prices</span>
             <span>${escapeHtml(String(stations))} stations</span>
-            <span>${escapeHtml(latestUpdate)}</span>
+            <span>Latest report: ${escapeHtml(latestUpdate)}</span>
+            ${lastChecked ? `<span>Last checked: ${escapeHtml(lastChecked)}</span>` : ''}
         `;
         fuelSummary.appendChild(card);
     });
@@ -4187,7 +4191,11 @@ function renderBarChart(container, meta, series) {
 }
 
 function renderSnapshot(rows) {
-    const visibleRows = fuelRowsForRendering(rows);
+    const visibleRows = fuelRowsForRendering(rows).sort((left, right) => {
+        const leftTime = new Date(String(left?.updated_at || '').replace(' ', 'T') + 'Z').getTime();
+        const rightTime = new Date(String(right?.updated_at || '').replace(' ', 'T') + 'Z').getTime();
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    });
     if (visibleRows.length === 0) {
         fuelSnapshot.innerHTML = chartEmpty('No current prices available for this filter.');
         return;
@@ -4207,7 +4215,7 @@ function renderSnapshot(rows) {
                     <tr>
                         <td>${escapeHtml(row.station_name)}<br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
                         <td>${escapeHtml(row.fuel_name)}</td>
-                        <td><span class="snapshot-price-row"><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span>${snapshotPriceMovementMarkup(row)}</span><br><span>${escapeHtml(formatDateTime(row.updated_at))}</span></td>
+                        <td><span class="snapshot-price-row"><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span>${snapshotPriceMovementMarkup(row)}</span><br><span>Reported ${escapeHtml(formatDateTime(row.updated_at))}</span>${row.last_seen_at ? `<br><span>Checked ${escapeHtml(formatDateTime(row.last_seen_at))}</span>` : ''}</td>
                     </tr>
                 `).join('')}
             </tbody>

@@ -13,8 +13,10 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request
 
-from sync_utils import build_atomic_snapshot_sql
+from sync_utils import build_change_aware_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import parse_publication_metrics
+from sync_utils import publication_metrics_message
 from sync_utils import retry_urlopen
 from sync_utils import sync_duration_message
 from sync_utils import sync_mysql_credentials
@@ -78,11 +80,12 @@ def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]
     return command, env
 
 
-def run_mysql_sql(mysql_env_path: str, sql: str) -> None:
+def run_mysql_sql(mysql_env_path: str, sql: str) -> str:
     command, env = build_mysql_command(mysql_env_path)
     result = subprocess.run(command, input=sql, text=True, env=env, capture_output=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "mysql exited with a non-zero status")
+    return result.stdout
 
 
 def query_mysql_values(mysql_env_path: str, sql: str) -> list[str]:
@@ -442,8 +445,9 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return build_atomic_snapshot_sql(
-        table="sa_site_prices_current",
+    return build_change_aware_snapshot_sql(
+        current_table="sa_site_prices_current",
+        history_table="sa_site_prices_history",
         columns=[
             "station_id",
             "fuel_id",
@@ -453,6 +457,7 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
         ],
         key_columns=["station_id", "fuel_id"],
         freshness_column="transaction_date_utc",
+        state_columns=["collection_method", "price"],
         values=values,
     )
 
@@ -590,9 +595,9 @@ def sync_prices(mysql_env_path: str, api_base_url: str, token: str) -> SyncResul
     if not price_rows:
         raise RuntimeError("South Australia price feed returned no usable prices")
 
-    run_mysql_sql(mysql_env_path, build_prices_current_sql(payload_items))
-    run_mysql_sql(mysql_env_path, build_prices_history_sql(payload_items))
-    message = f"regions={len(region_ids)} prices={len(price_rows)}"
+    output = run_mysql_sql(mysql_env_path, build_prices_current_sql(payload_items))
+    metrics = parse_publication_metrics(output)
+    message = f"regions={len(region_ids)} {publication_metrics_message(metrics)}"
     return SyncResult(job_name="sa_prices", rows_processed=len(price_rows), message=message)
 
 

@@ -14,8 +14,10 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request
 
-from sync_utils import build_atomic_snapshot_sql
+from sync_utils import build_change_aware_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import parse_publication_metrics
+from sync_utils import publication_metrics_message
 from sync_utils import retry_urlopen
 from sync_utils import sync_duration_message
 from sync_utils import sync_mysql_credentials
@@ -79,11 +81,12 @@ def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]
     return command, env
 
 
-def run_mysql_sql(mysql_env_path: str, sql: str) -> None:
+def run_mysql_sql(mysql_env_path: str, sql: str) -> str:
     command, env = build_mysql_command(mysql_env_path)
     result = subprocess.run(command, input=sql, text=True, env=env, capture_output=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "mysql exited with a non-zero status")
+    return result.stdout
 
 
 def query_mysql_values(mysql_env_path: str, sql: str) -> list[str]:
@@ -554,13 +557,8 @@ ON DUPLICATE KEY UPDATE
 
 
 def build_prices_current_sql(items: list[dict[str, object]]) -> str:
-    latest_by_key: dict[tuple[object, object], dict[str, object]] = {}
-    for item in items:
-        key = (item.get("station_id"), item.get("fuel_code"))
-        latest_by_key[key] = item
-
     values = []
-    for item in latest_by_key.values():
+    for item in items:
         values.append(
             "("
             + ", ".join(
@@ -574,12 +572,17 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return build_atomic_snapshot_sql(
-        table="nt_site_prices_current",
+    return build_change_aware_snapshot_sql(
+        current_table="nt_site_prices_current",
+        history_table="nt_site_prices_history",
         columns=["station_id", "fuel_code", "observed_at_utc", "is_available", "price"],
         key_columns=["station_id", "fuel_code"],
         freshness_column="observed_at_utc",
+        state_columns=["is_available", "price"],
         values=values,
+        missing_means_unavailable=True,
+        availability_column="is_available",
+        price_column="price",
     )
 
 
@@ -639,14 +642,15 @@ def sync_prices(mysql_env_path: str, api_base_url: str, token: str) -> SyncResul
             outlets = [payload]
         price_rows.extend(build_price_rows(outlets, observed_at_utc))
     if price_rows:
-        run_batched_sql(mysql_env_path, price_rows, build_prices_history_sql)
         current_sql = build_prices_current_sql(price_rows)
-        if current_sql:
-            run_mysql_sql(mysql_env_path, current_sql)
+        metrics = parse_publication_metrics(run_mysql_sql(mysql_env_path, current_sql))
+        message = (
+            f"outlets={len(outlet_ids)} batches={batch_count} "
+            f"{publication_metrics_message(metrics)}"
+        )
     else:
         build_prices_current_sql([])
-
-    message = f"outlets={len(outlet_ids)}, batches={batch_count}, price_rows={len(price_rows)}"
+        raise RuntimeError("Northern Territory price snapshot returned no rows")
     return SyncResult(job_name="nt_prices", rows_processed=len(price_rows), message=message)
 
 

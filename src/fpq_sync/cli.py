@@ -12,8 +12,10 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from sync_utils import build_atomic_snapshot_sql
+from sync_utils import build_change_aware_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import parse_publication_metrics
+from sync_utils import publication_metrics_message
 from sync_utils import retry_urlopen
 from sync_utils import sync_duration_message
 from sync_utils import sync_mysql_credentials
@@ -94,11 +96,12 @@ def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]
     return command, env
 
 
-def run_mysql_sql(mysql_env_path: str, sql: str) -> None:
+def run_mysql_sql(mysql_env_path: str, sql: str) -> str:
     command, env = build_mysql_command(mysql_env_path)
     result = subprocess.run(command, input=sql, text=True, env=env, capture_output=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "mysql exited with a non-zero status")
+    return result.stdout
 
 
 def chunk_items(items: list[dict[str, object]], batch_size: int) -> list[list[dict[str, object]]]:
@@ -415,15 +418,8 @@ VALUES
 
 
 def build_prices_current_sql(items: list[dict[str, object]]) -> str:
-    latest_by_key: dict[tuple[object, object], dict[str, object]] = {}
-    for item in items:
-        key = (item.get("SiteId"), item.get("FuelId"))
-        existing = latest_by_key.get(key)
-        if existing is None or str(item.get("TransactionDateUtc", "")) >= str(existing.get("TransactionDateUtc", "")):
-            latest_by_key[key] = item
-
     values = []
-    for item in latest_by_key.values():
+    for item in items:
         values.append(
             "("
             + ", ".join(
@@ -437,8 +433,9 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return build_atomic_snapshot_sql(
-        table="fpq_site_prices_current",
+    return build_change_aware_snapshot_sql(
+        current_table="fpq_site_prices_current",
+        history_table="fpq_site_prices_history",
         columns=[
             "site_id",
             "fuel_id",
@@ -448,6 +445,7 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
         ],
         key_columns=["site_id", "fuel_id"],
         freshness_column="transaction_date_utc",
+        state_columns=["collection_method", "price"],
         values=values,
     )
 
@@ -486,12 +484,9 @@ def sync_prices(mysql_env_path: str, api_host: str, token: str) -> SyncResult:
         "/Price/GetSitesPrices?countryId=21&geoRegionLevel=3&geoRegionId=1",
     )
     prices = list(prices_payload.get("SitePrices", []))
-    run_batched_sql(mysql_env_path, prices, build_prices_history_sql)
     current_sql = build_prices_current_sql(prices)
-    if current_sql:
-        run_mysql_sql(mysql_env_path, current_sql)
-
-    message = f"prices={len(prices)}"
+    metrics = parse_publication_metrics(run_mysql_sql(mysql_env_path, current_sql))
+    message = publication_metrics_message(metrics)
     return SyncResult(job_name="fpq_prices", rows_processed=len(prices), message=message)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError
 from urllib.error import URLError
@@ -46,6 +47,47 @@ def is_unconfigured_value(value: object | None) -> bool:
 
 class SnapshotValidationError(ValueError):
     """Raised before a bad or empty snapshot can alter live current data."""
+
+
+@dataclass(frozen=True)
+class PublicationMetrics:
+    api_rows_fetched: int
+    current_rows_published: int
+    history_changes: int
+    unchanged_observations: int
+    missing_rows_expired: int
+
+
+def parse_publication_metrics(output: str) -> PublicationMetrics:
+    match = re.search(
+        r"FUELAU_METRICS:"
+        r"api_rows=(\d+),"
+        r"current_rows=(\d+),"
+        r"history_changes=(\d+),"
+        r"unchanged=(\d+),"
+        r"expired=(\d+)",
+        output,
+    )
+    if match is None:
+        raise ValueError("Importer publication did not return metrics")
+    values = [int(value) for value in match.groups()]
+    return PublicationMetrics(
+        api_rows_fetched=values[0],
+        current_rows_published=values[1],
+        history_changes=values[2],
+        unchanged_observations=values[3],
+        missing_rows_expired=values[4],
+    )
+
+
+def publication_metrics_message(metrics: PublicationMetrics) -> str:
+    return (
+        f"api_rows_fetched={metrics.api_rows_fetched} "
+        f"current_rows_published={metrics.current_rows_published} "
+        f"history_changes_inserted={metrics.history_changes} "
+        f"unchanged_observations_skipped={metrics.unchanged_observations} "
+        f"missing_current_rows_expired={metrics.missing_rows_expired}"
+    )
 
 
 def sync_mysql_credentials(config: dict[str, str]) -> tuple[str, str]:
@@ -169,5 +211,249 @@ ON DUPLICATE KEY UPDATE
 {expire_sql}
 COMMIT;
 
+DROP TEMPORARY TABLE {quoted_stage};
+""".strip()
+
+
+def build_change_aware_snapshot_sql(
+    *,
+    current_table: str,
+    history_table: str,
+    columns: list[str],
+    key_columns: list[str],
+    freshness_column: str,
+    state_columns: list[str],
+    values: list[str],
+    expire_missing: bool = True,
+    missing_means_unavailable: bool = False,
+    availability_column: str | None = None,
+    price_column: str | None = None,
+) -> str:
+    """Publish current state and meaningful history transitions in one transaction."""
+
+    if not values:
+        raise SnapshotValidationError(f"Refusing to publish an empty snapshot for {current_table}")
+    if freshness_column not in columns:
+        raise ValueError("freshness_column must be present in columns")
+    if not key_columns or any(column not in columns for column in key_columns):
+        raise ValueError("key_columns must be a non-empty subset of columns")
+    if not state_columns or any(column not in columns for column in state_columns):
+        raise ValueError("state_columns must be a non-empty subset of columns")
+    if missing_means_unavailable:
+        if not expire_missing:
+            raise ValueError("missing availability transitions require a full snapshot")
+        if availability_column not in state_columns or price_column not in state_columns:
+            raise ValueError("availability and price columns must be meaningful state columns")
+
+    quoted_current = _quoted_identifier(current_table)
+    quoted_history = _quoted_identifier(history_table)
+    stage_name = f"tmp_{current_table}_incoming"
+    events_name = f"tmp_{current_table}_events"
+    quoted_stage = _quoted_identifier(stage_name)
+    quoted_events = _quoted_identifier(events_name)
+    quoted_columns = [_quoted_identifier(column) for column in columns]
+    quoted_keys = [_quoted_identifier(column) for column in key_columns]
+    quoted_state = [_quoted_identifier(column) for column in state_columns]
+    quoted_freshness = _quoted_identifier(freshness_column)
+    column_list = ", ".join(quoted_columns)
+
+    def key_match(left: str, right: str) -> str:
+        return " AND ".join(
+            f"{left}.{column} = {right}.{column}"
+            for column in quoted_keys
+        )
+
+    def state_signature(alias: str) -> str:
+        parts = ", ".join(
+            f"COALESCE(CAST({alias}.{column} AS CHAR), '<NULL>')"
+            for column in quoted_state
+        )
+        return f"CONCAT_WS(CHAR(31), {parts})"
+
+    exact_match = (
+        f"{key_match('existing_exact', 'incoming')} "
+        f"AND existing_exact.{quoted_freshness} = incoming.{quoted_freshness}"
+    )
+    previous_event_max = (
+        f"(SELECT MAX(previous_event.{quoted_freshness}) FROM {quoted_events} AS previous_event "
+        f"WHERE {key_match('previous_event', 'incoming')} "
+        f"AND previous_event.{quoted_freshness} < incoming.{quoted_freshness})"
+    )
+    previous_history_max = (
+        f"(SELECT MAX(previous_history.{quoted_freshness}) FROM {quoted_history} AS previous_history "
+        f"WHERE {key_match('previous_history', 'incoming')} "
+        f"AND previous_history.{quoted_freshness} < incoming.{quoted_freshness})"
+    )
+    previous_event_signature = (
+        f"(SELECT {state_signature('previous_event')} FROM {quoted_events} AS previous_event "
+        f"WHERE {key_match('previous_event', 'incoming')} "
+        f"AND previous_event.{quoted_freshness} < incoming.{quoted_freshness} "
+        f"ORDER BY previous_event.{quoted_freshness} DESC LIMIT 1)"
+    )
+    previous_history_signature = (
+        f"(SELECT {state_signature('previous_history')} FROM {quoted_history} AS previous_history "
+        f"WHERE {key_match('previous_history', 'incoming')} "
+        f"AND previous_history.{quoted_freshness} < incoming.{quoted_freshness} "
+        f"ORDER BY previous_history.{quoted_freshness} DESC LIMIT 1)"
+    )
+    previous_signature = (
+        "CASE "
+        f"WHEN {previous_event_max} IS NULL THEN {previous_history_signature} "
+        f"WHEN {previous_history_max} IS NULL THEN {previous_event_signature} "
+        f"WHEN {previous_event_max} >= {previous_history_max} THEN {previous_event_signature} "
+        f"ELSE {previous_history_signature} END"
+    )
+    incoming_signature = state_signature("incoming")
+    exact_signature = state_signature("existing_exact")
+    meaningful_change = f"""
+(
+    EXISTS (
+        SELECT 1
+        FROM {quoted_history} AS existing_exact
+        WHERE {exact_match}
+          AND {exact_signature} <> {incoming_signature}
+    )
+    OR (
+        NOT EXISTS (
+            SELECT 1
+            FROM {quoted_history} AS existing_exact
+            WHERE {exact_match}
+        )
+        AND (
+            ({previous_event_max} IS NULL AND {previous_history_max} IS NULL)
+            OR ({previous_signature}) <> {incoming_signature}
+        )
+    )
+)
+""".strip()
+
+    event_updates = ",\n    ".join(
+        f"{column} = VALUES({column})"
+        for column in quoted_state
+    )
+    current_updates = []
+    for column in quoted_columns:
+        current_updates.append(
+            f"{column} = IF("
+            f"VALUES({quoted_freshness}) >= {quoted_current}.{quoted_freshness}, "
+            f"VALUES({column}), {quoted_current}.{column})"
+        )
+    current_updates.append(
+        "`last_seen_at` = GREATEST(COALESCE(`last_seen_at`, VALUES(`last_seen_at`)), "
+        "VALUES(`last_seen_at`))"
+    )
+    newest_event = (
+        f"NOT EXISTS (SELECT 1 FROM {quoted_events} AS newer "
+        f"WHERE {key_match('newer', 'incoming')} "
+        f"AND newer.{quoted_freshness} > incoming.{quoted_freshness})"
+    )
+
+    missing_sql = "SET @fuelau_expired = 0;"
+    if expire_missing and not missing_means_unavailable:
+        missing_sql = f"""
+DELETE live
+FROM {quoted_current} AS live
+LEFT JOIN {quoted_events} AS incoming ON {key_match('incoming', 'live')}
+WHERE incoming.{quoted_keys[0]} IS NULL;
+SET @fuelau_expired = ROW_COUNT();
+""".strip()
+    elif missing_means_unavailable:
+        quoted_availability = _quoted_identifier(str(availability_column))
+        quoted_price = _quoted_identifier(str(price_column))
+        missing_select = []
+        for column in quoted_columns:
+            if column in quoted_keys:
+                missing_select.append(f"live.{column}")
+            elif column == quoted_freshness:
+                missing_select.append("@fuelau_seen_at")
+            elif column == quoted_availability:
+                missing_select.append("0")
+            elif column == quoted_price:
+                missing_select.append("NULL")
+            else:
+                missing_select.append(f"live.{column}")
+        missing_updates = ", ".join(
+            f"{column} = VALUES({column})"
+            for column in [quoted_freshness, quoted_availability, quoted_price]
+        )
+        missing_sql = f"""
+INSERT INTO {quoted_history} ({column_list})
+SELECT {", ".join(missing_select)}
+FROM {quoted_current} AS live
+LEFT JOIN {quoted_events} AS incoming ON {key_match('incoming', 'live')}
+WHERE incoming.{quoted_keys[0]} IS NULL
+  AND (live.{quoted_availability} <> 0 OR live.{quoted_price} IS NOT NULL)
+ON DUPLICATE KEY UPDATE {missing_updates};
+
+UPDATE {quoted_current} AS live
+LEFT JOIN {quoted_events} AS incoming ON {key_match('incoming', 'live')}
+SET live.{quoted_freshness} = @fuelau_seen_at,
+    live.{quoted_availability} = 0,
+    live.{quoted_price} = NULL
+WHERE incoming.{quoted_keys[0]} IS NULL
+  AND (live.{quoted_availability} <> 0 OR live.{quoted_price} IS NOT NULL);
+SET @fuelau_expired = ROW_COUNT();
+SET @fuelau_missing_history_changes = @fuelau_expired;
+""".strip()
+
+    return f"""
+SET @fuelau_seen_at = UTC_TIMESTAMP();
+
+DROP TEMPORARY TABLE IF EXISTS {quoted_stage};
+CREATE TEMPORARY TABLE {quoted_stage} LIKE {quoted_current};
+ALTER TABLE {quoted_stage}
+    DROP PRIMARY KEY,
+    MODIFY `last_seen_at` DATETIME NULL,
+    ADD COLUMN `_fuelau_stage_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST;
+INSERT INTO {quoted_stage} ({column_list})
+VALUES
+{",\n".join(values)};
+
+DROP TEMPORARY TABLE IF EXISTS {quoted_events};
+CREATE TEMPORARY TABLE {quoted_events} LIKE {quoted_history};
+INSERT INTO {quoted_events} ({column_list})
+SELECT {column_list}
+FROM {quoted_stage}
+ORDER BY `_fuelau_stage_id`
+ON DUPLICATE KEY UPDATE
+    {event_updates};
+
+START TRANSACTION;
+SET @fuelau_missing_history_changes = 0;
+SET @fuelau_api_rows = (SELECT COUNT(*) FROM {quoted_stage});
+SET @fuelau_current_rows = (
+    SELECT COUNT(*) FROM {quoted_events} AS incoming WHERE {newest_event}
+);
+SET @fuelau_history_changes = (
+    SELECT COUNT(*) FROM {quoted_events} AS incoming WHERE {meaningful_change}
+);
+
+INSERT INTO {quoted_history} ({column_list})
+SELECT {column_list}
+FROM {quoted_events} AS incoming
+WHERE {meaningful_change}
+ON DUPLICATE KEY UPDATE
+    {event_updates};
+
+INSERT INTO {quoted_current} ({column_list}, `last_seen_at`)
+SELECT {column_list}, @fuelau_seen_at
+FROM {quoted_events} AS incoming
+WHERE {newest_event}
+ON DUPLICATE KEY UPDATE
+    {",\n    ".join(current_updates)};
+
+{missing_sql}
+COMMIT;
+
+SELECT CONCAT(
+    'FUELAU_METRICS:',
+    'api_rows=', @fuelau_api_rows,
+    ',current_rows=', @fuelau_current_rows,
+    ',history_changes=', @fuelau_history_changes + @fuelau_missing_history_changes,
+    ',unchanged=', GREATEST(@fuelau_api_rows - @fuelau_history_changes, 0),
+    ',expired=', @fuelau_expired
+);
+
+DROP TEMPORARY TABLE {quoted_events};
 DROP TEMPORARY TABLE {quoted_stage};
 """.strip()

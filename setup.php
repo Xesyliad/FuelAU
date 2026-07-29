@@ -5,7 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/src/bootstrap.php';
 require __DIR__ . '/src/migrations.php';
 
-const FUELAU_SCHEMA_VERSION = 8;
+const FUELAU_SCHEMA_VERSION = 10;
 
 function fuelauEnsureRuntimeDirectories(): void
 {
@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS `fpq_site_prices_current` (
     `transaction_date_utc` DATETIME NOT NULL,
     `price` INT NOT NULL,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_seen_at` DATETIME NOT NULL,
     PRIMARY KEY (`site_id`, `fuel_id`),
     KEY `idx_fpq_prices_current_date` (`transaction_date_utc`),
     KEY `idx_fpq_prices_current_fuel` (`fuel_id`),
@@ -310,6 +311,7 @@ CREATE TABLE IF NOT EXISTS `vic_site_prices_current` (
     `is_available` TINYINT(1) NOT NULL DEFAULT 1,
     `price` DECIMAL(10, 3) NULL,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_seen_at` DATETIME NOT NULL,
     PRIMARY KEY (`station_id`, `fuel_code`),
     KEY `idx_vic_prices_current_updated` (`updated_at_utc`),
     CONSTRAINT `fk_vic_prices_current_station`
@@ -426,6 +428,7 @@ CREATE TABLE IF NOT EXISTS `sa_site_prices_current` (
     `transaction_date_utc` DATETIME NOT NULL,
     `price` DECIMAL(10, 3) NOT NULL,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_seen_at` DATETIME NOT NULL,
     PRIMARY KEY (`station_id`, `fuel_id`),
     KEY `idx_sa_prices_current_updated` (`transaction_date_utc`),
     KEY `idx_sa_prices_current_fuel` (`fuel_id`),
@@ -520,6 +523,7 @@ CREATE TABLE IF NOT EXISTS `nsw_site_prices_current` (
     `last_updated_at` DATETIME NOT NULL,
     `price` DECIMAL(10, 3) NOT NULL,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_seen_at` DATETIME NOT NULL,
     PRIMARY KEY (`state`, `station_code`, `fuel_code`),
     KEY `idx_nsw_prices_current_updated` (`last_updated_at`),
     CONSTRAINT `fk_nsw_prices_current_station`
@@ -617,6 +621,7 @@ CREATE TABLE IF NOT EXISTS `nt_site_prices_current` (
     `is_available` TINYINT(1) NOT NULL DEFAULT 1,
     `price` DECIMAL(10, 3) NULL,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `last_seen_at` DATETIME NOT NULL,
     PRIMARY KEY (`station_id`, `fuel_code`),
     KEY `idx_nt_prices_current_observed` (`observed_at_utc`),
     CONSTRAINT `fk_nt_prices_current_station`

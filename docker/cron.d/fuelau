@@ -5,9 +5,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Keep a local cron heartbeat for operational visibility.
 */15 * * * * cd /var/www/html && php bin/cron-heartbeat.php >> /var/log/fuelapi/cron-heartbeat.log 2>&1
 
-# Fuel Prices QLD: refresh reference data and current prices every 30 minutes.
+# Fuel Prices QLD: refresh current prices every 30 minutes and reference data daily.
 # The importer self-skips when the sample placeholder token is still configured.
-0,30 * * * * flock -n /run/lock/fuelau-fpq-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all' >> /var/log/fuelapi/fpq_sync.log 2>&1 || echo 'fpq_sync: skipped overlapping run' >> /var/log/fuelapi/fpq_sync.log
+0,30 * * * * flock -n /run/lock/fuelau-fpq-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli prices' >> /var/log/fuelapi/fpq_sync.log 2>&1 || echo 'fpq_sync: skipped overlapping run' >> /var/log/fuelapi/fpq_sync.log
+25 2 * * * flock -n /run/lock/fuelau-fpq-sync.lock sh -c 'cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli daily-reference' >> /var/log/fuelapi/fpq_sync.log 2>&1 || echo 'fpq_sync: skipped overlapping run' >> /var/log/fuelapi/fpq_sync.log
 
 # South Australia Fuel Pricing Information Scheme: refresh reference data daily and sync prices every 30 minutes.
 # The importer self-skips when the sample placeholder token is still configured.

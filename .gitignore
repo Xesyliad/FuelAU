@@ -12,3 +12,6 @@ __pycache__/
 *.py[cod]
 *.swp
 .playwright-cli/
+*.sql
+*.sql.gz
+importer-optimisation.md

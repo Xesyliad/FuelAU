@@ -9,3 +9,5 @@ var/
 __pycache__/
 *.py[cod]
 *.swp
+*.sql
+*.sql.gz

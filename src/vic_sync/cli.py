@@ -13,8 +13,10 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from sync_utils import build_atomic_snapshot_sql
+from sync_utils import build_change_aware_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import parse_publication_metrics
+from sync_utils import publication_metrics_message
 from sync_utils import retry_urlopen
 from sync_utils import sync_duration_message
 from sync_utils import sync_mysql_credentials
@@ -75,11 +77,12 @@ def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]
     return command, env
 
 
-def run_mysql_sql(mysql_env_path: str, sql: str) -> None:
+def run_mysql_sql(mysql_env_path: str, sql: str) -> str:
     command, env = build_mysql_command(mysql_env_path)
     result = subprocess.run(command, input=sql, text=True, env=env, capture_output=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "mysql exited with a non-zero status")
+    return result.stdout
 
 
 def query_mysql_values(mysql_env_path: str, sql: str) -> list[str]:
@@ -290,20 +293,8 @@ ON DUPLICATE KEY UPDATE
 
 
 def build_prices_current_sql(items: list[dict[str, object]]) -> str:
-    latest_by_key: dict[tuple[object, object], dict[str, object]] = {}
-    for item in items:
-        key = (item.get("station_id"), item.get("fuel_code"))
-        existing = latest_by_key.get(key)
-        current_updated_at = parse_vic_datetime(item.get("updated_at")) or ""
-        if existing is None:
-            latest_by_key[key] = item
-            continue
-        existing_updated_at = parse_vic_datetime(existing.get("updated_at")) or ""
-        if current_updated_at >= existing_updated_at:
-            latest_by_key[key] = item
-
     values = []
-    for item in latest_by_key.values():
+    for item in items:
         values.append(
             "("
             + ", ".join(
@@ -317,12 +308,17 @@ def build_prices_current_sql(items: list[dict[str, object]]) -> str:
             )
             + ")"
         )
-    return build_atomic_snapshot_sql(
-        table="vic_site_prices_current",
+    return build_change_aware_snapshot_sql(
+        current_table="vic_site_prices_current",
+        history_table="vic_site_prices_history",
         columns=["station_id", "fuel_code", "updated_at_utc", "is_available", "price"],
         key_columns=["station_id", "fuel_code"],
         freshness_column="updated_at_utc",
+        state_columns=["is_available", "price"],
         values=values,
+        missing_means_unavailable=True,
+        availability_column="is_available",
+        price_column="price",
     )
 
 
@@ -412,14 +408,12 @@ def sync_prices(mysql_env_path: str, api_base_url: str, consumer_id: str) -> Syn
     if stations:
         run_batched_sql(mysql_env_path, stations, build_stations_sql)
     if prices:
-        run_batched_sql(mysql_env_path, prices, build_prices_history_sql)
         current_sql = build_prices_current_sql(prices)
-        if current_sql:
-            run_mysql_sql(mysql_env_path, current_sql)
+        metrics = parse_publication_metrics(run_mysql_sql(mysql_env_path, current_sql))
+        message = f"stations={len(stations)} {publication_metrics_message(metrics)}"
     else:
         build_prices_current_sql([])
-
-    message = f"stations={len(stations)}, prices={len(prices)}"
+        raise RuntimeError("Victoria price snapshot returned no rows")
     return SyncResult(job_name="vic_prices", rows_processed=len(prices), message=message)
 
 

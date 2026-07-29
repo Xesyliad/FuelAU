@@ -131,6 +131,20 @@ class ImporterFreshnessTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn("flock -n", line)
 
+    def test_qld_cron_splits_prices_from_daily_reference(self) -> None:
+        cron = (PROJECT_ROOT / "docker" / "cron.d" / "fuelau").read_text(encoding="utf-8")
+        active_lines = [
+            line for line in cron.splitlines()
+            if "fpq_sync.cli" in line and not line.lstrip().startswith("#")
+        ]
+
+        self.assertEqual(2, len(active_lines))
+        self.assertTrue(any("fpq_sync.cli prices" in line and "0,30 * * * *" in line for line in active_lines))
+        self.assertTrue(any("fpq_sync.cli daily-reference" in line for line in active_lines))
+        self.assertFalse(any("fpq_sync.cli all" in line for line in active_lines))
+        for line in active_lines:
+            self.assertIn("/run/lock/fuelau-fpq-sync.lock", line)
+
     def test_all_current_snapshots_publish_atomically(self) -> None:
         from fpq_sync.cli import build_prices_current_sql as fpq_sql
         from nsw_sync.cli import build_prices_current_sql as nsw_sql
@@ -210,6 +224,72 @@ class ImporterFreshnessTests(unittest.TestCase):
                 self.assertIn("IF(", sql)
                 self.assertIn("LEFT JOIN", sql)
                 self.assertIn("COMMIT", sql)
+
+    def test_high_frequency_importers_publish_change_aware_history(self) -> None:
+        from fpq_sync.cli import build_prices_current_sql as fpq_sql
+        from nsw_sync.cli import build_prices_current_sql as nsw_sql
+        from nt_sync.cli import build_prices_current_sql as nt_sql
+        from sa_sync.cli import build_prices_current_sql as sa_sql
+        from vic_sync.cli import build_prices_current_sql as vic_sql
+
+        builders_and_rows = [
+            (fpq_sql, {"SiteId": 1, "FuelId": 2, "CollectionMethod": "T", "TransactionDateUtc": "2026-01-01T00:00:00", "Price": 1800}),
+            (sa_sql, {"SiteId": 1, "FuelId": 2, "CollectionMethod": "T", "TransactionDateUtc": "2026-01-01T00:00:00", "Price": 180.0}),
+            (nsw_sql, {"state": "NSW", "stationcode": "1", "fueltype": "E10", "lastupdated": "01/01/2026 00:00:00", "price": 180.0}),
+            (vic_sql, {"station_id": "1", "fuel_code": "E10", "updated_at": "2026-01-01T00:00:00Z", "is_available": True, "price": 180.0}),
+            (nt_sql, {"station_id": "1", "fuel_code": "E10", "observed_at_utc": "2026-01-01T00:00:00Z", "is_available": 1, "price": 180.0}),
+        ]
+
+        for builder, row in builders_and_rows:
+            with self.subTest(builder=builder.__module__):
+                sql = builder([row]).upper()
+                self.assertIn("_SITE_PRICES_HISTORY", sql)
+                self.assertIn("LAST_SEEN_AT", sql)
+                self.assertIn("FUELAU_METRICS:", sql)
+                self.assertIn("HISTORY_CHANGES", sql)
+                self.assertIn("UNCHANGED", sql)
+
+    def test_change_aware_stage_preserves_chronological_reversions(self) -> None:
+        from fpq_sync.cli import build_prices_current_sql
+
+        sql = build_prices_current_sql([
+            {"SiteId": 1, "FuelId": 2, "CollectionMethod": "T", "TransactionDateUtc": "2026-01-01T00:00:00", "Price": 1800},
+            {"SiteId": 1, "FuelId": 2, "CollectionMethod": "T", "TransactionDateUtc": "2026-01-01T00:30:00", "Price": 1900},
+            {"SiteId": 1, "FuelId": 2, "CollectionMethod": "T", "TransactionDateUtc": "2026-01-01T01:00:00", "Price": 1800},
+        ])
+
+        self.assertIn("2026-01-01T00:00:00", sql)
+        self.assertIn("2026-01-01T00:30:00", sql)
+        self.assertIn("2026-01-01T01:00:00", sql)
+        self.assertIn("ORDER BY `_fuelau_stage_id`", sql)
+
+    def test_vic_and_nt_missing_rows_transition_to_unavailable(self) -> None:
+        from nt_sync.cli import build_prices_current_sql as nt_sql
+        from vic_sync.cli import build_prices_current_sql as vic_sql
+
+        rows = {
+            vic_sql: {"station_id": "1", "fuel_code": "E10", "updated_at": "2026-01-01T00:00:00Z", "is_available": True, "price": 180.0},
+            nt_sql: {"station_id": "1", "fuel_code": "E10", "observed_at_utc": "2026-01-01T00:00:00Z", "is_available": 1, "price": 180.0},
+        }
+        for builder, row in rows.items():
+            with self.subTest(builder=builder.__module__):
+                sql = builder([row]).upper()
+                self.assertIn("LIVE.`IS_AVAILABLE` = 0", sql)
+                self.assertIn("LIVE.`PRICE` = NULL", sql)
+                self.assertNotIn("DELETE LIVE", sql)
+
+    def test_publication_metrics_are_parseable(self) -> None:
+        from sync_utils import parse_publication_metrics
+
+        metrics = parse_publication_metrics(
+            "FUELAU_METRICS:api_rows=10,current_rows=8,"
+            "history_changes=3,unchanged=7,expired=2"
+        )
+        self.assertEqual(10, metrics.api_rows_fetched)
+        self.assertEqual(8, metrics.current_rows_published)
+        self.assertEqual(3, metrics.history_changes)
+        self.assertEqual(7, metrics.unchanged_observations)
+        self.assertEqual(2, metrics.missing_rows_expired)
 
     def test_empty_snapshot_is_rejected_for_every_provider(self) -> None:
         from fpq_sync.cli import build_prices_current_sql as fpq_sql

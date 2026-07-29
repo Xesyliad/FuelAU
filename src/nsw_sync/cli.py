@@ -15,8 +15,10 @@ from urllib.parse import urlencode
 from urllib.request import Request
 from zoneinfo import ZoneInfo
 
-from sync_utils import build_atomic_snapshot_sql
+from sync_utils import build_change_aware_snapshot_sql
 from sync_utils import is_unconfigured_value
+from sync_utils import parse_publication_metrics
+from sync_utils import publication_metrics_message
 from sync_utils import retry_urlopen
 from sync_utils import sync_duration_message
 from sync_utils import sync_mysql_credentials
@@ -81,11 +83,12 @@ def build_mysql_command(mysql_env_path: str) -> tuple[list[str], dict[str, str]]
     return command, env
 
 
-def run_mysql_sql(mysql_env_path: str, sql: str) -> None:
+def run_mysql_sql(mysql_env_path: str, sql: str) -> str:
     command, env = build_mysql_command(mysql_env_path)
     result = subprocess.run(command, input=sql, text=True, env=env, capture_output=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "mysql exited with a non-zero status")
+    return result.stdout
 
 
 def query_mysql_values(mysql_env_path: str, sql: str) -> list[str]:
@@ -390,20 +393,8 @@ def build_prices_current_sql(
     *,
     expire_missing: bool = True,
 ) -> str:
-    latest_by_key: dict[tuple[object, object, object], dict[str, object]] = {}
-    for item in items:
-        key = (item.get("state"), item.get("stationcode"), item.get("fueltype"))
-        existing = latest_by_key.get(key)
-        current_last_updated = parse_nsw_datetime(item.get("lastupdated")) or ""
-        if existing is None:
-            latest_by_key[key] = item
-            continue
-        existing_last_updated = parse_nsw_datetime(existing.get("lastupdated")) or ""
-        if current_last_updated >= existing_last_updated:
-            latest_by_key[key] = item
-
     values = []
-    for item in latest_by_key.values():
+    for item in items:
         values.append(
             "("
             + ", ".join(
@@ -417,11 +408,13 @@ def build_prices_current_sql(
             )
             + ")"
         )
-    return build_atomic_snapshot_sql(
-        table="nsw_site_prices_current",
+    return build_change_aware_snapshot_sql(
+        current_table="nsw_site_prices_current",
+        history_table="nsw_site_prices_history",
         columns=["state", "station_code", "fuel_code", "last_updated_at", "price"],
         key_columns=["state", "station_code", "fuel_code"],
         freshness_column="last_updated_at",
+        state_columns=["price"],
         values=values,
         expire_missing=expire_missing,
     )
@@ -470,13 +463,14 @@ def sync_prices(
     if stations:
         run_batched_sql(mysql_env_path, stations, build_stations_sql)
     if prices:
-        run_batched_sql(mysql_env_path, prices, build_prices_history_sql)
         current_sql = build_prices_current_sql(prices, expire_missing=full_snapshot)
-        if current_sql:
-            run_mysql_sql(mysql_env_path, current_sql)
+        metrics = parse_publication_metrics(run_mysql_sql(mysql_env_path, current_sql))
+        message = f"stations={len(stations)} {publication_metrics_message(metrics)}"
     elif full_snapshot:
         build_prices_current_sql([])
-    message = f"stations={len(stations)}, prices={len(prices)}"
+        raise RuntimeError("NSW full price snapshot returned no rows")
+    else:
+        message = f"stations={len(stations)} api_rows_fetched=0"
     return SyncResult(job_name=job_name, rows_processed=len(prices), message=message)
 
 

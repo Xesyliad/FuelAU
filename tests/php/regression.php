@@ -323,6 +323,26 @@ fuelauTest('public app does not mount Docker socket', static function (): void {
     );
 });
 
+fuelauTest('Docker build context excludes database dumps', static function (): void {
+    $dockerignore = file_get_contents(dirname(__DIR__, 2) . '/.dockerignore');
+    fuelauAssertTrue(is_string($dockerignore), 'Unable to read .dockerignore');
+    fuelauAssertTrue(
+        str_contains($dockerignore, '*.sql.gz'),
+        'Compressed SQL dumps must never enter the application image',
+    );
+});
+
+fuelauTest('Git excludes database dumps and the local importer plan', static function (): void {
+    $gitignore = file_get_contents(dirname(__DIR__, 2) . '/.gitignore');
+    fuelauAssertTrue(is_string($gitignore), 'Unable to read .gitignore');
+    fuelauAssertTrue(str_contains($gitignore, '*.sql'), 'SQL dumps must be ignored by Git');
+    fuelauAssertTrue(str_contains($gitignore, '*.sql.gz'), 'Compressed SQL dumps must be ignored by Git');
+    fuelauAssertTrue(
+        str_contains($gitignore, 'importer-optimisation.md'),
+        'The local importer plan must not be committed',
+    );
+});
+
 fuelauTest('incremental migration directory exists', static function (): void {
     fuelauAssertTrue(
         is_dir(dirname(__DIR__, 2) . '/migrations'),
@@ -330,17 +350,114 @@ fuelauTest('incremental migration directory exists', static function (): void {
     );
 });
 
-fuelauTest('migration sequence includes explicit v7 upgrade', static function (): void {
+fuelauTest('migration sequence includes all forward-only upgrades', static function (): void {
     $migrations = fuelauLoadMigrations(dirname(__DIR__, 2) . '/migrations');
-    fuelauAssertSame([7, 8], array_keys($migrations));
+    fuelauAssertSame([7, 8, 9, 10], array_keys($migrations));
     fuelauAssertSame('baseline_schema', $migrations[7]['name']);
     fuelauAssertSame('station_coordinate_indexes', $migrations[8]['name']);
+    fuelauAssertSame('importer_last_seen', $migrations[9]['name']);
+    fuelauAssertSame('normalize_last_seen_utc', $migrations[10]['name']);
 
     $setup = file_get_contents(dirname(__DIR__, 2) . '/setup.php');
     fuelauAssertTrue(is_string($setup), 'Unable to read setup.php');
     fuelauAssertTrue(
         !str_contains($setup, 'INSERT IGNORE INTO `schema_migrations`'),
         'Setup must not mark versions with INSERT IGNORE'
+    );
+});
+
+fuelauTest('importer optimization migration adds last-seen tracking', static function (): void {
+    $migration = require dirname(__DIR__, 2) . '/migrations/009_importer_last_seen.php';
+    fuelauAssertSame(9, $migration['version'] ?? null, 'Expected migration version 9');
+    fuelauAssertSame('importer_last_seen', $migration['name'] ?? null, 'Expected importer migration name');
+});
+
+fuelauTest('fresh schema uses explicit UTC last-seen writes', static function (): void {
+    $setup = file_get_contents(dirname(__DIR__, 2) . '/setup.php');
+    fuelauAssertTrue(is_string($setup), 'Unable to read setup.php');
+    fuelauAssertSame(
+        5,
+        substr_count($setup, '`last_seen_at` DATETIME NOT NULL,'),
+        'All five importer current tables must require explicit last-seen values',
+    );
+    fuelauAssertTrue(
+        !str_contains($setup, '`last_seen_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP'),
+        'Fresh schemas must not introduce local-time last-seen defaults',
+    );
+});
+
+fuelauTest('last-seen normalization corrects local-time backfill', static function (): void {
+    $migrationPath = dirname(__DIR__, 2) . '/migrations/010_normalize_last_seen_utc.php';
+    $migration = require $migrationPath;
+    $source = file_get_contents($migrationPath);
+    fuelauAssertSame(10, $migration['version'] ?? null, 'Expected normalization migration version 10');
+    fuelauAssertSame(
+        'normalize_last_seen_utc',
+        $migration['name'] ?? null,
+        'Expected UTC normalization migration name',
+    );
+    fuelauAssertTrue(is_string($source), 'Unable to read UTC normalization migration');
+    fuelauAssertTrue(
+        str_contains($source, 'TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())'),
+        'Normalization must derive the active database UTC offset',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'UTC_TIMESTAMP() + INTERVAL 5 MINUTE'),
+        'Normalization must only adjust implausibly future last-seen values',
+    );
+});
+
+fuelauTest('history buckets use Australia Brisbane calendar boundaries', static function (): void {
+    fuelauAssertTrue(
+        str_contains(fuelauHistoryBucketCte('weekly'), 'INTERVAL 10 HOUR'),
+        'Weekly history buckets must use Brisbane UTC offset',
+    );
+    fuelauAssertTrue(
+        str_contains(fuelauHistoryBucketCte('monthly'), 'INTERVAL 10 HOUR'),
+        'Monthly history buckets must use Brisbane UTC offset',
+    );
+});
+
+fuelauTest('monthly history events use monthly buckets', static function (): void {
+    $query = fuelauEffectiveHistoryQuery(
+        'monthly',
+        'test',
+        "'QLD'",
+        'test_current',
+        'test_history',
+        ['station_id', 'fuel_code'],
+        'event_at_utc',
+        '',
+        ['1=1'],
+        'h.price',
+        'h.price IS NOT NULL',
+    );
+    $monthlyExpression = "DATE_FORMAT(h.`event_at_utc` + INTERVAL 10 HOUR, '%Y-%m-01')";
+    fuelauAssertSame(
+        2,
+        substr_count($query, $monthlyExpression),
+        'Monthly history must use the month expression in both SELECT and GROUP BY',
+    );
+    fuelauAssertTrue(
+        !str_contains($query, 'DATE(h.`event_at_utc` + INTERVAL 10 HOUR) AS bucket_date'),
+        'Monthly history must not group events into daily buckets',
+    );
+});
+
+fuelauTest('fuel summary formats UTC timestamps in Brisbane time', static function (): void {
+    $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+    fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
+    fuelauAssertTrue(
+        str_contains($source, "timeZone: 'Australia/Brisbane'"),
+        'Timestamp rendering must explicitly select Australia/Brisbane',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'item?.latest_update ? formatDateTime(item.latest_update)'),
+        'Latest provider reports must use the timestamp formatter',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'item?.last_checked ? formatDateTime(item.last_checked)'),
+        'Last-checked timestamps must use the timestamp formatter',
     );
 });
 

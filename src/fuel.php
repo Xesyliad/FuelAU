@@ -298,6 +298,7 @@ function fuelauQldFuelRows(PDO $pdo, array $filters): array
                 LIMIT 1
             ) / 10, 1) AS previous_price,
             c.transaction_date_utc AS updated_at,
+            c.last_seen_at,
             {$distanceSelect}
         FROM fpq_site_prices_current c
         INNER JOIN fpq_sites s ON s.site_id = c.site_id
@@ -354,6 +355,7 @@ function fuelauSaFuelRows(PDO $pdo, array $filters): array
                 LIMIT 1
             ) / 10, 1) AS previous_price,
             c.transaction_date_utc AS updated_at,
+            c.last_seen_at,
             {$distanceSelect}
         FROM sa_site_prices_current c
         INNER JOIN sa_stations s ON s.station_id = c.station_id
@@ -414,6 +416,7 @@ function fuelauNswFuelRows(PDO $pdo, array $filters): array
                 LIMIT 1
             ) AS previous_price,
             c.last_updated_at AS updated_at,
+            c.last_seen_at,
             {$distanceSelect}
         FROM nsw_site_prices_current c
         INNER JOIN nsw_stations s
@@ -473,6 +476,7 @@ function fuelauVicFuelRows(PDO $pdo, array $filters): array
                 LIMIT 1
             ) AS previous_price,
             c.updated_at_utc AS updated_at,
+            c.last_seen_at,
             {$distanceSelect}
         FROM vic_site_prices_current c
         INNER JOIN vic_stations s ON s.station_id = c.station_id
@@ -602,6 +606,7 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
                 LIMIT 1
             ) AS previous_price,
             c.observed_at_utc AS updated_at,
+            c.last_seen_at,
             {$distanceSelect}
         FROM nt_site_prices_current c
         INNER JOIN nt_stations s ON s.station_id = c.station_id
@@ -969,26 +974,31 @@ function fuelauFuelSourceSummary(PDO $pdo): array
             'stations' => 'SELECT COUNT(*) FROM fpq_sites',
             'current_prices' => 'SELECT COUNT(*) FROM fpq_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(transaction_date_utc), "%Y-%m-%d %H:%i:%s") FROM fpq_site_prices_current',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM fpq_site_prices_current',
         ],
         'sa' => [
             'stations' => 'SELECT COUNT(*) FROM sa_stations',
             'current_prices' => 'SELECT COUNT(*) FROM sa_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(transaction_date_utc), "%Y-%m-%d %H:%i:%s") FROM sa_site_prices_current',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM sa_site_prices_current',
         ],
         'nsw' => [
             'stations' => 'SELECT COUNT(*) FROM nsw_stations WHERE state = "NSW"',
             'current_prices' => 'SELECT COUNT(*) FROM nsw_site_prices_current WHERE state = "NSW"',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(last_updated_at), "%Y-%m-%d %H:%i:%s") FROM nsw_site_prices_current WHERE state = "NSW"',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM nsw_site_prices_current WHERE state = "NSW"',
         ],
         'tas' => [
             'stations' => 'SELECT COUNT(*) FROM nsw_stations WHERE state = "TAS"',
             'current_prices' => 'SELECT COUNT(*) FROM nsw_site_prices_current WHERE state = "TAS"',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(last_updated_at), "%Y-%m-%d %H:%i:%s") FROM nsw_site_prices_current WHERE state = "TAS"',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM nsw_site_prices_current WHERE state = "TAS"',
         ],
         'vic' => [
             'stations' => 'SELECT COUNT(*) FROM vic_stations',
             'current_prices' => 'SELECT COUNT(*) FROM vic_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(updated_at_utc), "%Y-%m-%d %H:%i:%s") FROM vic_site_prices_current',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM vic_site_prices_current',
         ],
         'wa' => [
             'stations' => 'SELECT COUNT(*) FROM wa_stations',
@@ -999,6 +1009,7 @@ function fuelauFuelSourceSummary(PDO $pdo): array
             'stations' => 'SELECT COUNT(*) FROM nt_stations',
             'current_prices' => 'SELECT COUNT(*) FROM nt_site_prices_current',
             'latest_update' => 'SELECT DATE_FORMAT(MAX(observed_at_utc), "%Y-%m-%d %H:%i:%s") FROM nt_site_prices_current',
+            'last_checked' => 'SELECT DATE_FORMAT(MAX(last_seen_at), "%Y-%m-%d %H:%i:%s") FROM nt_site_prices_current',
         ],
     ];
 
@@ -1160,37 +1171,193 @@ function fuelauHistoricalFilters(?array $query = null): array
     ];
 }
 
+function fuelauHistoryBucketCte(string $period): string
+{
+    if ($period === 'monthly') {
+        return <<<'SQL'
+WITH RECURSIVE buckets AS (
+    SELECT
+        DATE_FORMAT(
+            DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR) - INTERVAL 11 MONTH,
+            '%Y-%m-01'
+        ) AS bucket_date,
+        TIMESTAMP(
+            DATE_FORMAT(
+                DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR) - INTERVAL 10 MONTH,
+                '%Y-%m-01'
+            )
+        ) - INTERVAL 10 HOUR AS bucket_end_utc
+    UNION ALL
+    SELECT
+        DATE_FORMAT(DATE(bucket_date) + INTERVAL 1 MONTH, '%Y-%m-01'),
+        TIMESTAMP(DATE(bucket_date) + INTERVAL 2 MONTH) - INTERVAL 10 HOUR
+    FROM buckets
+    WHERE DATE(bucket_date) < DATE_FORMAT(DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR), '%Y-%m-01')
+)
+SQL;
+    }
+
+    return <<<'SQL'
+WITH RECURSIVE buckets AS (
+    SELECT
+        DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR) - INTERVAL 41 DAY AS bucket_date,
+        TIMESTAMP(DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR) - INTERVAL 40 DAY)
+            - INTERVAL 10 HOUR AS bucket_end_utc
+    UNION ALL
+    SELECT
+        bucket_date + INTERVAL 1 DAY,
+        bucket_end_utc + INTERVAL 1 DAY
+    FROM buckets
+    WHERE bucket_date < DATE(UTC_TIMESTAMP() + INTERVAL 10 HOUR)
+)
+SQL;
+}
+
+function fuelauEffectiveHistoryQuery(
+    string $period,
+    string $source,
+    string $stateExpression,
+    string $currentTable,
+    string $historyTable,
+    array $keyColumns,
+    string $timeColumn,
+    string $eligibleJoins,
+    array $where,
+    string $priceExpression,
+    string $validStateCondition,
+    bool $groupByState = false,
+): string {
+    $keys = implode(', ', array_map(
+        static fn (string $column): string => "c.`{$column}`",
+        $keyColumns,
+    ));
+    $historyKeys = implode(', ', array_map(
+        static fn (string $column): string => "h.`{$column}`",
+        $keyColumns,
+    ));
+    $keyJoin = static fn (string $left, string $right): string => implode(
+        ' AND ',
+        array_map(
+            static fn (string $column): string => "{$left}.`{$column}` = {$right}.`{$column}`",
+            $keyColumns,
+        ),
+    );
+    $groupKeys = implode(', ', array_map(
+        static fn (string $column): string => "h.`{$column}`",
+        $keyColumns,
+    ));
+    $partitionKeys = implode(', ', array_map(
+        static fn (string $column): string => "k.`{$column}`",
+        $keyColumns,
+    ));
+    $gridKeys = implode(', ', array_map(
+        static fn (string $column): string => "k.`{$column}`",
+        $keyColumns,
+    ));
+    $groupState = $groupByState ? ", {$stateExpression}" : '';
+    $eventBucketExpression = $period === 'monthly'
+        ? "DATE_FORMAT(h.`{$timeColumn}` + INTERVAL 10 HOUR, '%Y-%m-01')"
+        : "DATE(h.`{$timeColumn}` + INTERVAL 10 HOUR)";
+
+    return fuelauHistoryBucketCte($period) . ",
+eligible_keys AS (
+    SELECT {$keys}
+    FROM `{$currentTable}` c
+    {$eligibleJoins}
+    WHERE " . implode(' AND ', $where) . "
+),
+bounds AS (
+    SELECT
+        MIN(bucket_date) AS first_date,
+        TIMESTAMP(MIN(bucket_date)) - INTERVAL 10 HOUR AS first_start_utc,
+        MAX(bucket_end_utc) AS last_end_utc
+    FROM buckets
+),
+daily_events AS (
+    SELECT
+        {$historyKeys},
+        {$eventBucketExpression} AS bucket_date,
+        MAX(h.`{$timeColumn}`) AS event_time
+    FROM eligible_keys k
+    STRAIGHT_JOIN `{$historyTable}` h ON " . $keyJoin('k', 'h') . "
+    CROSS JOIN bounds x
+    WHERE h.`{$timeColumn}` >= x.first_start_utc
+      AND h.`{$timeColumn}` < x.last_end_utc
+    GROUP BY {$groupKeys}, {$eventBucketExpression}
+),
+baseline_events AS (
+    SELECT
+        {$gridKeys},
+        x.first_date AS bucket_date,
+        (
+            SELECT MAX(prior.`{$timeColumn}`)
+            FROM `{$historyTable}` prior
+            WHERE " . $keyJoin('prior', 'k') . "
+              AND prior.`{$timeColumn}` < x.first_start_utc
+        ) AS event_time
+    FROM eligible_keys k
+    CROSS JOIN bounds x
+),
+events_per_day AS (
+    SELECT event_rows.*, MAX(event_rows.event_time) AS effective_event_time
+    FROM (
+        SELECT * FROM daily_events
+        UNION ALL
+        SELECT * FROM baseline_events WHERE event_time IS NOT NULL
+    ) event_rows
+    GROUP BY " . implode(', ', array_map(
+        static fn (string $column): string => "event_rows.`{$column}`",
+        $keyColumns,
+    )) . ", event_rows.bucket_date
+),
+effective_grid AS (
+    SELECT
+        {$gridKeys},
+        b.bucket_date,
+        MAX(e.effective_event_time) OVER (
+            PARTITION BY {$partitionKeys}
+            ORDER BY b.bucket_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS effective_event_time
+    FROM eligible_keys k
+    CROSS JOIN buckets b
+    LEFT JOIN events_per_day e
+      ON " . $keyJoin('e', 'k') . "
+     AND e.bucket_date = b.bucket_date
+)
+SELECT
+    '{$source}' AS source,
+    {$stateExpression} AS state,
+    g.bucket_date,
+    AVG({$priceExpression}) AS average_price,
+    MIN({$priceExpression}) AS minimum_price,
+    MAX({$priceExpression}) AS maximum_price,
+    COUNT(*) AS sample_count
+FROM effective_grid g
+STRAIGHT_JOIN `{$historyTable}` h
+  ON " . $keyJoin('h', 'g') . "
+ AND h.`{$timeColumn}` = g.effective_event_time
+WHERE g.effective_event_time IS NOT NULL
+  AND {$validStateCondition}
+GROUP BY g.bucket_date{$groupState}
+ORDER BY g.bucket_date ASC";
+}
+
 function fuelauQldHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
-        $where[] = fuelauNumericFuelFilterCondition($filters, 'h.fuel_id', 'f.name');
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
     fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
-    $selectPeriod = $filters['period'] === 'monthly'
-        ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
-        : "DATE(h.transaction_date_utc)";
-    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
-
-    $sql = "
-        SELECT
-            'qld' AS source,
-            'QLD' AS state,
-            {$selectPeriod} AS bucket_date,
-            AVG(h.price / 10) AS average_price,
-            MIN(h.price / 10) AS minimum_price,
-            MAX(h.price / 10) AS maximum_price,
-            COUNT(*) AS sample_count
-        FROM fpq_site_prices_history h
-        INNER JOIN fpq_fuel_types f ON f.fuel_id = h.fuel_id
-        INNER JOIN fpq_sites s ON s.site_id = h.site_id
-        WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
-          AND h.price BETWEEN 500 AND 4000
-          AND " . implode(' AND ', $where) . "
-        GROUP BY bucket_date
-        ORDER BY bucket_date ASC
-    ";
+    $sql = fuelauEffectiveHistoryQuery(
+        $filters['period'], 'qld', "'QLD'", 'fpq_site_prices_current',
+        'fpq_site_prices_history', ['site_id', 'fuel_id'], 'transaction_date_utc',
+        'INNER JOIN fpq_fuel_types f ON f.fuel_id = c.fuel_id '
+            . 'INNER JOIN fpq_sites s ON s.site_id = c.site_id',
+        $where, 'h.price / 10', 'h.price BETWEEN 500 AND 4000',
+    );
 
     $statement = $pdo->prepare($sql);
     fuelauBindHistoricalFilters($statement, $filters);
@@ -1202,40 +1369,20 @@ function fuelauNswHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['state'] !== '') {
-        $where[] = 'h.state = :state';
+        $where[] = 'c.state = :state';
     }
     if ($filters['fuel'] !== '') {
-        $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+        $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
     fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
-    $selectPeriod = $filters['period'] === 'monthly'
-        ? "DATE_FORMAT(h.last_updated_at, '%Y-%m-01')"
-        : "DATE(h.last_updated_at)";
-    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
-
-    $sql = "
-        SELECT
-            'nsw' AS source,
-            h.state,
-            {$selectPeriod} AS bucket_date,
-            AVG(h.price) AS average_price,
-            MIN(h.price) AS minimum_price,
-            MAX(h.price) AS maximum_price,
-            COUNT(*) AS sample_count
-        FROM nsw_site_prices_history h
-        INNER JOIN nsw_fuel_types f
-            ON f.state = h.state
-           AND f.fuel_code = h.fuel_code
-        INNER JOIN nsw_stations s
-            ON s.state = h.state
-           AND s.station_code = h.station_code
-        WHERE h.last_updated_at >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
-          AND h.price BETWEEN 50 AND 400
-          AND " . implode(' AND ', $where) . "
-        GROUP BY h.state, bucket_date
-        ORDER BY bucket_date ASC
-    ";
+    $sql = fuelauEffectiveHistoryQuery(
+        $filters['period'], 'nsw', 'g.state', 'nsw_site_prices_current',
+        'nsw_site_prices_history', ['state', 'station_code', 'fuel_code'], 'last_updated_at',
+        'INNER JOIN nsw_fuel_types f ON f.state = c.state AND f.fuel_code = c.fuel_code '
+            . 'INNER JOIN nsw_stations s ON s.state = c.state AND s.station_code = c.station_code',
+        $where, 'h.price', 'h.price BETWEEN 50 AND 400', true,
+    );
 
     $statement = $pdo->prepare($sql);
     if ($filters['state'] !== '') {
@@ -1250,33 +1397,17 @@ function fuelauVicHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
-        $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+        $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
     fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
-    $selectPeriod = $filters['period'] === 'monthly'
-        ? "DATE_FORMAT(h.updated_at_utc, '%Y-%m-01')"
-        : "DATE(h.updated_at_utc)";
-    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
-
-    $sql = "
-        SELECT
-            'vic' AS source,
-            'VIC' AS state,
-            {$selectPeriod} AS bucket_date,
-            AVG(h.price) AS average_price,
-            MIN(h.price) AS minimum_price,
-            MAX(h.price) AS maximum_price,
-            COUNT(*) AS sample_count
-        FROM vic_site_prices_history h
-        INNER JOIN vic_fuel_types f ON f.fuel_code = h.fuel_code
-        INNER JOIN vic_stations s ON s.station_id = h.station_id
-        WHERE h.updated_at_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
-          AND h.price BETWEEN 50 AND 400
-          AND " . implode(' AND ', $where) . "
-        GROUP BY bucket_date
-        ORDER BY bucket_date ASC
-    ";
+    $sql = fuelauEffectiveHistoryQuery(
+        $filters['period'], 'vic', "'VIC'", 'vic_site_prices_current',
+        'vic_site_prices_history', ['station_id', 'fuel_code'], 'updated_at_utc',
+        'INNER JOIN vic_fuel_types f ON f.fuel_code = c.fuel_code '
+            . 'INNER JOIN vic_stations s ON s.station_id = c.station_id',
+        $where, 'h.price', 'h.is_available = 1 AND h.price BETWEEN 50 AND 400',
+    );
 
     $statement = $pdo->prepare($sql);
     fuelauBindHistoricalFilters($statement, $filters);
@@ -1332,34 +1463,17 @@ function fuelauNtHistoryRows(PDO $pdo, array $filters): array
         $where[] = '1=0';
     }
     if ($filters['fuel'] !== '') {
-        $where[] = '(h.fuel_code = :fuel OR f.name = :fuel)';
+        $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
     fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
-    $selectPeriod = $filters['period'] === 'monthly'
-        ? "DATE_FORMAT(h.observed_at_utc, '%Y-%m-01')"
-        : "DATE(h.observed_at_utc)";
-    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
-
-    $sql = "
-        SELECT
-            'nt' AS source,
-            'NT' AS state,
-            {$selectPeriod} AS bucket_date,
-            AVG(h.price) AS average_price,
-            MIN(h.price) AS minimum_price,
-            MAX(h.price) AS maximum_price,
-            COUNT(*) AS sample_count
-        FROM nt_site_prices_history h
-        INNER JOIN nt_fuel_types f ON f.fuel_code = h.fuel_code
-        INNER JOIN nt_stations s ON s.station_id = h.station_id
-        WHERE h.observed_at_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
-          AND h.is_available = 1
-          AND h.price IS NOT NULL
-          AND " . implode(' AND ', $where) . "
-        GROUP BY bucket_date
-        ORDER BY bucket_date ASC
-    ";
+    $sql = fuelauEffectiveHistoryQuery(
+        $filters['period'], 'nt', "'NT'", 'nt_site_prices_current',
+        'nt_site_prices_history', ['station_id', 'fuel_code'], 'observed_at_utc',
+        'INNER JOIN nt_fuel_types f ON f.fuel_code = c.fuel_code '
+            . 'INNER JOIN nt_stations s ON s.station_id = c.station_id',
+        $where, 'h.price', 'h.is_available = 1 AND h.price IS NOT NULL',
+    );
 
     $statement = $pdo->prepare($sql);
     fuelauBindHistoricalFilters($statement, $filters);
@@ -1371,33 +1485,17 @@ function fuelauSaHistoryRows(PDO $pdo, array $filters): array
 {
     $where = ['1=1'];
     if ($filters['fuel'] !== '') {
-        $where[] = fuelauNumericFuelFilterCondition($filters, 'h.fuel_id', 'f.name');
+        $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
     fuelauApplyHistoricalLocationFilters($where, $filters, 's.latitude', 's.longitude');
 
-    $selectPeriod = $filters['period'] === 'monthly'
-        ? "DATE_FORMAT(h.transaction_date_utc, '%Y-%m-01')"
-        : "DATE(h.transaction_date_utc)";
-    $lookback = $filters['period'] === 'monthly' ? '12 MONTH' : '42 DAY';
-
-    $sql = "
-        SELECT
-            'sa' AS source,
-            'SA' AS state,
-            {$selectPeriod} AS bucket_date,
-            AVG(h.price / 10) AS average_price,
-            MIN(h.price / 10) AS minimum_price,
-            MAX(h.price / 10) AS maximum_price,
-            COUNT(*) AS sample_count
-        FROM sa_site_prices_history h
-        INNER JOIN sa_fuel_types f ON f.fuel_id = h.fuel_id
-        INNER JOIN sa_stations s ON s.station_id = h.station_id
-        WHERE h.transaction_date_utc >= (UTC_TIMESTAMP() - INTERVAL {$lookback})
-          AND h.price BETWEEN 500 AND 4000
-          AND " . implode(' AND ', $where) . "
-        GROUP BY bucket_date
-        ORDER BY bucket_date ASC
-    ";
+    $sql = fuelauEffectiveHistoryQuery(
+        $filters['period'], 'sa', "'SA'", 'sa_site_prices_current',
+        'sa_site_prices_history', ['station_id', 'fuel_id'], 'transaction_date_utc',
+        'INNER JOIN sa_fuel_types f ON f.fuel_id = c.fuel_id '
+            . 'INNER JOIN sa_stations s ON s.station_id = c.station_id',
+        $where, 'h.price / 10', 'h.price BETWEEN 500 AND 4000',
+    );
 
     $statement = $pdo->prepare($sql);
     fuelauBindHistoricalFilters($statement, $filters);

@@ -92,7 +92,7 @@ docker compose exec app php setup.php
 
 `setup.php` applies ordered files from `migrations/` under a MariaDB advisory lock. It checks already-applied migration checksums, runs transactional migrations inside a transaction, records a version only after its callback and schema assertions pass, and leaves failed versions unapplied. DDL migrations use idempotent statements because MariaDB implicitly commits most DDL.
 
-Fresh databases apply the version-7 baseline followed by later migrations. Existing version-7 installations take the explicit version-8 coordinate-index migration. Re-running setup is safe:
+Fresh databases apply the version-7 baseline followed by later migrations. Existing installations take the forward-only coordinate-index, importer `last_seen_at`, and UTC-normalization migrations through version 10. Re-running setup is safe:
 
 ```bash
 docker compose exec app php setup.php
@@ -549,10 +549,12 @@ The Fuel Prices Queensland importer is in `src/fpq_sync`. It loads:
 - price history
 - sync run records
 
-The cron job runs every 30 minutes:
+Prices run every 30 minutes. Reference data refreshes once daily under the same
+non-overlapping lock:
 
 ```cron
-0,30 * * * * cd /var/www/html && PYTHONPATH=src /usr/bin/python3 -m fpq_sync.cli all >> /var/log/fuelapi/fpq_sync.log 2>&1
+0,30 * * * * ... python3 -m fpq_sync.cli prices
+25 2 * * * ... python3 -m fpq_sync.cli daily-reference
 ```
 
 Manual sync:
@@ -701,7 +703,8 @@ Cron runs inside the `app` container from `docker/cron.d/fuelau`.
 Current jobs:
 
 - Every 15 minutes: PHP heartbeat to `/var/log/fuelapi/cron-heartbeat.log`.
-- Every 30 minutes: Fuel Prices Queensland sync to `/var/log/fuelapi/fpq_sync.log`.
+- Every 30 minutes: Fuel Prices Queensland price sync to `/var/log/fuelapi/fpq_sync.log`.
+- Daily at 02:25: Fuel Prices Queensland reference-data refresh under the same lock.
 - Every 30 minutes at `:10` and `:40`: Northern Territory MyFuel sync to `/var/log/fuelapi/nt_sync.log`.
 - Every 30 minutes at `:20` and `:50`: South Australia sync to `/var/log/fuelapi/sa_sync.log`.
 - Every 30 minutes at `:15` and `:45`: NSW Fuel API sync to `/var/log/fuelapi/nsw_sync.log`.
@@ -710,9 +713,13 @@ Current jobs:
 
 Every importer cron entry uses its own non-blocking `flock`; if a previous run is still active, the new invocation records that it skipped the overlap instead of running concurrently. Transient HTTP failures retry up to four times with bounded exponential backoff.
 
-Current-price feeds are validated and loaded into connection-local staging tables before publication. A valid full snapshot is merged in one transaction, older incoming timestamps cannot overwrite newer live prices, and keys absent from the new full snapshot are expired. Empty or duplicate-key snapshots fail before the live transaction. NSW incremental price updates use the same freshness-protected staging merge without expiring keys that are naturally absent from an incremental response.
+Current-price feeds are validated and loaded into connection-local staging tables before publication. For QLD, SA, NSW/TAS, VIC, and NT, one transaction compares chronologically ordered incoming events with the previously effective state, inserts history only for meaningful changes, and freshness-protects the current table. `last_seen_at` advances for successfully observed rows even when their provider timestamp and price are unchanged. Older incoming timestamps cannot overwrite newer live prices. Empty snapshots fail before the live transaction, and NSW incremental updates never expire naturally absent keys.
 
-Sync-run records include start, success/error, row count, and duration events and are retained for 90 days. FPQ diagnostic staging rows are retained for seven days. Fuel price history is intentionally retained indefinitely because it powers the trend views; operators with storage constraints should archive it before introducing a local deletion policy.
+Missing rows in valid VIC and NT full snapshots become one availability transition with `is_available = 0` and `price = NULL`; repeated missing snapshots do not add more history. Other full snapshots expire missing current rows. WA deliberately retains one daily history observation per station/fuel.
+
+Importer logs distinguish API rows fetched, current rows published, history changes inserted, unchanged observations skipped, missing rows expired, duration, and errors. Sync-run records are retained for 90 days. FPQ diagnostic staging rows are retained for seven days. Fuel price history is intentionally retained indefinitely because it powers the trend views; operators with storage constraints should archive it before introducing a local deletion policy.
+
+Weekly and monthly charts reconstruct each station/fuel's effective state at Brisbane daily or monthly boundaries, including the last event before the requested range. This prevents change-only history from producing empty or change-biased buckets.
 
 The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
 
