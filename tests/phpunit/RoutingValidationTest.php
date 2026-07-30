@@ -39,6 +39,25 @@ final class RoutingValidationTest extends TestCase
         ));
     }
 
+    public function testOsrmTableClampsOnlySubMetreNegativeNoise(): void
+    {
+        $table = fuelauNormalizeOsrmTablePayload([
+            'code' => 'Ok',
+            'distances' => [[-0.1, 1_000.2], [1_100.1, 0]],
+            'durations' => [[0, 100.2], [110.1, null]],
+        ], 2);
+
+        self::assertSame([[0, 1_001], [1_101, 0]], $table['distances']);
+        self::assertSame([[0, 101], [111, null]], $table['durations']);
+
+        $this->expectException(FuelauUpstreamException::class);
+        fuelauNormalizeOsrmTablePayload([
+            'code' => 'Ok',
+            'distances' => [[0, -1.1], [1, 0]],
+            'durations' => [[0, 1], [1, 0]],
+        ], 2);
+    }
+
     public function testEmptySnapshotCacheLoaderRunsOnce(): void
     {
         $directory = sys_get_temp_dir() . '/fuelau-phpunit-' . bin2hex(random_bytes(8));

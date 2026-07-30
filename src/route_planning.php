@@ -579,9 +579,9 @@ final class FuelauCandidateRoadAccessMeasurer
         array $candidateRows,
         callable $tableLoader,
         int $maximumCandidates = 80,
-        int $chunkSize = 20,
+        int $chunkSize = 13,
     ): array {
-        if ($maximumCandidates < 1 || $maximumCandidates > 80 || $chunkSize < 1 || $chunkSize > 20) {
+        if ($maximumCandidates < 1 || $maximumCandidates > 80 || $chunkSize < 1 || $chunkSize > 13) {
             throw new InvalidArgumentException('Invalid road-access measurement limits.');
         }
 
@@ -599,62 +599,90 @@ final class FuelauCandidateRoadAccessMeasurer
         foreach (array_chunk($candidates, $chunkSize) as $chunk) {
             $coordinates = [];
             foreach ($chunk as $candidate) {
-                $coordinates[] = $corridor->coordinateAtProgressM($candidate->progressM);
+                $coordinates[] = $corridor->coordinateAtProgressM(max(
+                    0,
+                    $candidate->progressM - 5_000,
+                ));
                 $coordinates[] = [
                     'lat' => (float) $candidate->sourceRow['latitude'],
                     'lon' => (float) $candidate->sourceRow['longitude'],
                 ];
+                $coordinates[] = $corridor->coordinateAtProgressM(min(
+                    $corridor->distanceM,
+                    $candidate->progressM + 5_000,
+                ));
             }
             $table = $tableLoader($coordinates);
             $coordinateCount = count($coordinates);
             foreach ($chunk as $index => $candidate) {
-                $anchorIndex = $index * 2;
-                $stationIndex = $anchorIndex + 1;
-                $outboundDistanceM = $this->matrixValue(
+                $beforeIndex = $index * 3;
+                $stationIndex = $beforeIndex + 1;
+                $afterIndex = $beforeIndex + 2;
+                $beforeToStationDistanceM = $this->matrixValue(
                     $table,
                     'distances',
-                    $anchorIndex,
+                    $beforeIndex,
                     $stationIndex,
                     $coordinateCount,
                 );
-                $returnDistanceM = $this->matrixValue(
+                $stationToAfterDistanceM = $this->matrixValue(
                     $table,
                     'distances',
                     $stationIndex,
-                    $anchorIndex,
+                    $afterIndex,
                     $coordinateCount,
                 );
-                $outboundDurationS = $this->matrixValue(
+                $bypassDistanceM = $this->matrixValue(
+                    $table,
+                    'distances',
+                    $beforeIndex,
+                    $afterIndex,
+                    $coordinateCount,
+                );
+                $beforeToStationDurationS = $this->matrixValue(
                     $table,
                     'durations',
-                    $anchorIndex,
+                    $beforeIndex,
                     $stationIndex,
                     $coordinateCount,
                 );
-                $returnDurationS = $this->matrixValue(
+                $stationToAfterDurationS = $this->matrixValue(
                     $table,
                     'durations',
                     $stationIndex,
-                    $anchorIndex,
+                    $afterIndex,
+                    $coordinateCount,
+                );
+                $bypassDurationS = $this->matrixValue(
+                    $table,
+                    'durations',
+                    $beforeIndex,
+                    $afterIndex,
                     $coordinateCount,
                 );
                 if (
-                    $outboundDistanceM === null
-                    || $returnDistanceM === null
-                    || $outboundDurationS === null
-                    || $returnDurationS === null
+                    $beforeToStationDistanceM === null
+                    || $stationToAfterDistanceM === null
+                    || $bypassDistanceM === null
+                    || $beforeToStationDurationS === null
+                    || $stationToAfterDurationS === null
+                    || $bypassDurationS === null
                 ) {
                     continue;
                 }
+                $insertionDistanceM = max(
+                    0,
+                    $beforeToStationDistanceM + $stationToAfterDistanceM - $bypassDistanceM,
+                );
+                $insertionDurationS = max(
+                    0,
+                    $beforeToStationDurationS + $stationToAfterDurationS - $bypassDurationS,
+                );
 
                 $measuredRows[] = [
                     ...$candidate->sourceRow,
-                    'access_distance_m' => (int) ceil(
-                        ($outboundDistanceM + $returnDistanceM) / 2,
-                    ),
-                    'access_duration_s' => (int) ceil(
-                        ($outboundDurationS + $returnDurationS) / 2,
-                    ),
+                    'access_distance_m' => (int) ceil($insertionDistanceM / 2),
+                    'access_duration_s' => (int) ceil($insertionDurationS / 2),
                     'road_access_status' => 'measured',
                 ];
             }
@@ -767,6 +795,16 @@ final class FuelauExactRouteValidator
                 || abs($fuelBucketDelta) > 1,
         );
     }
+
+    public function isAcceptableConservativeVariance(
+        FuelauExactRouteValidation $validation,
+    ): bool {
+        return $validation->distanceDeltaM <= 0
+            && $validation->distanceDeltaM >= -5_000
+            && abs($validation->durationDeltaS) <= 180
+            && $validation->fuelBucketDelta <= 0
+            && $validation->fuelBucketDelta >= -1;
+    }
 }
 
 final readonly class FuelauValidatedSingleCorridorPlan
@@ -779,6 +817,7 @@ final readonly class FuelauValidatedSingleCorridorPlan
         public FuelauExactRouteValidation $validation,
         public array $exactRoute,
         public int $validationPassCount,
+        public bool $acceptedConservativeVariance = false,
     ) {}
 
     /**
@@ -820,6 +859,13 @@ final readonly class FuelauValidatedSingleCorridorPlan
         $response['diagnostics']['validation_pass_count'] = $this->validationPassCount;
         $response['diagnostics']['exact_distance_delta_m'] = $this->validation->distanceDeltaM;
         $response['diagnostics']['exact_duration_delta_s'] = $this->validation->durationDeltaS;
+        $response['diagnostics']['accepted_conservative_variance'] =
+            $this->acceptedConservativeVariance;
+        if ($this->acceptedConservativeVariance) {
+            $response['warnings'][] =
+                'The validated route is slightly shorter than the conservative station-access model.';
+            $response['warnings'] = array_values(array_unique($response['warnings']));
+        }
 
         return $response;
     }
@@ -858,14 +904,27 @@ final class FuelauSingleCorridorValidationCoordinator
                 );
             }
             if ($pass === $maximumValidationPasses) {
+                if ($validator->isAcceptableConservativeVariance($validation)) {
+                    return new FuelauValidatedSingleCorridorPlan(
+                        result: $result,
+                        validation: $validation,
+                        exactRoute: $exactRoute,
+                        validationPassCount: $pass,
+                        acceptedConservativeVariance: true,
+                    );
+                }
                 break;
             }
             $rows = $this->reconcileSelectedAccess($rows, $result, $validation);
         }
 
-        throw new FuelauRoutePlanValidationException(
-            'Exact selected-stop routing did not stabilize within the validation budget.',
-        );
+        throw new FuelauRoutePlanValidationException(sprintf(
+            'Exact selected-stop routing did not stabilize within the validation budget '
+                . '(distance delta %d m, duration delta %d s, fuel bucket delta %d).',
+            $validation->distanceDeltaM,
+            $validation->durationDeltaS,
+            $validation->fuelBucketDelta,
+        ));
     }
 
     /**
@@ -1011,6 +1070,16 @@ final readonly class FuelauSingleCorridorOptimizationResult
                 $sequence = $index + 1;
                 $warnings[] = "Stop {$sequence} exceeds normal discretionary detour limits for route safety.";
             }
+            if (in_array('stop_spacing_safety_override', $purchase->reasonCodes, true)) {
+                $sequence = $index + 1;
+                $warnings[] =
+                    "Stop {$sequence} occurs sooner than preferred because it is required for route safety.";
+            }
+            if (in_array('minimum_purchase_safety_override', $purchase->reasonCodes, true)) {
+                $sequence = $index + 1;
+                $warnings[] =
+                    "Stop {$sequence} buys less than the preferred minimum because it is required for route safety.";
+            }
 
             $stops[] = [
                 'sequence' => $index + 1,
@@ -1123,14 +1192,6 @@ final class FuelauSingleCorridorPlanner
             );
         }
 
-        $freshRows = array_values(array_filter(
-            $candidateRows,
-            static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
-        ));
-        $input = (new FuelauFixedCorridorCandidateAdapter())->build(
-            $corridor,
-            $freshRows,
-        );
         $preferences = $request->preferences;
         $policy = new FuelauOptimizerPolicy(
             mode: $preferences->mode,
@@ -1147,6 +1208,27 @@ final class FuelauSingleCorridorPlanner
             minimumNetSavingCents: $preferences->minimumNetSavingCents,
             driverTimeValueCentsPerHour: $preferences->driverTimeValueCentsPerHour,
             fuelOnlyStopSeconds: (int) round($preferences->fuelOnlyStopMinutes * 60),
+        );
+        $freshRows = array_values(array_filter(
+            $candidateRows,
+            static function (array $row) use ($policy): bool {
+                if (($row['price_status'] ?? null) !== 'fresh') {
+                    return false;
+                }
+                $accessDistanceM = $row['access_distance_m'] ?? null;
+                $accessDurationS = $row['access_duration_s'] ?? null;
+
+                return !is_numeric((string) $accessDistanceM)
+                    || !is_numeric((string) $accessDurationS)
+                    || (
+                        ((float) $accessDistanceM * 2) <= $policy->maximumSafetyDetourM
+                        && ((float) $accessDurationS * 2) <= $policy->maximumSafetyDetourS
+                    );
+            },
+        ));
+        $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+            $corridor,
+            $freshRows,
         );
         $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
             $input->nodes,
@@ -1246,6 +1328,34 @@ final class FuelauLiveSingleCorridorPlanner
         ];
         $baselineRoute = $loadRoute($baselineCoordinates);
         $corridor = FuelauRouteCorridor::fromOsrmRoute($baselineRoute);
+        try {
+            $noStopResult = (new FuelauSingleCorridorPlanner())->plan(
+                $request,
+                $corridor,
+                [],
+            );
+            $noStopValidation = (new FuelauExactRouteValidator())->validate(
+                $noStopResult,
+                $baselineRoute,
+            );
+            if (!$noStopValidation->requiresReoptimization) {
+                $response = (new FuelauValidatedSingleCorridorPlan(
+                    result: $noStopResult,
+                    validation: $noStopValidation,
+                    exactRoute: $baselineRoute,
+                    validationPassCount: 1,
+                ))->toResponseArray();
+                $response['diagnostics']['raw_candidate_count'] = 0;
+                $response['diagnostics']['fresh_candidate_count'] = 0;
+                $response['diagnostics']['osrm_route_request_count'] = $routeRequestCount;
+                $response['diagnostics']['osrm_table_request_count'] = 0;
+
+                return $response;
+            }
+        } catch (FuelauRouteInfeasibleException) {
+            // Candidate work is only needed when starting fuel cannot finish
+            // the baseline route with the requested terminal reserve.
+        }
         $candidateRows = ($this->candidateLoader)(
             $corridor->candidateLookupPoints(),
             $request->fuel->type,
@@ -1261,6 +1371,10 @@ final class FuelauLiveSingleCorridorPlanner
             $classifiedRows,
             static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
         ));
+        $roadCandidateLimit = min(
+            80,
+            max(24, (int) ceil($corridor->distanceM / 50_000)),
+        );
         $measuredRows = (new FuelauCandidateRoadAccessMeasurer())->measure(
             $corridor,
             $freshRows,
@@ -1269,6 +1383,7 @@ final class FuelauLiveSingleCorridorPlanner
 
                 return ($this->tableLoader)($coordinates);
             },
+            maximumCandidates: $roadCandidateLimit,
         );
         $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
             $request,

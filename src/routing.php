@@ -617,10 +617,17 @@ function fuelauNormalizeOsrmTablePayload(array $payload, int $coordinateCount): 
                     $normalizedRow[] = null;
                     continue;
                 }
-                if (!is_numeric((string) $value) || (float) $value < 0) {
-                    throw new FuelauUpstreamException("OSRM table {$matrixName} contains an invalid value.");
+                if (!is_numeric((string) $value) || (float) $value < -1.0) {
+                    throw new FuelauUpstreamException(sprintf(
+                        'OSRM table %s contains an invalid %s value: %s.',
+                        $matrixName,
+                        get_debug_type($value),
+                        json_encode($value, JSON_UNESCAPED_SLASHES) ?: '(unencodable)',
+                    ));
                 }
-                $normalizedRow[] = (int) ceil((float) $value);
+                // OSRM MLD can emit sub-metre negative floating-point noise
+                // (observed as -0.1) for effectively identical locations.
+                $normalizedRow[] = (int) ceil(max(0.0, (float) $value));
             }
             $normalizedRows[] = $normalizedRow;
         }

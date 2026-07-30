@@ -284,15 +284,25 @@ final class FuelauFuelStateOptimizer
                         );
                         if ($alternative === null) {
                             if ($beyondSafetyDetour) {
-                                throw new FuelauRouteInfeasibleException(
-                                    'The only reachable station exceeds the maximum safety detour.',
-                                );
+                                throw new FuelauRouteInfeasibleException(sprintf(
+                                    'The only reachable station exceeds the maximum safety detour '
+                                        . '(%d m, %d s round trip).',
+                                    $purchase->detourDistanceM,
+                                    $purchase->detourDurationS,
+                                ));
                             }
                             $required[$purchase->nodeId] = match (true) {
                                 $tooFar => 'sparse_corridor',
                                 $tooSmall => 'minimum_purchase_safety_override',
                                 default => 'stop_spacing_safety_override',
                             };
+                        } elseif (
+                            !$tooFar
+                            && $alternative->fuelStopCount >= $plan->fuelStopCount
+                        ) {
+                            $required[$purchase->nodeId] = $tooSmall
+                                ? 'minimum_purchase_safety_override'
+                                : 'stop_spacing_safety_override';
                         } else {
                             $forbidden[$purchase->nodeId] = true;
                             $plan = $alternative;
@@ -328,6 +338,21 @@ final class FuelauFuelStateOptimizer
                     );
                     if ($alternative === null) {
                         $required[$purchase->nodeId] = 'reserve_feasibility';
+                        continue;
+                    }
+                    if ($alternative->fuelStopCount >= $plan->fuelStopCount) {
+                        // A different station with the same stop count is a
+                        // location substitution, not removal of a physical
+                        // stop. Keep the cheaper complete plan, but only label
+                        // its location strategic when the location choice
+                        // clears the meaningful-saving threshold.
+                        $saving =
+                            $alternative->generalizedCostCents - $plan->generalizedCostCents;
+                        if ($saving < $policy->minimumNetSavingCents) {
+                            $required[$purchase->nodeId] = 'reserve_feasibility';
+                        } else {
+                            $marginalSavings[$purchase->nodeId] = $saving;
+                        }
                         continue;
                     }
 
@@ -395,19 +420,21 @@ final class FuelauFuelStateOptimizer
         ];
 
         $lastIndex = count($nodes) - 1;
+        /** @var array<int, array<int, list<int>>> $departureOptionsCache */
+        $departureOptionsCache = [];
         for ($fromIndex = 0; $fromIndex < $lastIndex; $fromIndex++) {
             foreach ($states[$fromIndex] as $fromKey => $state) {
                 $arrivalBuckets = (int) $state['fuel_buckets'];
-                foreach (
-                    $this->departureOptions(
+                $departureOptions = $departureOptionsCache[$fromIndex][$arrivalBuckets]
+                    ??= $this->departureOptions(
                         $nodes,
                         $fromIndex,
                         $arrivalBuckets,
                         $capacityBuckets,
                         $reserveBuckets,
                         $vehicle->economyLPer100km,
-                    ) as $departureBuckets
-                ) {
+                    );
+                foreach ($departureOptions as $departureBuckets) {
                     $purchaseBuckets = $departureBuckets - $arrivalBuckets;
                     $price = $nodes[$fromIndex]->priceTenthsCentsPerL;
                     if ($fromIndex > 0 && $price !== null && $purchaseBuckets === 0) {

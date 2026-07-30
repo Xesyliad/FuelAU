@@ -292,6 +292,28 @@ final class RouteOptimizerTest extends TestCase
         self::assertSame(3100, $plan->purchases[1]->marginalNetSavingCents);
     }
 
+    public function testMarginalAuditDoesNotTreatStationReplacementAsStopRemoval(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station('dearer-substitute', 50_000, 201),
+                FuelauOptimizerNode::station('cheaper-required', 55_000, 200),
+                FuelauOptimizerNode::station('downstream', 400_000, 150),
+                new FuelauOptimizerNode('destination', 600_000),
+            ],
+            new FuelauOptimizerVehicle(60, 12, 6, 10),
+            new FuelauOptimizerPolicy(
+                maximumFuelOnlyStops: 3,
+                minimumNetSavingCents: 1_000,
+            ),
+        );
+
+        self::assertSame(2, $plan->fuelStopCount);
+        self::assertSame('cheaper-required', $plan->purchases[0]->nodeId);
+        self::assertSame('required', $plan->purchases[0]->classification);
+    }
+
     public function testStopLimitBelowMinimumFeasibleCountIsRejected(): void
     {
         $this->expectException(FuelauRouteInfeasibleException::class);

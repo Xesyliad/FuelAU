@@ -144,13 +144,17 @@ final class RoutePlanningTest extends TestCase
                     $durations[$index][$index] = 0;
                 }
                 $distances[0][1] = 1_000;
-                $distances[1][0] = 1_200;
+                $distances[1][2] = 1_200;
+                $distances[0][2] = 0;
                 $durations[0][1] = 100;
-                $durations[1][0] = 120;
-                $distances[2][3] = 2_000;
-                $distances[3][2] = 2_200;
-                $durations[2][3] = 200;
-                $durations[3][2] = 220;
+                $durations[1][2] = 120;
+                $durations[0][2] = 0;
+                $distances[3][4] = 2_000;
+                $distances[4][5] = 2_200;
+                $distances[3][5] = 0;
+                $durations[3][4] = 200;
+                $durations[4][5] = 220;
+                $durations[3][5] = 0;
 
                 return ['distances' => $distances, 'durations' => $durations];
             },
@@ -195,11 +199,13 @@ final class RoutePlanningTest extends TestCase
                     $distances[$index][$index] = 0;
                     $durations[$index][$index] = 0;
                 }
-                for ($index = 0; $index < $count; $index += 2) {
+                for ($index = 0; $index < $count; $index += 3) {
                     $distances[$index][$index + 1] = 1_000;
-                    $distances[$index + 1][$index] = 1_000;
+                    $distances[$index + 1][$index + 2] = 1_000;
+                    $distances[$index][$index + 2] = 0;
                     $durations[$index][$index + 1] = 60;
-                    $durations[$index + 1][$index] = 60;
+                    $durations[$index + 1][$index + 2] = 60;
+                    $durations[$index][$index + 2] = 0;
                 }
 
                 return ['distances' => $distances, 'durations' => $durations];
@@ -207,7 +213,7 @@ final class RoutePlanningTest extends TestCase
         );
 
         self::assertCount(80, $rows);
-        self::assertSame(4, $tableCalls);
+        self::assertSame(7, $tableCalls);
         self::assertLessThan(112.0, (float) $rows[0]['longitude']);
         self::assertGreaterThan(148.0, (float) $rows[count($rows) - 1]['longitude']);
     }
@@ -290,6 +296,20 @@ final class RoutePlanningTest extends TestCase
             $result,
             ['distance' => 603_000, 'duration' => 22_000],
         )->requiresReoptimization);
+        $conservativeVariance = $validator->validate(
+            $result,
+            ['distance' => 597_000, 'duration' => 21_450],
+        );
+        self::assertTrue($conservativeVariance->requiresReoptimization);
+        self::assertTrue($validator->isAcceptableConservativeVariance(
+            $conservativeVariance,
+        ));
+        self::assertFalse($validator->isAcceptableConservativeVariance(
+            $validator->validate(
+                $result,
+                ['distance' => 594_000, 'duration' => 21_450],
+            ),
+        ));
 
         $exactRouteCalls = 0;
         $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
@@ -306,6 +326,65 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(2, $exactRouteCalls);
         self::assertSame(2, $validated->validationPassCount);
         self::assertFalse($validated->validation->requiresReoptimization);
+    }
+
+    public function testResponseExplainsRequiredShortStopOverrides(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0],
+            'destinations' => [['lat' => -30.0, 'lon' => 156.0]],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 12,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 6,
+            ],
+        ]);
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 600_000,
+            durationS: 21_600,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 156.0],
+            ],
+        );
+        $result = (new FuelauSingleCorridorPlanner())->plan(
+            $request,
+            $corridor,
+            [
+                [
+                    ...$this->validatedStationRow(
+                        'early-safety',
+                        150.5,
+                        200,
+                        '2026-07-30T00:00:00Z',
+                    ),
+                    'fuel_code' => 'DL',
+                ],
+                [
+                ...$this->validatedStationRow(
+                    'late-safety',
+                    155.5,
+                    200,
+                    '2026-07-30T00:00:00Z',
+                ),
+                'fuel_code' => 'DL',
+                ],
+            ],
+        );
+        $warnings = $result->toResponseArray()['warnings'];
+
+        self::assertCount(1, array_filter(
+            $warnings,
+            static fn (string $warning): bool => str_contains($warning, 'sooner than preferred'),
+        ));
+        self::assertCount(1, array_filter(
+            $warnings,
+            static fn (string $warning): bool => str_contains($warning, 'preferred minimum'),
+        ));
     }
 
     public function testSelectedStationRequiresMeasuredRoadAccess(): void
@@ -341,6 +420,53 @@ final class RoutePlanningTest extends TestCase
                 ...$this->stationRow('estimated', 150.5, 180),
                 'price_status' => 'fresh',
             ]],
+        );
+    }
+
+    public function testMeasuredCandidateBeyondSafetyDetourIsExcludedBeforeSearch(): void
+    {
+        $request = $this->optimizationRequest(['maximum_fuel_only_stops' => 3]);
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 600_000,
+            durationS: 21_600,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 156.0],
+            ],
+        );
+        $unsafe = [
+            ...$this->validatedStationRow(
+                'unsafe-cheap',
+                153.0,
+                100,
+                '2026-07-30T00:00:00Z',
+            ),
+            'access_distance_m' => 80_000,
+        ];
+        $result = (new FuelauSingleCorridorPlanner())->plan(
+            $request,
+            $corridor,
+            [
+                $this->validatedStationRow(
+                    'on-route-early',
+                    150.5,
+                    200,
+                    '2026-07-30T00:00:00Z',
+                ),
+                $unsafe,
+                $this->validatedStationRow(
+                    'on-route-late',
+                    155.0,
+                    200,
+                    '2026-07-30T00:00:00Z',
+                ),
+            ],
+        );
+
+        self::assertSame(2, $result->input->eligibleCandidateCount);
+        self::assertArrayNotHasKey(
+            'station:nsw:NSW:unsafe-cheap:E10',
+            $result->input->candidatesByNodeId,
         );
     }
 
@@ -392,11 +518,13 @@ final class RoutePlanningTest extends TestCase
                     $distances[$index][$index] = 0;
                     $durations[$index][$index] = 0;
                 }
-                for ($index = 0; $index < $count; $index += 2) {
+                for ($index = 0; $index < $count; $index += 3) {
                     $distances[$index][$index + 1] = 0;
-                    $distances[$index + 1][$index] = 0;
+                    $distances[$index + 1][$index + 2] = 0;
+                    $distances[$index][$index + 2] = 0;
                     $durations[$index][$index + 1] = 0;
-                    $durations[$index + 1][$index] = 0;
+                    $durations[$index + 1][$index + 2] = 0;
+                    $durations[$index][$index + 2] = 0;
                 }
 
                 return ['distances' => $distances, 'durations' => $durations];
@@ -414,6 +542,51 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(600_000, $response['summary']['route_distance_m']);
         self::assertSame(26_800, $response['summary']['generalized_cost_cents']);
         self::assertCount(1, $response['route_pieces']);
+    }
+
+    public function testLivePlannerSkipsStationDependenciesWhenNoFuelStopIsNeeded(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0],
+            'destinations' => [['lat' => -30.0, 'lon' => 150.3]],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 80,
+                'starting_fuel_l' => 50,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 10,
+            ],
+        ]);
+        $candidateCalls = 0;
+        $tableCalls = 0;
+        $planner = new FuelauLiveSingleCorridorPlanner(
+            routeLoader: static fn (array $coordinates): array => [
+                'distance' => 40_000,
+                'duration' => 2_400,
+                'geometry' => [
+                    'type' => 'LineString',
+                    'coordinates' => [[150.0, -30.0], [150.3, -30.0]],
+                ],
+            ],
+            candidateLoader: static function () use (&$candidateCalls): array {
+                $candidateCalls++;
+                return [];
+            },
+            tableLoader: static function () use (&$tableCalls): array {
+                $tableCalls++;
+                return [];
+            },
+        );
+
+        $response = $planner->plan($request);
+
+        self::assertSame(0, $candidateCalls);
+        self::assertSame(0, $tableCalls);
+        self::assertSame(1, $response['diagnostics']['osrm_route_request_count']);
+        self::assertSame(0, $response['diagnostics']['raw_candidate_count']);
+        self::assertCount(0, $response['stops']);
     }
 
     /**
