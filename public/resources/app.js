@@ -3684,12 +3684,16 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
                     });
                 } else {
+                    const departureTopUp = Array.isArray(piece.reasonCodes)
+                        && piece.reasonCodes.includes('origin_departure_top_up');
                     const stopSuffix = piece.destinationFallback
                         ? ' destination reserve stop'
                         : (piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : '')));
-                    const optimizerDetails = piece.classification
-                        ? `, ${piece.classification} stop after ${Number(piece.distanceSincePhysicalStopKm || 0).toFixed(1)} km / ${Number(piece.minutesSincePhysicalStop || 0).toFixed(0)} min`
-                        : '';
+                    const optimizerDetails = departureTopUp
+                        ? ', combined with departure'
+                        : (piece.classification
+                            ? `, ${piece.classification} stop after ${Number(piece.distanceSincePhysicalStopKm || 0).toFixed(1)} km / ${Number(piece.minutesSincePhysicalStop || 0).toFixed(0)} min`
+                            : '');
                     const savingDetails = Number(piece.marginalNetSavingCents || 0) > 0
                         ? `, saves $${(Number(piece.marginalNetSavingCents) / 100).toFixed(2)}`
                         : '';
@@ -3698,7 +3702,7 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         : '';
                     rows.push({
                         leg: segmentIndex + 1,
-                        type: 'Fuel stop',
+                        type: departureTopUp ? 'Departure top-up' : 'Fuel stop',
                         instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',

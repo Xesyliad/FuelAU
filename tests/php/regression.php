@@ -294,6 +294,11 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
             && str_contains($source, 'fuel price, driving time and stop burden'),
         'The optimized route breakdown must explain alternative-corridor selection',
     );
+    fuelauAssertTrue(
+        str_contains($source, "type: departureTopUp ? 'Departure top-up' : 'Fuel stop'")
+            && str_contains($source, "', combined with departure'"),
+        'Origin-proximate fuel must render as a departure top-up',
+    );
 });
 
 fuelauTest('alternative route lookup enforces its bounded corridor count', static function (): void {
@@ -1219,6 +1224,165 @@ fuelauTest('planned physical stop fuel is combined without consuming fuel-only a
         1,
         $result->input->candidatesByNodeId[
             'station:nsw:NSW:meal-stop-fuel:E10:visit:0'
+        ]->sourceRow['combined_itinerary_stop_index'],
+    );
+});
+
+fuelauTest('origin fuel is a departure top up outside the fuel-only stop allowance', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Remote origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 161.8, 'label' => 'Remote destination'],
+        ],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 80,
+            'starting_fuel_l' => 50,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 10,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 1,
+            'minimum_discretionary_purchase_l' => 40,
+            'minimum_stop_spacing_km' => 400,
+            'minimum_stop_spacing_minutes' => 240,
+        ],
+    ]);
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 1_181_000,
+        durationS: 42_768,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 161.8],
+        ],
+    );
+    $station = static fn (
+        string $id,
+        float $longitude,
+        float $price,
+    ): array => [
+        'source' => 'nsw',
+        'state' => 'NSW',
+        'station_id' => $id,
+        'station_name' => $id,
+        'fuel_code' => 'E10',
+        'latitude' => -30.0,
+        'longitude' => $longitude,
+        'price' => $price,
+        'updated_at' => '2026-07-30T00:00:00Z',
+        'price_status' => 'fresh',
+        'access_distance_m' => 0,
+        'access_duration_s' => 0,
+    ];
+    $result = (new FuelauSingleCorridorPlanner())->plan(
+        $request,
+        $corridor,
+        [
+            $station('origin-top-up', 150.01, 239.5),
+            $station('remote-required', 155.08, 239.9),
+        ],
+    );
+    $response = $result->toResponseArray();
+
+    fuelauAssertSame(2, $result->plan->fuelStopCount);
+    fuelauAssertSame(1, $result->plan->fuelOnlyStopCount);
+    fuelauAssertSame(1, $result->plan->combinedStopCount);
+    fuelauAssertSame(1, $result->plan->requiredStopCount);
+    fuelauAssertSame('combined', $result->plan->purchases[0]->classification);
+    fuelauAssertSame(
+        ['origin_departure_top_up'],
+        $result->plan->purchases[0]->reasonCodes,
+    );
+    fuelauAssertSame('required', $result->plan->purchases[1]->classification);
+    fuelauAssertSame(0, $response['summary']['discretionary_stop_count']);
+    fuelauAssertTrue(
+        count(array_filter(
+            $response['warnings'],
+            static fn (string $warning): bool =>
+                str_contains($warning, 'sooner than preferred'),
+        )) === 0,
+        'An origin departure top-up must not emit an early-stop fatigue warning',
+    );
+});
+
+fuelauTest('complete itinerary can top up at origin with zero fuel-only stops', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'direct',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 70,
+            'starting_fuel_l' => 35,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 0,
+        ],
+    ]);
+    $locations = $request->itineraryLocations();
+    $originStation = [
+        'source' => 'nsw',
+        'state' => 'NSW',
+        'station_id' => 'origin-top-up',
+        'station_name' => 'Origin Top Up',
+        'fuel_code' => 'E10',
+        'latitude' => -30.0,
+        'longitude' => 150.01,
+        'price' => 100,
+        'updated_at' => '2026-07-30T00:00:00Z',
+        'price_status' => 'fresh',
+        'access_distance_m' => 0,
+        'access_duration_s' => 0,
+    ];
+    $result = (new FuelauCompleteItineraryPlanner())->plan($request, [
+        new FuelauPreparedItineraryLeg(
+            0,
+            new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 150.0],
+                    ['lat' => -30.0, 'lon' => 153.0],
+                ],
+            ),
+            $locations[1],
+            [$originStation],
+        ),
+        new FuelauPreparedItineraryLeg(
+            1,
+            new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 153.0],
+                    ['lat' => -30.0, 'lon' => 150.0],
+                ],
+            ),
+            $locations[2],
+            [],
+        ),
+    ]);
+
+    fuelauAssertSame(1, $result->plan->fuelStopCount);
+    fuelauAssertSame(0, $result->plan->fuelOnlyStopCount);
+    fuelauAssertSame(1, $result->plan->combinedStopCount);
+    fuelauAssertSame(0, $result->plan->requiredStopCount);
+    fuelauAssertSame('combined', $result->plan->purchases[0]->classification);
+    fuelauAssertSame(
+        ['origin_departure_top_up'],
+        $result->plan->purchases[0]->reasonCodes,
+    );
+    fuelauAssertSame(
+        0,
+        $result->input->candidatesByNodeId[
+            'station:nsw:NSW:origin-top-up:E10:visit:0'
         ]->sourceRow['combined_itinerary_stop_index'],
     );
 });

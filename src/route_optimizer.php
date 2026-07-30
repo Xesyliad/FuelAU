@@ -39,6 +39,7 @@ final readonly class FuelauOptimizerNode
         public int $accessDurationS = 0,
         public bool $physicalStop = false,
         public bool $combinedStop = false,
+        public ?string $combinedStopReason = null,
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('Optimizer node ID must not be empty.');
@@ -51,6 +52,11 @@ final readonly class FuelauOptimizerNode
         }
         if ($combinedStop && $priceTenthsCentsPerL === null) {
             throw new InvalidArgumentException('Combined stops must expose a station price.');
+        }
+        if ($combinedStopReason !== null && !$combinedStop) {
+            throw new InvalidArgumentException(
+                'A combined-stop reason requires a combined station stop.',
+            );
         }
         if ($progressS < 0 || $accessDistanceM < 0 || $accessDurationS < 0) {
             throw new InvalidArgumentException('Optimizer node distance and duration values must be non-negative.');
@@ -66,6 +72,7 @@ final readonly class FuelauOptimizerNode
         int $accessDistanceM = 0,
         int $accessDurationS = 0,
         bool $combinedStop = false,
+        ?string $combinedStopReason = null,
     ): self {
         return new self(
             id: $id,
@@ -77,6 +84,7 @@ final readonly class FuelauOptimizerNode
             accessDurationS: $accessDurationS,
             physicalStop: false,
             combinedStop: $combinedStop,
+            combinedStopReason: $combinedStopReason,
         );
     }
 }
@@ -412,22 +420,20 @@ final class FuelauFuelStateOptimizer
             }
         }
 
-        $combinedNodeIds = array_fill_keys(
-            array_map(
-                static fn (FuelauOptimizerNode $node): string => $node->id,
-                array_filter(
-                    $nodes,
-                    static fn (FuelauOptimizerNode $node): bool => $node->combinedStop,
-                ),
-            ),
-            true,
-        );
+        $combinedNodeReasons = [];
+        foreach ($nodes as $node) {
+            if (!$node->combinedStop) {
+                continue;
+            }
+            $combinedNodeReasons[$node->id] =
+                $node->combinedStopReason ?? 'planned_stop_combination';
+        }
 
         return $this->classifyPlan(
             $plan,
             $required,
             $marginalSavings,
-            $combinedNodeIds,
+            $combinedNodeReasons,
         );
     }
 
@@ -861,22 +867,23 @@ final class FuelauFuelStateOptimizer
     /**
      * @param array<string, string> $required
      * @param array<string, int> $marginalSavings
-     * @param array<string, bool> $combinedNodeIds
+     * @param array<string, string> $combinedNodeReasons
      */
     private function classifyPlan(
         FuelauOptimizerPlan $plan,
         array $required,
         array $marginalSavings,
-        array $combinedNodeIds,
+        array $combinedNodeReasons,
     ): FuelauOptimizerPlan {
         $purchases = array_map(
             static function (FuelauOptimizerPurchase $purchase) use (
                 $required,
                 $marginalSavings,
-                $combinedNodeIds,
+                $combinedNodeReasons,
             ): FuelauOptimizerPurchase {
                 $requiredReason = $required[$purchase->nodeId] ?? null;
-                $combined = isset($combinedNodeIds[$purchase->nodeId]);
+                $combinedReason = $combinedNodeReasons[$purchase->nodeId] ?? null;
+                $combined = $combinedReason !== null;
 
                 return new FuelauOptimizerPurchase(
                     nodeId: $purchase->nodeId,
@@ -895,7 +902,7 @@ final class FuelauFuelStateOptimizer
                         : ($requiredReason !== null ? 'required' : 'strategic'),
                     reasonCodes: $combined
                         ? array_values(array_filter([
-                            'planned_stop_combination',
+                            $combinedReason,
                             $requiredReason,
                         ]))
                         : [$requiredReason ?? 'lower_trip_cost'],
