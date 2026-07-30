@@ -11,6 +11,7 @@ require_once dirname(__DIR__) . '/src/web.php';
  *   php scripts/validate-route-optimizer.php
  *   php scripts/validate-route-optimizer.php brisbane-cairns
  *   php scripts/validate-route-optimizer.php brisbane-sydney direct
+ *   php scripts/validate-route-optimizer.php rural-all
  */
 
 $routes = [
@@ -46,6 +47,38 @@ $routes = [
         'origin' => [-23.6980, 133.8807],
         'destination' => [-34.9285, 138.6007],
     ],
+    'toowoomba-dalby' => [
+        'origin' => [-27.5598, 151.9507],
+        'destination' => [-27.1817, 151.2621],
+    ],
+    'armidale-tamworth' => [
+        'origin' => [-30.5146, 151.6658],
+        'destination' => [-31.0927, 150.9320],
+    ],
+    'rockhampton-emerald' => [
+        'origin' => [-23.3781, 150.5100],
+        'destination' => [-23.5268, 148.1606],
+    ],
+    'dubbo-cobar' => [
+        'origin' => [-32.2569, 148.6011],
+        'destination' => [-31.4980, 145.8383],
+    ],
+    'charleville-mount-isa' => [
+        'origin' => [-26.4016, 146.2383],
+        'destination' => [-20.7256, 139.4927],
+    ],
+    'alice-springs-katherine' => [
+        'origin' => [-23.6980, 133.8807],
+        'destination' => [-14.4652, 132.2635],
+    ],
+];
+$ruralRouteNames = [
+    'toowoomba-dalby',
+    'armidale-tamworth',
+    'rockhampton-emerald',
+    'dubbo-cobar',
+    'charleville-mount-isa',
+    'alice-springs-katherine',
 ];
 
 $selectedRoute = trim((string) ($argv[1] ?? 'all'));
@@ -54,11 +87,15 @@ if (!in_array($returnMode, ['one_way', 'direct', 'reverse'], true)) {
     fwrite(STDERR, 'Return mode must be one_way, direct, or reverse.' . PHP_EOL);
     exit(2);
 }
-if ($selectedRoute !== 'all') {
+if ($selectedRoute === 'rural-all') {
+    $routes = array_intersect_key($routes, array_flip($ruralRouteNames));
+} elseif ($selectedRoute !== 'all') {
     if (!isset($routes[$selectedRoute])) {
         fwrite(
             STDERR,
-            'Unknown route. Choose one of: ' . implode(', ', array_keys($routes)) . PHP_EOL,
+            'Unknown route. Choose rural-all or one of: '
+                . implode(', ', array_keys($routes))
+                . PHP_EOL,
         );
         exit(2);
     }
@@ -197,6 +234,17 @@ foreach ($routes as $name => $route) {
                     'progress_km' => $stop['route_progress_km'],
                     'purchase_l' => $stop['purchase_l'],
                     'price_cents_per_l' => $stop['price_cents_per_l'],
+                    'arrival_fuel_l' => $stop['arrival_fuel_l'],
+                    'departure_fuel_l' => $stop['departure_fuel_l'],
+                    'distance_since_physical_stop_km' =>
+                        $stop['distance_since_physical_stop_km'],
+                    'minutes_since_physical_stop' =>
+                        $stop['minutes_since_physical_stop'],
+                    'marginal_net_saving_dollars' => round(
+                        ((int) $stop['marginal_net_saving_cents']) / 100,
+                        2,
+                    ),
+                    'reason_codes' => $stop['reason_codes'],
                 ],
                 $response['stops'],
             ),
