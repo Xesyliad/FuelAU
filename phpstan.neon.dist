@@ -10,6 +10,7 @@ parameters:
         - src/migrations.php
         - src/request.php
         - src/route_optimizer.php
+        - src/route_planning.php
         - src/routing.php
         - src/web.php
         - templates/app.php

@@ -8,6 +8,7 @@ require_once __DIR__ . '/http.php';
 require_once __DIR__ . '/routing.php';
 require_once __DIR__ . '/fuel.php';
 require_once __DIR__ . '/route_optimizer.php';
+require_once __DIR__ . '/route_planning.php';
 require_once __DIR__ . '/request.php';
 require_once __DIR__ . '/api.php';
 

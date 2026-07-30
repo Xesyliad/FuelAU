@@ -9,6 +9,7 @@ require dirname(__DIR__, 2) . '/src/migrations.php';
 require dirname(__DIR__, 2) . '/src/routing.php';
 require dirname(__DIR__, 2) . '/src/request.php';
 require dirname(__DIR__, 2) . '/src/route_optimizer.php';
+require dirname(__DIR__, 2) . '/src/route_planning.php';
 
 $tests = [];
 $failures = [];
@@ -463,6 +464,118 @@ fuelauTest('practical optimizer prefers fewer stops within the similar-cost thre
         $similarCostPlan->generalizedCostCents - $strictCostPlan->generalizedCostCents <= 500,
         'The fewer-stop plan must remain within the configured similar-cost threshold',
     );
+});
+
+fuelauTest('route corridor projects station progress using OSRM totals', static function (): void {
+    $corridor = FuelauRouteCorridor::fromOsrmRoute([
+        'distance' => 100_000,
+        'duration' => 3_600,
+        'geometry' => [
+            'coordinates' => [
+                [150.0, -30.0],
+                [151.0, -30.0],
+            ],
+        ],
+    ]);
+    $projection = $corridor->project(-30.1, 150.5);
+    $lookupPoints = $corridor->candidateLookupPoints(25_000);
+
+    fuelauAssertSame(50_000, $projection->progressM);
+    fuelauAssertSame(1_800, $projection->progressS);
+    fuelauAssertTrue(
+        $projection->offRouteM >= 11_000 && $projection->offRouteM <= 11_200,
+        'Projection must retain the station offset from the route',
+    );
+    fuelauAssertSame(5, count($lookupPoints));
+    fuelauAssertSame(['lat' => -30.0, 'lon' => 150.0], $lookupPoints[0]);
+    fuelauAssertSame(['lat' => -30.0, 'lon' => 151.0], $lookupPoints[4]);
+});
+
+fuelauTest('corridor candidates preserve coverage before filling dense bins', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 300_000,
+        durationS: 10_800,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 153.0],
+        ],
+    );
+    $rows = [
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'near-1', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.1, 'price' => 190],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'near-2', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.2, 'price' => 180],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'near-3', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.3, 'price' => 170],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'middle', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 151.2, 'price' => 200],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'remote', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 152.6, 'price' => 210],
+    ];
+
+    $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+        $corridor,
+        $rows,
+        maximumCandidates: 3,
+    );
+    $stationNodes = array_slice($input->nodes, 1, -1);
+    $coverageBins = array_map(
+        static fn (FuelauOptimizerNode $node): int => intdiv($node->progressM, 50_000),
+        $stationNodes,
+    );
+
+    fuelauAssertSame(5, $input->eligibleCandidateCount);
+    fuelauAssertSame(3, $input->selectedCandidateCount);
+    fuelauAssertSame([0, 2, 5], $coverageBins);
+});
+
+fuelauTest('corridor candidates use stable station identity and eligibility filters', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 100_000,
+        durationS: 3_600,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 151.0],
+        ],
+    );
+    $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+        $corridor,
+        [
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'same', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'same', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 190],
+            ['source' => 'unofficial', 'state' => 'NSW', 'station_id' => 'bad-source', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.6, 'price' => 100],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'too-far', 'fuel_code' => 'E10', 'latitude' => -31.0, 'longitude' => 150.6, 'price' => 100],
+        ],
+    );
+    $candidate = array_values($input->candidatesByNodeId)[0];
+
+    fuelauAssertSame(1, $input->eligibleCandidateCount);
+    fuelauAssertSame('nsw:NSW:same:E10', $candidate->stableId);
+    fuelauAssertSame(190.0, $candidate->priceCentsPerL);
+});
+
+fuelauTest('projected corridor candidates feed the practical optimizer', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 600_000,
+        durationS: 21_600,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 156.0],
+        ],
+    );
+    $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+        $corridor,
+        [
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'required', 'station_name' => 'Required', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'strategic', 'station_name' => 'Strategic', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 153.0, 'price' => 100],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fallback', 'station_name' => 'Fallback', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 155.5, 'price' => 300],
+        ],
+    );
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        $input->nodes,
+        new FuelauOptimizerVehicle(60, 12, 6, 10),
+        new FuelauOptimizerPolicy(maximumFuelOnlyStops: 3),
+    );
+
+    fuelauAssertSame(2, $plan->fuelStopCount);
+    fuelauAssertSame('Required', $plan->purchases[0]->label);
+    fuelauAssertSame('Strategic', $plan->purchases[1]->label);
+    fuelauAssertSame('strategic', $plan->purchases[1]->classification);
 });
 
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {

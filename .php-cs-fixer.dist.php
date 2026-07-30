@@ -14,6 +14,7 @@ $finder = PhpCsFixer\Finder::create()
         __DIR__ . '/src/migrations.php',
         __DIR__ . '/src/request.php',
         __DIR__ . '/src/route_optimizer.php',
+        __DIR__ . '/src/route_planning.php',
         __DIR__ . '/src/web.php',
         __DIR__ . '/templates/app.php',
     ]);
