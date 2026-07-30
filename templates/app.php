@@ -191,11 +191,25 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                                 <label for="route-tank-capacity">Tank Capacity (L)</label>
                                 <input type="number" id="route-tank-capacity" min="5" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
                             </div>
-                            <div class="field"<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
+                            <?php if ($routeOptimizerV2Enabled): ?>
+                            <div class="field">
+                                <label for="route-use-optimizer">Route engine</label>
+                                <label class="switch-control">
+                                    <input
+                                        type="checkbox"
+                                        id="route-use-optimizer"
+                                        <?= $routeOptimizerV2Default ? 'checked' : '' ?>
+                                    >
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span>Use new route optimiser (preview)</span>
+                                </label>
+                            </div>
+                            <?php endif; ?>
+                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
                                 <label for="route-starting-fuel">Starting Fuel (L)</label>
                                 <input type="number" id="route-starting-fuel" min="0" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
                             </div>
-                            <div class="field"<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
+                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
                                 <label for="route-fuel-reserve">Required Reserve (L)</label>
                                 <input type="number" id="route-fuel-reserve" min="0" max="1499.5" step="0.5" inputmode="decimal" placeholder="6.0">
                             </div>
@@ -203,7 +217,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                                 <label for="route-fuel-economy">Fuel Economy (L/100km)</label>
                                 <input type="number" id="route-fuel-economy" min="0.1" step="0.1" inputmode="decimal" placeholder="0.0">
                             </div>
-                            <div class="field"<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
+                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
                                 <label for="route-optimization-mode">Optimisation</label>
                                 <select id="route-optimization-mode">
                                     <option value="practical_least_cost">Practical least cost</option>

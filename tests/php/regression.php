@@ -273,8 +273,13 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         'The version one browser path must call the backend optimizer',
     );
     fuelauAssertTrue(
-        str_contains($source, 'const plan = routeOptimizerV2Default'),
-        'The backend optimizer must remain behind the default feature flag',
+        str_contains($source, 'const plan = routeOptimizerSelected()'),
+        'The backend optimizer must remain behind feature-gated user selection',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'routeUseOptimizer.checked = routeOptimizerV2Default')
+            && str_contains($source, 'useOptimizer: routeOptimizerSelected()'),
+        'The internal optimizer opt-in must default safely and persist explicitly',
     );
     fuelauAssertTrue(
         str_contains($source, 'destinations: destinations.map(routeOptimizerLocation)'),
@@ -298,6 +303,38 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         str_contains($source, "type: departureTopUp ? 'Departure top-up' : 'Fuel stop'")
             && str_contains($source, "', combined with departure'"),
         'Origin-proximate fuel must render as a departure top-up',
+    );
+});
+
+fuelauTest('route optimizer preview control obeys enabled and default flags', static function (): void {
+    $render = static function (bool $enabled, bool $default): string {
+        $containerManagementEnabled = false;
+        $routeOptimizerV2Enabled = $enabled;
+        $routeOptimizerV2Default = $default;
+        $cspNonce = 'test-nonce';
+        $mapConfig = [];
+        ob_start();
+        require dirname(__DIR__, 2) . '/templates/app.php';
+
+        return (string) ob_get_clean();
+    };
+    $disabled = $render(false, false);
+    $preview = $render(true, false);
+    $default = $render(true, true);
+
+    fuelauAssertTrue(
+        !str_contains($disabled, 'id="route-use-optimizer"'),
+        'The preview control must not render when the backend feature is disabled',
+    );
+    fuelauAssertTrue(
+        str_contains($preview, 'id="route-use-optimizer"')
+            && str_contains($preview, 'data-route-optimizer-field hidden'),
+        'Enabled default-off mode must expose opt-in while hiding optimizer fields',
+    );
+    fuelauAssertTrue(
+        preg_match('/id="route-use-optimizer"\\s+checked/', $default) === 1
+            && str_contains($default, 'data-route-optimizer-field>'),
+        'Enabled default-on mode must select the optimizer and reveal its fields',
     );
 });
 

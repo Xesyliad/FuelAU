@@ -75,7 +75,8 @@ final class WebArchitectureTest extends TestCase
 
         self::assertIsString($script);
         self::assertStringContainsString("apiRequest('/api/route/optimize'", $script);
-        self::assertStringContainsString('const plan = routeOptimizerV2Default', $script);
+        self::assertStringContainsString('const plan = routeOptimizerSelected()', $script);
+        self::assertStringContainsString('id="route-use-optimizer"', $template);
         self::assertStringContainsString(
             'destinations: destinations.map(routeOptimizerLocation)',
             $script,

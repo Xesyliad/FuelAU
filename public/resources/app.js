@@ -43,6 +43,8 @@ const routeStartingFuel = document.getElementById('route-starting-fuel');
 const routeFuelReserve = document.getElementById('route-fuel-reserve');
 const routeFuelEconomy = document.getElementById('route-fuel-economy');
 const routeOptimizationMode = document.getElementById('route-optimization-mode');
+const routeUseOptimizer = document.getElementById('route-use-optimizer');
+const routeOptimizerFields = document.querySelectorAll('[data-route-optimizer-field]');
 const routeDestinationList = document.getElementById('route-destination-list');
 const routeAddDestination = document.getElementById('route-add-destination');
 const routeReturnReverses = document.getElementById('route-return-reverses');
@@ -586,6 +588,7 @@ function saveRoutePlannerState(planned = false) {
             fuelEconomy: routeFuelEconomy.value.trim(),
             fuelValue: routeFuelSelectedValue(),
             optimizationMode: routeOptimizationMode.value,
+            useOptimizer: routeOptimizerSelected(),
             returnMode: routeReturnMode(),
             planned: Boolean(planned),
         }));
@@ -1199,6 +1202,18 @@ function syncRouteReturnModeControls() {
     routeReturnReverses.disabled = oneWayEnabled;
     routeReturnDirect.closest('.switch-control')?.classList.toggle('is-disabled', oneWayEnabled);
     routeReturnReverses.closest('.switch-control')?.classList.toggle('is-disabled', oneWayEnabled);
+}
+
+function routeOptimizerSelected() {
+    return routeOptimizerV2Enabled
+        && (routeUseOptimizer ? routeUseOptimizer.checked : routeOptimizerV2Default);
+}
+
+function syncRouteOptimizerControls() {
+    const selected = routeOptimizerSelected();
+    routeOptimizerFields.forEach((field) => {
+        field.hidden = !selected;
+    });
 }
 
 function routeTankCapacityValue() {
@@ -3800,6 +3815,12 @@ function restoreRoutePlannerState(state) {
     if (!['practical_least_cost', 'fewer_stops'].includes(routeOptimizationMode.value)) {
         routeOptimizationMode.value = 'practical_least_cost';
     }
+    if (routeUseOptimizer) {
+        routeUseOptimizer.checked = typeof state.useOptimizer === 'boolean'
+            ? state.useOptimizer
+            : routeOptimizerV2Default;
+    }
+    syncRouteOptimizerControls();
     syncRouteVehicleInputBounds();
     routeReturnOneWay.checked = String(state.returnMode || 'direct') === 'one-way';
     routeReturnReverses.checked = String(state.returnMode || 'direct') === 'reverses';
@@ -3835,14 +3856,14 @@ async function planRoute() {
         return;
     }
     if (
-        routeOptimizerV2Default
+        routeOptimizerSelected()
         && (startingFuel < 0 || startingFuel > tankCapacity)
     ) {
         routeStatus.textContent = 'Starting fuel must be between zero and tank capacity.';
         return;
     }
     if (
-        routeOptimizerV2Default
+        routeOptimizerSelected()
         && (reserveFuel < 0 || reserveFuel >= tankCapacity)
     ) {
         routeStatus.textContent = 'Required reserve must be non-negative and less than tank capacity.';
@@ -3868,7 +3889,7 @@ async function planRoute() {
                 throw new Error(`Geocoding failed for "${value}": ${error.message}`);
             }
         }
-        const plan = routeOptimizerV2Default
+        const plan = routeOptimizerSelected()
             ? await buildOptimizedRoutePlan(
                 origin,
                 destinations,
@@ -3930,6 +3951,10 @@ function resetRoutePlanner(options = {}) {
     routeFuelReserve.value = String(routePlannerDefaultReserveL);
     routeFuelEconomy.value = String(routePlannerDefaultFuelEconomyLPer100km);
     routeOptimizationMode.value = 'practical_least_cost';
+    if (routeUseOptimizer) {
+        routeUseOptimizer.checked = routeOptimizerV2Default;
+    }
+    syncRouteOptimizerControls();
     syncRouteVehicleInputBounds();
     routeReturnDirect.checked = true;
     routeReturnReverses.checked = false;
@@ -5314,6 +5339,10 @@ routeReturnDirect.addEventListener('change', syncRouteReturnModeControls);
 routeReturnReverses.addEventListener('change', syncRouteReturnModeControls);
 routeReturnOneWay.addEventListener('change', syncRouteReturnModeControls);
 routeTankCapacity.addEventListener('input', syncRouteVehicleInputBounds);
+routeUseOptimizer?.addEventListener('change', () => {
+    syncRouteOptimizerControls();
+    saveRoutePlannerState(false);
+});
 
 fuelStopFinderPlan.addEventListener('click', planFuelStopFinder);
 fuelStopFinderReset.addEventListener('click', resetFuelStopFinder);
