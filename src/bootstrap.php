@@ -60,6 +60,8 @@ function fuelauConfig(): array
         foreach ([
             'CONTAINER_MANAGEMENT_ENABLED',
             'CONTAINER_MANAGEMENT_TOKEN',
+            'ROUTE_OPTIMIZER_V2_DEFAULT',
+            'ROUTE_OPTIMIZER_V2_ENABLED',
         ] as $environmentKey) {
             $environmentValue = getenv($environmentKey);
             if ($environmentValue !== false && trim((string) $environmentValue) !== '') {

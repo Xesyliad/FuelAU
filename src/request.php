@@ -179,6 +179,370 @@ final readonly class FuelauRouteRequest
     }
 }
 
+final readonly class FuelauRouteOptimizationLocation
+{
+    public function __construct(
+        public float $latitude,
+        public float $longitude,
+        public string $label,
+        public bool $physicalStop,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    public static function fromBody(
+        array $body,
+        string $field,
+        bool $physicalStop = true,
+        bool $allowPhysicalStopOverride = true,
+    ): self {
+        $latitude = FuelauRequestValue::floatOrNull($body['lat'] ?? null);
+        $longitude = FuelauRequestValue::floatOrNull($body['lon'] ?? null);
+        if ($latitude === null || $longitude === null) {
+            throw new FuelauValidationException("{$field} requires numeric lat and lon values.");
+        }
+        fuelauValidateCoordinates($latitude, $longitude);
+
+        $label = trim(FuelauRequestValue::string($body['label'] ?? ''));
+        if (strlen($label) > 200) {
+            throw new FuelauValidationException("{$field} label must not exceed 200 characters.");
+        }
+
+        $resolvedPhysicalStop = $physicalStop;
+        if ($allowPhysicalStopOverride && array_key_exists('physical_stop', $body)) {
+            if (!is_bool($body['physical_stop'])) {
+                throw new FuelauValidationException("{$field} physical_stop must be boolean.");
+            }
+            $resolvedPhysicalStop = $body['physical_stop'];
+        }
+
+        return new self($latitude, $longitude, $label, $resolvedPhysicalStop);
+    }
+
+    /**
+     * @return array{lat: float, lon: float, label: string, physical_stop: bool}
+     */
+    public function toArray(): array
+    {
+        return [
+            'lat' => $this->latitude,
+            'lon' => $this->longitude,
+            'label' => $this->label,
+            'physical_stop' => $this->physicalStop,
+        ];
+    }
+}
+
+final readonly class FuelauRouteOptimizationFuel
+{
+    public function __construct(
+        public string $type,
+        public float $tankCapacityL,
+        public float $startingFuelL,
+        public float $economyLPer100km,
+        public float $reserveL,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    public static function fromBody(array $body): self
+    {
+        $type = trim(FuelauRequestValue::string($body['type'] ?? ''));
+        if ($type === '' || strlen($type) > 100) {
+            throw new FuelauValidationException('fuel.type must contain between 1 and 100 characters.');
+        }
+
+        $tankCapacityL = FuelauRequestValue::floatOrNull($body['tank_capacity_l'] ?? null);
+        if ($tankCapacityL === null || $tankCapacityL < 5 || $tankCapacityL > 1500) {
+            throw new FuelauValidationException('fuel.tank_capacity_l must be between 5 and 1500.');
+        }
+
+        $startingFuelL = FuelauRequestValue::floatOrNull($body['starting_fuel_l'] ?? null);
+        if ($startingFuelL === null || $startingFuelL < 0 || $startingFuelL > $tankCapacityL) {
+            throw new FuelauValidationException(
+                'fuel.starting_fuel_l must be between 0 and tank capacity.',
+            );
+        }
+
+        $economyLPer100km = FuelauRequestValue::floatOrNull($body['economy_l_per_100km'] ?? null);
+        if ($economyLPer100km === null || $economyLPer100km < 0.1 || $economyLPer100km > 200) {
+            throw new FuelauValidationException('fuel.economy_l_per_100km must be between 0.1 and 200.');
+        }
+
+        $reserveL = FuelauRequestValue::floatOrNull($body['reserve_l'] ?? null);
+        if ($reserveL === null || $reserveL < 0 || $reserveL >= $tankCapacityL) {
+            throw new FuelauValidationException('fuel.reserve_l must be non-negative and less than tank capacity.');
+        }
+
+        return new self($type, $tankCapacityL, $startingFuelL, $economyLPer100km, $reserveL);
+    }
+}
+
+final readonly class FuelauRouteOptimizationPreferences
+{
+    public function __construct(
+        public string $mode,
+        public ?int $maximumFuelOnlyStops,
+        public ?float $minimumDiscretionaryPurchaseL,
+        public float $minimumStopSpacingKm,
+        public float $minimumStopSpacingMinutes,
+        public int $minimumNetSavingCents,
+        public float $maximumDiscretionaryDetourKm,
+        public float $maximumDiscretionaryDetourMinutes,
+        public int $driverTimeValueCentsPerHour,
+        public float $fuelOnlyStopMinutes,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    public static function fromBody(array $body, float $tankCapacityL): self
+    {
+        $mode = trim(FuelauRequestValue::string($body['mode'] ?? 'practical_least_cost'));
+        if (!in_array($mode, ['practical_least_cost', 'fewer_stops'], true)) {
+            throw new FuelauValidationException(
+                'preferences.mode must be practical_least_cost or fewer_stops.',
+            );
+        }
+
+        $maximumFuelOnlyStops = self::nullableInt(
+            $body,
+            'maximum_fuel_only_stops',
+            0,
+            20,
+        );
+        $minimumDiscretionaryPurchaseL = self::nullableFloat(
+            $body,
+            'minimum_discretionary_purchase_l',
+            0,
+            $tankCapacityL,
+        );
+
+        return new self(
+            mode: $mode,
+            maximumFuelOnlyStops: $maximumFuelOnlyStops,
+            minimumDiscretionaryPurchaseL: $minimumDiscretionaryPurchaseL,
+            minimumStopSpacingKm: self::float(
+                $body,
+                'minimum_stop_spacing_km',
+                150,
+                0,
+                2000,
+            ),
+            minimumStopSpacingMinutes: self::float(
+                $body,
+                'minimum_stop_spacing_minutes',
+                90,
+                0,
+                1440,
+            ),
+            minimumNetSavingCents: self::int(
+                $body,
+                'minimum_net_saving_cents',
+                1000,
+                0,
+                100000,
+            ),
+            maximumDiscretionaryDetourKm: self::float(
+                $body,
+                'maximum_discretionary_detour_km',
+                20,
+                0,
+                500,
+            ),
+            maximumDiscretionaryDetourMinutes: self::float(
+                $body,
+                'maximum_discretionary_detour_minutes',
+                20,
+                0,
+                600,
+            ),
+            driverTimeValueCentsPerHour: self::int(
+                $body,
+                'driver_time_value_cents_per_hour',
+                3000,
+                0,
+                100000,
+            ),
+            fuelOnlyStopMinutes: self::float(
+                $body,
+                'fuel_only_stop_minutes',
+                10,
+                0,
+                240,
+            ),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function float(
+        array $body,
+        string $field,
+        float $default,
+        float $minimum,
+        float $maximum,
+    ): float {
+        if (!array_key_exists($field, $body) || $body[$field] === null) {
+            return $default;
+        }
+        $value = FuelauRequestValue::floatOrNull($body[$field]);
+        if ($value === null || $value < $minimum || $value > $maximum) {
+            throw new FuelauValidationException(
+                "preferences.{$field} must be between {$minimum} and {$maximum}.",
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function int(
+        array $body,
+        string $field,
+        int $default,
+        int $minimum,
+        int $maximum,
+    ): int {
+        if (!array_key_exists($field, $body) || $body[$field] === null) {
+            return $default;
+        }
+        $raw = $body[$field];
+        if (
+            (!is_int($raw) && !(is_string($raw) && ctype_digit($raw)))
+            || (int) $raw < $minimum
+            || (int) $raw > $maximum
+        ) {
+            throw new FuelauValidationException(
+                "preferences.{$field} must be an integer between {$minimum} and {$maximum}.",
+            );
+        }
+
+        return (int) $raw;
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function nullableInt(
+        array $body,
+        string $field,
+        int $minimum,
+        int $maximum,
+    ): ?int {
+        if (!array_key_exists($field, $body) || $body[$field] === null) {
+            return null;
+        }
+
+        return self::int($body, $field, $minimum, $minimum, $maximum);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function nullableFloat(
+        array $body,
+        string $field,
+        float $minimum,
+        float $maximum,
+    ): ?float {
+        if (!array_key_exists($field, $body) || $body[$field] === null) {
+            return null;
+        }
+
+        return self::float($body, $field, $minimum, $minimum, $maximum);
+    }
+}
+
+final readonly class FuelauRouteOptimizationRequest
+{
+    /**
+     * @param list<FuelauRouteOptimizationLocation> $destinations
+     */
+    public function __construct(
+        public int $version,
+        public FuelauRouteOptimizationLocation $origin,
+        public array $destinations,
+        public string $returnMode,
+        public FuelauRouteOptimizationFuel $fuel,
+        public FuelauRouteOptimizationPreferences $preferences,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    public static function fromBody(array $body): self
+    {
+        if (($body['version'] ?? null) !== 1) {
+            throw new FuelauValidationException('version must be the integer 1.');
+        }
+
+        $originBody = $body['origin'] ?? null;
+        if (!is_array($originBody)) {
+            throw new FuelauValidationException('origin must be an object.');
+        }
+        $origin = FuelauRouteOptimizationLocation::fromBody(
+            FuelauRequestValue::stringKeyMap($originBody),
+            'origin',
+            true,
+            false,
+        );
+
+        $destinationBodies = $body['destinations'] ?? null;
+        if (!is_array($destinationBodies) || count($destinationBodies) < 1 || count($destinationBodies) > 10) {
+            throw new FuelauValidationException('destinations must contain between 1 and 10 locations.');
+        }
+        $destinations = [];
+        foreach (array_values($destinationBodies) as $index => $destinationBody) {
+            if (!is_array($destinationBody)) {
+                throw new FuelauValidationException("destinations[{$index}] must be an object.");
+            }
+            $destinations[] = FuelauRouteOptimizationLocation::fromBody(
+                FuelauRequestValue::stringKeyMap($destinationBody),
+                "destinations[{$index}]",
+                true,
+            );
+        }
+
+        $returnMode = trim(FuelauRequestValue::string($body['return_mode'] ?? ''));
+        if (!in_array($returnMode, ['one_way', 'direct', 'reverse'], true)) {
+            throw new FuelauValidationException(
+                'return_mode must be one_way, direct, or reverse.',
+            );
+        }
+
+        $fuelBody = $body['fuel'] ?? null;
+        if (!is_array($fuelBody)) {
+            throw new FuelauValidationException('fuel must be an object.');
+        }
+        $fuel = FuelauRouteOptimizationFuel::fromBody(
+            FuelauRequestValue::stringKeyMap($fuelBody),
+        );
+
+        $preferencesBody = $body['preferences'] ?? [];
+        if (!is_array($preferencesBody)) {
+            throw new FuelauValidationException('preferences must be an object.');
+        }
+
+        return new self(
+            version: 1,
+            origin: $origin,
+            destinations: $destinations,
+            returnMode: $returnMode,
+            fuel: $fuel,
+            preferences: FuelauRouteOptimizationPreferences::fromBody(
+                FuelauRequestValue::stringKeyMap($preferencesBody),
+                $fuel->tankCapacityL,
+            ),
+        );
+    }
+}
+
 final readonly class FuelauRouteCandidateRequest
 {
     /**

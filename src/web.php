@@ -28,7 +28,12 @@ function fuelauApplyBrowserSecurityHeaders(string $cspNonce): void
     );
 }
 
-function fuelauRenderAppPage(bool $containerManagementEnabled, string $cspNonce): void
+function fuelauRenderAppPage(
+    bool $containerManagementEnabled,
+    bool $routeOptimizerV2Enabled,
+    bool $routeOptimizerV2Default,
+    string $cspNonce
+): void
 {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -50,6 +55,8 @@ function fuelauRunWebApplication(): void
         if ($request->path === '/') {
             fuelauRenderAppPage(
                 fuelauConfigBool($config, 'CONTAINER_MANAGEMENT_ENABLED', false),
+                fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_ENABLED', false),
+                fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_DEFAULT', false),
                 $cspNonce,
             );
             return;

@@ -7,6 +7,7 @@ require dirname(__DIR__, 2) . '/src/docker.php';
 require dirname(__DIR__, 2) . '/src/fuel.php';
 require dirname(__DIR__, 2) . '/src/migrations.php';
 require dirname(__DIR__, 2) . '/src/routing.php';
+require dirname(__DIR__, 2) . '/src/request.php';
 
 $tests = [];
 $failures = [];
@@ -205,6 +206,65 @@ fuelauTest('route planner uses bounded request budgets', static function (): voi
     fuelauAssertTrue((int) $routeMatch[1] >= 60, 'Route lookup budget must accommodate transcontinental return trips');
     fuelauAssertTrue((int) $routeMatch[1] <= 80, 'Route lookup budget must be at most 80');
     fuelauAssertTrue((int) $fuelMatch[1] <= 50, 'Fuel lookup budget must be at most 50');
+});
+
+fuelauTest('route optimizer request resolves practical stop defaults', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -27.4698, 'lon' => 153.0251, 'label' => 'Brisbane'],
+        'destinations' => [[
+            'lat' => -16.9186,
+            'lon' => 145.7781,
+            'label' => 'Cairns',
+        ]],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'Diesel',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 60,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+        'preferences' => [],
+    ]);
+
+    fuelauAssertSame('practical_least_cost', $request->preferences->mode);
+    fuelauAssertSame(150.0, $request->preferences->minimumStopSpacingKm);
+    fuelauAssertSame(90.0, $request->preferences->minimumStopSpacingMinutes);
+    fuelauAssertSame(1000, $request->preferences->minimumNetSavingCents);
+    fuelauAssertSame(3000, $request->preferences->driverTimeValueCentsPerHour);
+    fuelauAssertSame(60.0, $request->fuel->startingFuelL);
+    fuelauAssertSame(6.0, $request->fuel->reserveL);
+});
+
+fuelauTest('route optimizer rejects impossible starting fuel and stop counts', static function (): void {
+    $base = [
+        'version' => 1,
+        'origin' => ['lat' => -27.4, 'lon' => 153.0],
+        'destinations' => [['lat' => -28.0, 'lon' => 153.0]],
+        'return_mode' => 'direct',
+        'fuel' => [
+            'type' => 'Diesel',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 61,
+            'economy_l_per_100km' => 12,
+            'reserve_l' => 6,
+        ],
+    ];
+
+    fuelauAssertThrows(
+        FuelauValidationException::class,
+        static fn (): FuelauRouteOptimizationRequest => FuelauRouteOptimizationRequest::fromBody($base),
+        'Starting fuel above capacity must be rejected',
+    );
+
+    $base['fuel']['starting_fuel_l'] = 60;
+    $base['preferences'] = ['maximum_fuel_only_stops' => 21];
+    fuelauAssertThrows(
+        FuelauValidationException::class,
+        static fn (): FuelauRouteOptimizationRequest => FuelauRouteOptimizationRequest::fromBody($base),
+        'Excessive fuel-only stop limits must be rejected',
+    );
 });
 
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {

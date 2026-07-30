@@ -155,13 +155,25 @@ fuelauApiContractTest('route throttling returns 429', static function () use ($p
     fuelauApiAssertSame('rate_limited', $response['payload']['error'] ?? null, 'Rate-limit error');
 });
 
+fuelauApiContractTest('route optimizer requires POST', static function () use ($projectRoot, $configPath): void {
+    $response = fuelauRunApiRequest($projectRoot, $configPath, 'GET', '/api/route/optimize');
+    fuelauApiAssertSame(405, $response['status'], 'Optimizer method status code');
+    fuelauApiAssertSame('method_not_allowed', $response['payload']['error'] ?? null, 'Optimizer method error');
+});
+
+fuelauApiContractTest('route optimizer is disabled by default', static function () use ($projectRoot, $configPath): void {
+    $response = fuelauRunApiRequest($projectRoot, $configPath, 'POST', '/api/route/optimize');
+    fuelauApiAssertSame(503, $response['status'], 'Optimizer disabled status code');
+    fuelauApiAssertSame('optimizer_disabled', $response['payload']['error'] ?? null, 'Optimizer disabled error');
+});
+
 @unlink($configPath);
 
 fwrite(
     STDOUT,
     sprintf(
         "\nAPI contract summary: %d passed, %d failed\n",
-        5 - count($failures),
+        7 - count($failures),
         count($failures)
     )
 );

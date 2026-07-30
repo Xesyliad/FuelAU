@@ -50,4 +50,22 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('return routeFuelPriceIsReasonable(value);', $source);
         self::assertStringContainsString('routeFuelPriceIsFresh(row?.updated_at)', $source);
     }
+
+    public function testRoutePlannerExposesVersionOneVehicleInputsBehindFeatureFlag(): void
+    {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($template);
+        self::assertIsString($script);
+        self::assertStringContainsString('for="route-tank-capacity">Tank Capacity (L)', $template);
+        self::assertStringContainsString('id="route-starting-fuel"', $template);
+        self::assertStringContainsString('id="route-fuel-reserve"', $template);
+        self::assertStringContainsString('id="route-optimization-mode"', $template);
+        self::assertStringNotContainsString('>Fuel Fill (L)<', $template);
+        self::assertStringContainsString("'routeOptimizerV2Enabled' =>", $template);
+        self::assertStringContainsString('startingFuel: routeStartingFuel.value.trim()', $script);
+        self::assertStringContainsString('fuelReserve: routeFuelReserve.value.trim()', $script);
+        self::assertStringContainsString('Starting fuel must be between zero and tank capacity.', $script);
+    }
 }

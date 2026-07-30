@@ -41,6 +41,10 @@ function fuelauDispatchApi(FuelauHttpRequest $request, array $config): never
         fuelauRouteController($request);
     }
 
+    if ($request->path === '/api/route/optimize') {
+        fuelauRouteOptimizationController($request, $config);
+    }
+
     if ($request->path === '/api/map/config') {
         fuelauJsonResponse(fuelauMapTileConfig());
     }
@@ -115,6 +119,10 @@ function fuelauEnforceApiMethod(FuelauHttpRequest $request): void
 
     if ($request->path === '/api/fuel/route-candidates' && $request->method !== 'POST') {
         fuelauMethodNotAllowed('POST', 'Route candidate lookup requires POST.');
+    }
+
+    if ($request->path === '/api/route/optimize' && $request->method !== 'POST') {
+        fuelauMethodNotAllowed('POST', 'Route optimization requires POST.');
     }
 
     if (
@@ -344,6 +352,54 @@ function fuelauRouteController(FuelauHttpRequest $request): never
             'message' => 'Routing service unavailable.',
         ], 503);
     }
+}
+
+/**
+ * Phase-one boundary for the versioned optimizer. The feature remains disabled
+ * until the backend search engine and exact route validation are connected.
+ */
+function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $config): never
+{
+    if (strlen($request->rawBody) > 65_536) {
+        fuelauJsonResponse([
+            'error' => 'request_too_large',
+            'message' => 'Route optimization requests must not exceed 64 KiB.',
+        ], 413);
+    }
+
+    if (!fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_ENABLED', false)) {
+        fuelauJsonResponse([
+            'error' => 'optimizer_disabled',
+            'message' => 'The version 1 route optimizer is not enabled.',
+        ], 503);
+    }
+
+    try {
+        $optimizationRequest = FuelauRouteOptimizationRequest::fromBody($request->jsonObject());
+    } catch (FuelauValidationException $exception) {
+        fuelauJsonResponse([
+            'error' => 'invalid_request',
+            'message' => $exception->getMessage(),
+        ], 400);
+    }
+
+    try {
+        fuelauRateLimit("route-optimize:{$request->remoteAddress}", 30, 60);
+    } catch (FuelauRateLimitException $exception) {
+        header('Retry-After: ' . $exception->retryAfterSeconds());
+        fuelauJsonResponse([
+            'error' => 'rate_limited',
+            'message' => 'Route optimization is temporarily rate limited.',
+        ], 429);
+    }
+
+    // The parsed DTO is intentionally exercised before this temporary response
+    // so the public boundary can be completed and tested independently.
+    unset($optimizationRequest);
+    fuelauJsonResponse([
+        'error' => 'optimizer_unavailable',
+        'message' => 'The version 1 route optimizer engine is not connected yet.',
+    ], 503);
 }
 
 function fuelauFuelSourcesController(): never

@@ -57,6 +57,114 @@ final class RequestDtoTest extends TestCase
         self::assertSame(5000, $request->limit);
     }
 
+    public function testRouteOptimizationRequestResolvesDocumentedDefaults(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => [
+                'lat' => -27.4698,
+                'lon' => 153.0251,
+                'label' => 'Brisbane',
+            ],
+            'destinations' => [[
+                'lat' => -16.9186,
+                'lon' => 145.7781,
+                'label' => 'Cairns',
+            ]],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 60,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 6,
+            ],
+            'preferences' => [],
+        ]);
+
+        self::assertSame(1, $request->version);
+        self::assertSame('one_way', $request->returnMode);
+        self::assertSame('Brisbane', $request->origin->label);
+        self::assertTrue($request->destinations[0]->physicalStop);
+        self::assertSame(60.0, $request->fuel->tankCapacityL);
+        self::assertSame(60.0, $request->fuel->startingFuelL);
+        self::assertSame(6.0, $request->fuel->reserveL);
+        self::assertSame('practical_least_cost', $request->preferences->mode);
+        self::assertNull($request->preferences->maximumFuelOnlyStops);
+        self::assertNull($request->preferences->minimumDiscretionaryPurchaseL);
+        self::assertSame(150.0, $request->preferences->minimumStopSpacingKm);
+        self::assertSame(90.0, $request->preferences->minimumStopSpacingMinutes);
+        self::assertSame(1000, $request->preferences->minimumNetSavingCents);
+        self::assertSame(3000, $request->preferences->driverTimeValueCentsPerHour);
+    }
+
+    public function testRouteOptimizationRequestRejectsStartingFuelAboveCapacity(): void
+    {
+        $this->expectException(FuelauValidationException::class);
+        $this->expectExceptionMessage('starting_fuel_l');
+
+        FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -27.4, 'lon' => 153.0],
+            'destinations' => [['lat' => -28.0, 'lon' => 153.0]],
+            'return_mode' => 'direct',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 61,
+                'economy_l_per_100km' => 12,
+                'reserve_l' => 6,
+            ],
+        ]);
+    }
+
+    public function testRouteOptimizationRequestRejectsInvalidMeaningfulStopPreference(): void
+    {
+        $this->expectException(FuelauValidationException::class);
+        $this->expectExceptionMessage('maximum_fuel_only_stops');
+
+        FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -27.4, 'lon' => 153.0],
+            'destinations' => [['lat' => -28.0, 'lon' => 153.0]],
+            'return_mode' => 'direct',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 60,
+                'economy_l_per_100km' => 12,
+                'reserve_l' => 6,
+            ],
+            'preferences' => [
+                'maximum_fuel_only_stops' => 21,
+            ],
+        ]);
+    }
+
+    public function testRouteOptimizationRequestRejectsNonBooleanPhysicalStop(): void
+    {
+        $this->expectException(FuelauValidationException::class);
+        $this->expectExceptionMessage('physical_stop');
+
+        FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -27.4, 'lon' => 153.0],
+            'destinations' => [[
+                'lat' => -28.0,
+                'lon' => 153.0,
+                'physical_stop' => 'yes',
+            ]],
+            'return_mode' => 'direct',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 60,
+                'economy_l_per_100km' => 12,
+                'reserve_l' => 6,
+            ],
+        ]);
+    }
+
     public function testFuelFilterRequestKeepsTypedBoundaryAndLegacyAdapter(): void
     {
         $request = FuelauFuelFilterRequest::current([
