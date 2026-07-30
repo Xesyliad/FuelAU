@@ -73,7 +73,11 @@ final class RoutePlanningTest extends TestCase
             $corridor,
             [
                 $this->stationRow('same', 150.5, 200),
-                $this->stationRow('same', 150.5, 190),
+                [
+                    ...$this->stationRow('same', 150.5, 190),
+                    'access_distance_m' => 1_234,
+                    'access_duration_s' => 120,
+                ],
                 [
                     ...$this->stationRow('bad-source', 150.6, 100),
                     'source' => 'unofficial',
@@ -89,6 +93,8 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(1, $input->eligibleCandidateCount);
         self::assertSame('nsw:NSW:same:E10', $candidate->stableId);
         self::assertSame(190.0, $candidate->priceCentsPerL);
+        self::assertSame(1_234, $candidate->accessDistanceM);
+        self::assertSame(120, $candidate->accessDurationS);
     }
 
     public function testProjectedCandidatesCanBeOptimizedWithoutShapeConversion(): void

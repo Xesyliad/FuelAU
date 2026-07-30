@@ -52,6 +52,111 @@ final class RouteOptimizerTest extends TestCase
         );
     }
 
+    public function testStationAccessDistanceConsumesFuel(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimize(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'detour',
+                    50_000,
+                    150,
+                    accessDistanceM: 10_000,
+                ),
+                new FuelauOptimizerNode('destination', 100_000),
+            ],
+            new FuelauOptimizerVehicle(60, 12, 6, 10),
+        );
+
+        self::assertSame(6.0, $plan->purchases[0]->purchaseL);
+        self::assertSame(20_000, $plan->purchases[0]->detourDistanceM);
+        self::assertSame(6.0, $plan->endingFuelL);
+    }
+
+    public function testStationIsNotVisitedWhenNoFuelIsPurchased(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimize(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'unneeded',
+                    50_000,
+                    100,
+                    accessDistanceM: 10_000,
+                ),
+                new FuelauOptimizerNode('destination', 100_000),
+            ],
+            new FuelauOptimizerVehicle(60, 20, 6, 10),
+        );
+
+        self::assertSame(0, $plan->fuelStopCount);
+        self::assertSame(10.0, $plan->endingFuelL);
+    }
+
+    public function testDetourTimeCanOutweighCheaperFuel(): void
+    {
+        $nodes = [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'cheap-detour',
+                50_000,
+                100,
+                accessDistanceM: 20_000,
+                accessDurationS: 3_600,
+            ),
+            FuelauOptimizerNode::station('on-route', 60_000, 200),
+            new FuelauOptimizerNode('destination', 300_000),
+        ];
+        $vehicle = new FuelauOptimizerVehicle(60, 20, 6, 10);
+
+        $fuelOnlyPlan = (new FuelauFuelStateOptimizer())->optimize($nodes, $vehicle);
+        $practicalPlan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            $nodes,
+            $vehicle,
+            new FuelauOptimizerPolicy(
+                maximumFuelOnlyStops: 1,
+                minimumDiscretionaryPurchaseL: 0,
+                minimumStopSpacingM: 0,
+                minimumStopSpacingS: 0,
+                minimumNetSavingCents: 0,
+                similarCostCents: 0,
+            ),
+        );
+
+        self::assertSame('cheap-detour', $fuelOnlyPlan->purchases[0]->nodeId);
+        self::assertSame('on-route', $practicalPlan->purchases[0]->nodeId);
+        self::assertSame(3700, $practicalPlan->generalizedCostCents);
+    }
+
+    public function testSpacingIncludesAccessTravelBetweenStops(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'first',
+                    50_000,
+                    200,
+                    progressS: 1_800,
+                    accessDistanceM: 10_000,
+                ),
+                FuelauOptimizerNode::station(
+                    'second',
+                    190_000,
+                    150,
+                    progressS: 6_840,
+                    accessDistanceM: 10_000,
+                ),
+                new FuelauOptimizerNode('destination', 400_000, progressS: 14_400),
+            ],
+            new FuelauOptimizerVehicle(30, 12, 6, 10),
+        );
+
+        self::assertSame(2, $plan->fuelStopCount);
+        self::assertSame(['reserve_feasibility'], $plan->purchases[1]->reasonCodes);
+        self::assertSame(20_000, $plan->purchases[1]->detourDistanceM);
+    }
+
     public function testRequiredShortPurchaseBypassesDiscretionaryThreshold(): void
     {
         $plan = (new FuelauFuelStateOptimizer())->optimizePractical(

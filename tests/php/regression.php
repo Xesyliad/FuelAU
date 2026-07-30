@@ -337,6 +337,106 @@ fuelauTest('fuel-state optimizer rejects an unbridgeable range gap', static func
     );
 });
 
+fuelauTest('fuel-state optimizer charges station access distance to vehicle fuel', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimize(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'detour',
+                50_000,
+                150,
+                accessDistanceM: 10_000,
+            ),
+            new FuelauOptimizerNode('destination', 100_000),
+        ],
+        new FuelauOptimizerVehicle(60, 12, 6, 10),
+    );
+
+    fuelauAssertSame(6.0, $plan->purchases[0]->purchaseL);
+    fuelauAssertSame(20_000, $plan->purchases[0]->detourDistanceM);
+    fuelauAssertSame(6.0, $plan->endingFuelL);
+});
+
+fuelauTest('fuel-state optimizer does not visit a station without purchasing fuel', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimize(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'unneeded',
+                50_000,
+                100,
+                accessDistanceM: 10_000,
+            ),
+            new FuelauOptimizerNode('destination', 100_000),
+        ],
+        new FuelauOptimizerVehicle(60, 20, 6, 10),
+    );
+
+    fuelauAssertSame(0, $plan->fuelStopCount);
+    fuelauAssertSame(10.0, $plan->endingFuelL);
+});
+
+fuelauTest('practical optimizer rejects cheap fuel with excessive detour time', static function (): void {
+    $nodes = [
+        new FuelauOptimizerNode('origin', 0),
+        FuelauOptimizerNode::station(
+            'cheap-detour',
+            50_000,
+            100,
+            accessDistanceM: 20_000,
+            accessDurationS: 3_600,
+        ),
+        FuelauOptimizerNode::station('on-route', 60_000, 200),
+        new FuelauOptimizerNode('destination', 300_000),
+    ];
+    $vehicle = new FuelauOptimizerVehicle(60, 20, 6, 10);
+    $fuelOnlyPlan = (new FuelauFuelStateOptimizer())->optimize($nodes, $vehicle);
+    $practicalPlan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        $nodes,
+        $vehicle,
+        new FuelauOptimizerPolicy(
+            maximumFuelOnlyStops: 1,
+            minimumDiscretionaryPurchaseL: 0,
+            minimumStopSpacingM: 0,
+            minimumStopSpacingS: 0,
+            minimumNetSavingCents: 0,
+            similarCostCents: 0,
+        ),
+    );
+
+    fuelauAssertSame('cheap-detour', $fuelOnlyPlan->purchases[0]->nodeId);
+    fuelauAssertSame('on-route', $practicalPlan->purchases[0]->nodeId);
+    fuelauAssertSame(3_700, $practicalPlan->generalizedCostCents);
+});
+
+fuelauTest('meaningful spacing includes access travel between fuel stops', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'first',
+                50_000,
+                200,
+                progressS: 1_800,
+                accessDistanceM: 10_000,
+            ),
+            FuelauOptimizerNode::station(
+                'second',
+                190_000,
+                150,
+                progressS: 6_840,
+                accessDistanceM: 10_000,
+            ),
+            new FuelauOptimizerNode('destination', 400_000, progressS: 14_400),
+        ],
+        new FuelauOptimizerVehicle(30, 12, 6, 10),
+    );
+
+    fuelauAssertSame(2, $plan->fuelStopCount);
+    fuelauAssertSame(['reserve_feasibility'], $plan->purchases[1]->reasonCodes);
+    fuelauAssertSame(20_000, $plan->purchases[1]->detourDistanceM);
+});
+
 fuelauTest('practical optimizer keeps a short refill only when it is required', static function (): void {
     $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
         [
@@ -537,7 +637,7 @@ fuelauTest('corridor candidates use stable station identity and eligibility filt
         $corridor,
         [
             ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'same', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200],
-            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'same', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 190],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'same', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 190, 'access_distance_m' => 1_234, 'access_duration_s' => 120],
             ['source' => 'unofficial', 'state' => 'NSW', 'station_id' => 'bad-source', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.6, 'price' => 100],
             ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'too-far', 'fuel_code' => 'E10', 'latitude' => -31.0, 'longitude' => 150.6, 'price' => 100],
         ],
@@ -547,6 +647,8 @@ fuelauTest('corridor candidates use stable station identity and eligibility filt
     fuelauAssertSame(1, $input->eligibleCandidateCount);
     fuelauAssertSame('nsw:NSW:same:E10', $candidate->stableId);
     fuelauAssertSame(190.0, $candidate->priceCentsPerL);
+    fuelauAssertSame(1_234, $candidate->accessDistanceM);
+    fuelauAssertSame(120, $candidate->accessDurationS);
 });
 
 fuelauTest('projected corridor candidates feed the practical optimizer', static function (): void {

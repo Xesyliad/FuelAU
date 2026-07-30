@@ -35,6 +35,8 @@ final readonly class FuelauOptimizerNode
         public ?int $priceTenthsCentsPerL = null,
         public string $label = '',
         public int $progressS = 0,
+        public int $accessDistanceM = 0,
+        public int $accessDurationS = 0,
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('Optimizer node ID must not be empty.');
@@ -45,8 +47,8 @@ final readonly class FuelauOptimizerNode
         if ($priceTenthsCentsPerL !== null && $priceTenthsCentsPerL <= 0) {
             throw new InvalidArgumentException('Station price must be positive.');
         }
-        if ($progressS < 0) {
-            throw new InvalidArgumentException('Optimizer node duration progress must be non-negative.');
+        if ($progressS < 0 || $accessDistanceM < 0 || $accessDurationS < 0) {
+            throw new InvalidArgumentException('Optimizer node distance and duration values must be non-negative.');
         }
     }
 
@@ -56,6 +58,8 @@ final readonly class FuelauOptimizerNode
         float $priceCentsPerL,
         string $label = '',
         int $progressS = 0,
+        int $accessDistanceM = 0,
+        int $accessDurationS = 0,
     ): self {
         return new self(
             id: $id,
@@ -63,6 +67,8 @@ final readonly class FuelauOptimizerNode
             priceTenthsCentsPerL: (int) round($priceCentsPerL * 10),
             label: $label,
             progressS: $progressS,
+            accessDistanceM: $accessDistanceM,
+            accessDurationS: $accessDurationS,
         );
     }
 }
@@ -121,6 +127,8 @@ final readonly class FuelauOptimizerPurchase
         public string $label,
         public int $progressM,
         public int $progressS,
+        public int $detourDistanceM,
+        public int $detourDurationS,
         public float $arrivalFuelL,
         public float $purchaseL,
         public float $departureFuelL,
@@ -173,6 +181,7 @@ final class FuelauFuelStateOptimizer
             forbiddenNodeIds: [],
             objective: 'fuel_cost',
             similarCostCents: 0,
+            accessTimeValueCentsPerHour: 0,
         );
     }
 
@@ -196,6 +205,7 @@ final class FuelauFuelStateOptimizer
             forbiddenNodeIds: [],
             objective: 'fewest_stops',
             similarCostCents: 0,
+            accessTimeValueCentsPerHour: 0,
         );
         $automaticAllowance = min(
             2,
@@ -220,6 +230,7 @@ final class FuelauFuelStateOptimizer
             $forbidden,
             $policy->mode === 'fewer_stops' ? 'fewest_stops' : 'generalized_cost',
             $policy->similarCostCents,
+            $policy->driverTimeValueCentsPerHour,
         );
 
         for ($stabilizationPass = 0; $stabilizationPass < count($nodes); $stabilizationPass++) {
@@ -227,18 +238,28 @@ final class FuelauFuelStateOptimizer
                 $changed = false;
                 $previousProgressM = 0;
                 $previousProgressS = 0;
+                $previousAccessDistanceM = 0;
+                $previousAccessDurationS = 0;
                 foreach ($plan->purchases as $purchase) {
                     if (isset($required[$purchase->nodeId])) {
                         $previousProgressM = $purchase->progressM;
                         $previousProgressS = $purchase->progressS;
+                        $previousAccessDistanceM = intdiv($purchase->detourDistanceM, 2);
+                        $previousAccessDurationS = intdiv($purchase->detourDurationS, 2);
                         continue;
                     }
 
                     $minimumPurchaseL = $policy->minimumDiscretionaryPurchaseL
                         ?? max(15.0, $vehicle->tankCapacityL * 0.25);
                     $tooSmall = $purchase->purchaseL < $minimumPurchaseL;
-                    $tooClose = ($purchase->progressM - $previousProgressM) < $policy->minimumStopSpacingM
-                        && ($purchase->progressS - $previousProgressS) < $policy->minimumStopSpacingS;
+                    $distanceSincePhysicalStopM = ($purchase->progressM - $previousProgressM)
+                        + $previousAccessDistanceM
+                        + intdiv($purchase->detourDistanceM, 2);
+                    $durationSincePhysicalStopS = ($purchase->progressS - $previousProgressS)
+                        + $previousAccessDurationS
+                        + intdiv($purchase->detourDurationS, 2);
+                    $tooClose = $distanceSincePhysicalStopM < $policy->minimumStopSpacingM
+                        && $durationSincePhysicalStopS < $policy->minimumStopSpacingS;
 
                     if ($tooSmall || $tooClose) {
                         $alternative = $this->solveWithoutNode(
@@ -262,6 +283,8 @@ final class FuelauFuelStateOptimizer
                     }
                     $previousProgressM = $purchase->progressM;
                     $previousProgressS = $purchase->progressS;
+                    $previousAccessDistanceM = intdiv($purchase->detourDistanceM, 2);
+                    $previousAccessDurationS = intdiv($purchase->detourDurationS, 2);
                 }
                 if ($changed) {
                     continue;
@@ -325,6 +348,7 @@ final class FuelauFuelStateOptimizer
         array $forbiddenNodeIds,
         string $objective,
         int $similarCostCents,
+        int $accessTimeValueCentsPerHour,
     ): FuelauOptimizerPlan
     {
         $nodes = array_values($nodes);
@@ -367,6 +391,9 @@ final class FuelauFuelStateOptimizer
                 ) {
                     $purchaseBuckets = $departureBuckets - $arrivalBuckets;
                     $price = $nodes[$fromIndex]->priceTenthsCentsPerL;
+                    if ($fromIndex > 0 && $price !== null && $purchaseBuckets === 0) {
+                        continue;
+                    }
                     if ($purchaseBuckets > 0 && isset($forbiddenNodeIds[$nodes[$fromIndex]->id])) {
                         continue;
                     }
@@ -379,19 +406,33 @@ final class FuelauFuelStateOptimizer
                     }
                     $nextFuelCostUnits = (int) $state['fuel_cost_units']
                         + ($purchaseBuckets * (int) ($price ?? 0));
-                    $nextGeneralizedCostUnits = (int) $state['generalized_cost_units']
+                    $purchaseGeneralizedCostUnits = (int) $state['generalized_cost_units']
                         + ($purchaseBuckets * (int) ($price ?? 0))
                         + ($purchaseBuckets > 0 ? $stopCostCents * 20 : 0);
 
                     for ($toIndex = $fromIndex + 1; $toIndex <= $lastIndex; $toIndex++) {
-                        $fuelUsedBuckets = $this->fuelUsedBuckets(
+                        $corridorFuelUsedBuckets = $this->fuelUsedBuckets(
                             $nodes[$toIndex]->progressM - $nodes[$fromIndex]->progressM,
+                            $vehicle->economyLPer100km,
+                        );
+                        if ($departureBuckets - $corridorFuelUsedBuckets < $reserveBuckets) {
+                            break;
+                        }
+                        $fuelUsedBuckets = $this->fuelUsedBuckets(
+                            $this->travelDistanceM($nodes[$fromIndex], $nodes[$toIndex]),
                             $vehicle->economyLPer100km,
                         );
                         $nextFuelBuckets = $departureBuckets - $fuelUsedBuckets;
                         if ($nextFuelBuckets < $reserveBuckets) {
-                            break;
+                            continue;
                         }
+                        $accessDurationS = $nodes[$fromIndex]->accessDurationS
+                            + $nodes[$toIndex]->accessDurationS;
+                        $nextGeneralizedCostUnits = $purchaseGeneralizedCostUnits
+                            + $this->driverTimeCostUnits(
+                                $accessDurationS,
+                                $accessTimeValueCentsPerHour,
+                            );
 
                         $nextKey = $this->stateKey($nextFuelBuckets, $nextStopCount);
                         $existing = $states[$toIndex][$nextKey] ?? null;
@@ -484,11 +525,18 @@ final class FuelauFuelStateOptimizer
         $targets = [$arrivalBuckets => true, $capacityBuckets => true];
         for ($toIndex = $fromIndex + 1; $toIndex < count($nodes); $toIndex++) {
             $requiredBuckets = $this->fuelUsedBuckets(
-                $nodes[$toIndex]->progressM - $nodes[$fromIndex]->progressM,
+                $this->travelDistanceM($nodes[$fromIndex], $nodes[$toIndex]),
                 $economyLPer100km,
             ) + $reserveBuckets;
             if ($requiredBuckets > $capacityBuckets) {
-                break;
+                $corridorRequiredBuckets = $this->fuelUsedBuckets(
+                    $nodes[$toIndex]->progressM - $nodes[$fromIndex]->progressM,
+                    $economyLPer100km,
+                ) + $reserveBuckets;
+                if ($corridorRequiredBuckets > $capacityBuckets) {
+                    break;
+                }
+                continue;
             }
             if ($requiredBuckets >= $arrivalBuckets) {
                 $targets[$requiredBuckets] = true;
@@ -506,6 +554,22 @@ final class FuelauFuelStateOptimizer
         $fuelUsedL = ($distanceM / 100_000) * $economyLPer100km;
 
         return (int) ceil($fuelUsedL / self::BUCKET_L);
+    }
+
+    private function travelDistanceM(
+        FuelauOptimizerNode $from,
+        FuelauOptimizerNode $to,
+    ): int {
+        return ($to->progressM - $from->progressM)
+            + $from->accessDistanceM
+            + $to->accessDistanceM;
+    }
+
+    private function driverTimeCostUnits(
+        int $durationS,
+        int $timeValueCentsPerHour,
+    ): int {
+        return (int) ceil(($durationS * $timeValueCentsPerHour * 20) / 3_600);
     }
 
     private function stateKey(int $fuelBuckets, int $stopCount): string
@@ -542,8 +606,8 @@ final class FuelauFuelStateOptimizer
                         <=> (int) $destinationStates[$rightKey]['stop_count'])
                     ?: ((int) $destinationStates[$leftKey]['generalized_cost_units']
                         <=> (int) $destinationStates[$rightKey]['generalized_cost_units'])
-                    ?: ((int) $destinationStates[$leftKey]['fuel_buckets']
-                        <=> (int) $destinationStates[$rightKey]['fuel_buckets']),
+                    ?: ((int) $destinationStates[$rightKey]['fuel_buckets']
+                        <=> (int) $destinationStates[$leftKey]['fuel_buckets']),
             );
 
             return $keys[0];
@@ -568,7 +632,7 @@ final class FuelauFuelStateOptimizer
             return $primary
                 ?: $secondary
                 ?: ((int) $left['fuel_cost_units'] <=> (int) $right['fuel_cost_units'])
-                ?: ((int) $left['fuel_buckets'] <=> (int) $right['fuel_buckets']);
+                ?: ((int) $right['fuel_buckets'] <=> (int) $left['fuel_buckets']);
         });
 
         return $keys[0];
@@ -601,6 +665,8 @@ final class FuelauFuelStateOptimizer
                     label: $node->label,
                     progressM: $node->progressM,
                     progressS: $node->progressS,
+                    detourDistanceM: $node->accessDistanceM * 2,
+                    detourDurationS: $node->accessDurationS * 2,
                     arrivalFuelL: (int) $fromState['fuel_buckets'] * self::BUCKET_L,
                     purchaseL: $purchaseBuckets * self::BUCKET_L,
                     departureFuelL: (int) $state['departure_buckets'] * self::BUCKET_L,
@@ -653,6 +719,7 @@ final class FuelauFuelStateOptimizer
                 $forbidden,
                 $policy->mode === 'fewer_stops' ? 'fewest_stops' : 'generalized_cost',
                 $policy->similarCostCents,
+                $policy->driverTimeValueCentsPerHour,
             );
         } catch (FuelauRouteInfeasibleException) {
             return null;
@@ -680,6 +747,8 @@ final class FuelauFuelStateOptimizer
                     label: $purchase->label,
                     progressM: $purchase->progressM,
                     progressS: $purchase->progressS,
+                    detourDistanceM: $purchase->detourDistanceM,
+                    detourDurationS: $purchase->detourDurationS,
                     arrivalFuelL: $purchase->arrivalFuelL,
                     purchaseL: $purchase->purchaseL,
                     departureFuelL: $purchase->departureFuelL,

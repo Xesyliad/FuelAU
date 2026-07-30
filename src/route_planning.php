@@ -272,6 +272,8 @@ final readonly class FuelauProjectedStationCandidate
         public int $progressM,
         public int $progressS,
         public int $offRouteM,
+        public int $accessDistanceM,
+        public int $accessDurationS,
         public float $priceCentsPerL,
         public array $sourceRow,
     ) {}
@@ -374,6 +376,8 @@ final class FuelauFixedCorridorCandidateAdapter
                 priceCentsPerL: $candidate->priceCentsPerL,
                 label: $candidate->label,
                 progressS: $candidate->progressS,
+                accessDistanceM: $candidate->accessDistanceM,
+                accessDurationS: $candidate->accessDurationS,
             );
             $candidatesByNodeId[$candidate->nodeId] = $candidate;
         }
@@ -436,6 +440,16 @@ final class FuelauFixedCorridorCandidateAdapter
         $stableId = implode(':', [$source, $state, $stationId, $fuel]);
         $stationName = trim((string) ($row['station_name'] ?? ''));
         $address = trim((string) ($row['address'] ?? ''));
+        $measuredAccessDistanceM = $row['access_distance_m'] ?? null;
+        $measuredAccessDurationS = $row['access_duration_s'] ?? null;
+        $accessDistanceM = is_numeric((string) $measuredAccessDistanceM)
+            && (float) $measuredAccessDistanceM >= 0
+            ? (int) round((float) $measuredAccessDistanceM)
+            : (int) ceil($projection->offRouteM * 1.15);
+        $accessDurationS = is_numeric((string) $measuredAccessDurationS)
+            && (float) $measuredAccessDurationS >= 0
+            ? (int) round((float) $measuredAccessDurationS)
+            : 0;
         $label = implode(' - ', array_filter(
             [$stationName, $address],
             static fn (string $part): bool => $part !== '',
@@ -448,6 +462,8 @@ final class FuelauFixedCorridorCandidateAdapter
             progressM: $projection->progressM,
             progressS: $projection->progressS,
             offRouteM: $projection->offRouteM,
+            accessDistanceM: $accessDistanceM,
+            accessDurationS: $accessDurationS,
             priceCentsPerL: $price,
             sourceRow: $row,
         );
