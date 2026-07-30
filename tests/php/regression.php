@@ -336,6 +336,135 @@ fuelauTest('fuel-state optimizer rejects an unbridgeable range gap', static func
     );
 });
 
+fuelauTest('practical optimizer keeps a short refill only when it is required', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0, progressS: 0),
+            FuelauOptimizerNode::station('safety', 50_000, 150, 'Safety', 1_800),
+            new FuelauOptimizerNode('destination', 100_000, progressS: 3_600),
+        ],
+        new FuelauOptimizerVehicle(60, 12, 6, 10),
+    );
+
+    fuelauAssertSame(1, $plan->fuelStopCount);
+    fuelauAssertSame(4.0, $plan->purchases[0]->purchaseL);
+    fuelauAssertSame('required', $plan->purchases[0]->classification);
+    fuelauAssertSame(
+        ['minimum_purchase_safety_override'],
+        $plan->purchases[0]->reasonCodes,
+    );
+});
+
+fuelauTest('practical optimizer rejects a chain of short price-chasing stops', static function (): void {
+    $nodes = [new FuelauOptimizerNode('origin', 0, progressS: 0)];
+    for ($progressKm = 50; $progressKm <= 550; $progressKm += 50) {
+        $nodes[] = FuelauOptimizerNode::station(
+            "station-{$progressKm}",
+            $progressKm * 1000,
+            210 - ($progressKm / 50),
+            "Station {$progressKm}",
+            (int) (($progressKm / 50) * 1_800),
+        );
+    }
+    $nodes[] = new FuelauOptimizerNode('destination', 600_000, progressS: 21_600);
+
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        $nodes,
+        new FuelauOptimizerVehicle(60, 12, 6, 10),
+        new FuelauOptimizerPolicy(maximumFuelOnlyStops: 10),
+    );
+
+    fuelauAssertSame(2, $plan->fuelStopCount);
+    fuelauAssertSame(0, $plan->discretionaryStopCount);
+    for ($index = 1; $index < count($plan->purchases); $index++) {
+        $previous = $plan->purchases[$index - 1];
+        $current = $plan->purchases[$index];
+        $tooClose = ($current->progressM - $previous->progressM) < 150_000
+            && ($current->progressS - $previous->progressS) < 5_400;
+        fuelauAssertTrue(
+            !$tooClose || $current->classification === 'required',
+            'Discretionary fuel-only stops must respect spacing',
+        );
+    }
+});
+
+fuelauTest('practical optimizer reports trip-wide savings for a strategic stop', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('required', 50_000, 200, progressS: 1_800),
+            FuelauOptimizerNode::station('strategic', 300_000, 100, progressS: 10_800),
+            FuelauOptimizerNode::station('fallback', 550_000, 300, progressS: 19_800),
+            new FuelauOptimizerNode('destination', 600_000, progressS: 21_600),
+        ],
+        new FuelauOptimizerVehicle(60, 12, 6, 10),
+        new FuelauOptimizerPolicy(maximumFuelOnlyStops: 3),
+    );
+
+    fuelauAssertSame(2, $plan->fuelStopCount);
+    fuelauAssertSame('required', $plan->purchases[0]->classification);
+    fuelauAssertSame('strategic', $plan->purchases[1]->classification);
+    fuelauAssertSame(3_100, $plan->purchases[1]->marginalNetSavingCents);
+});
+
+fuelauTest('practical optimizer rejects a stop limit below route feasibility', static function (): void {
+    fuelauAssertThrows(
+        FuelauRouteInfeasibleException::class,
+        static fn (): FuelauOptimizerPlan => (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station('first', 50_000, 200),
+                FuelauOptimizerNode::station('last', 550_000, 150),
+                new FuelauOptimizerNode('destination', 600_000),
+            ],
+            new FuelauOptimizerVehicle(60, 12, 6, 10),
+            new FuelauOptimizerPolicy(maximumFuelOnlyStops: 1),
+        ),
+        'A user stop limit must not weaken reserve feasibility',
+    );
+});
+
+fuelauTest('practical optimizer prefers fewer stops within the similar-cost threshold', static function (): void {
+    $nodes = [
+        new FuelauOptimizerNode('origin', 0),
+        FuelauOptimizerNode::station('first', 50_000, 200, progressS: 1_800),
+        FuelauOptimizerNode::station('middle', 300_000, 199, progressS: 10_800),
+        FuelauOptimizerNode::station('last', 550_000, 198, progressS: 19_800),
+        new FuelauOptimizerNode('destination', 600_000, progressS: 21_600),
+    ];
+    $vehicle = new FuelauOptimizerVehicle(60, 12, 6, 10);
+    $commonPolicy = [
+        'maximumFuelOnlyStops' => 3,
+        'minimumDiscretionaryPurchaseL' => 0,
+        'minimumStopSpacingM' => 0,
+        'minimumStopSpacingS' => 0,
+        'minimumNetSavingCents' => 0,
+        'driverTimeValueCentsPerHour' => 0,
+        'fuelOnlyStopSeconds' => 0,
+    ];
+    $optimizer = new FuelauFuelStateOptimizer();
+    $strictCostPlan = $optimizer->optimizePractical(
+        $nodes,
+        $vehicle,
+        new FuelauOptimizerPolicy(...$commonPolicy, similarCostCents: 0),
+    );
+    $similarCostPlan = $optimizer->optimizePractical(
+        $nodes,
+        $vehicle,
+        new FuelauOptimizerPolicy(
+            ...$commonPolicy,
+            similarCostCents: 500,
+        ),
+    );
+
+    fuelauAssertSame(3, $strictCostPlan->fuelStopCount);
+    fuelauAssertSame(2, $similarCostPlan->fuelStopCount);
+    fuelauAssertTrue(
+        $similarCostPlan->generalizedCostCents - $strictCostPlan->generalizedCostCents <= 500,
+        'The fewer-stop plan must remain within the configured similar-cost threshold',
+    );
+});
+
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');

@@ -34,6 +34,7 @@ final readonly class FuelauOptimizerNode
         public int $progressM,
         public ?int $priceTenthsCentsPerL = null,
         public string $label = '',
+        public int $progressS = 0,
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('Optimizer node ID must not be empty.');
@@ -44,6 +45,9 @@ final readonly class FuelauOptimizerNode
         if ($priceTenthsCentsPerL !== null && $priceTenthsCentsPerL <= 0) {
             throw new InvalidArgumentException('Station price must be positive.');
         }
+        if ($progressS < 0) {
+            throw new InvalidArgumentException('Optimizer node duration progress must be non-negative.');
+        }
     }
 
     public static function station(
@@ -51,27 +55,80 @@ final readonly class FuelauOptimizerNode
         int $progressM,
         float $priceCentsPerL,
         string $label = '',
+        int $progressS = 0,
     ): self {
         return new self(
             id: $id,
             progressM: $progressM,
             priceTenthsCentsPerL: (int) round($priceCentsPerL * 10),
             label: $label,
+            progressS: $progressS,
+        );
+    }
+}
+
+final readonly class FuelauOptimizerPolicy
+{
+    public function __construct(
+        public string $mode = 'practical_least_cost',
+        public ?int $maximumFuelOnlyStops = null,
+        public ?float $minimumDiscretionaryPurchaseL = null,
+        public int $minimumStopSpacingM = 150_000,
+        public int $minimumStopSpacingS = 5_400,
+        public int $minimumNetSavingCents = 1_000,
+        public int $driverTimeValueCentsPerHour = 3_000,
+        public int $fuelOnlyStopSeconds = 600,
+        public int $similarCostCents = 500,
+    ) {
+        if (!in_array($mode, ['practical_least_cost', 'fewer_stops'], true)) {
+            throw new InvalidArgumentException('Unsupported optimizer policy mode.');
+        }
+        if ($maximumFuelOnlyStops !== null && ($maximumFuelOnlyStops < 0 || $maximumFuelOnlyStops > 20)) {
+            throw new InvalidArgumentException('Maximum fuel-only stops must be between 0 and 20.');
+        }
+        if ($minimumDiscretionaryPurchaseL !== null && $minimumDiscretionaryPurchaseL < 0) {
+            throw new InvalidArgumentException('Minimum discretionary purchase must be non-negative.');
+        }
+        foreach ([
+            $minimumStopSpacingM,
+            $minimumStopSpacingS,
+            $minimumNetSavingCents,
+            $driverTimeValueCentsPerHour,
+            $fuelOnlyStopSeconds,
+            $similarCostCents,
+        ] as $value) {
+            if ($value < 0) {
+                throw new InvalidArgumentException('Optimizer policy values must be non-negative.');
+            }
+        }
+    }
+
+    public function stopCostCents(): int
+    {
+        return (int) ceil(
+            ($this->driverTimeValueCentsPerHour * $this->fuelOnlyStopSeconds) / 3_600,
         );
     }
 }
 
 final readonly class FuelauOptimizerPurchase
 {
+    /**
+     * @param list<string> $reasonCodes
+     */
     public function __construct(
         public string $nodeId,
         public string $label,
         public int $progressM,
+        public int $progressS,
         public float $arrivalFuelL,
         public float $purchaseL,
         public float $departureFuelL,
         public float $priceCentsPerL,
         public int $purchaseCostCents,
+        public string $classification = 'unclassified',
+        public array $reasonCodes = [],
+        public ?int $marginalNetSavingCents = null,
     ) {}
 }
 
@@ -86,15 +143,18 @@ final readonly class FuelauOptimizerPlan
         public float $fuelPurchasedL,
         public float $endingFuelL,
         public int $fuelStopCount,
+        public int $generalizedCostCents,
+        public int $requiredStopCount = 0,
+        public int $discretionaryStopCount = 0,
     ) {}
 }
 
 /**
  * Pure fixed-corridor fuel-state solver.
  *
- * Version 1 uses conservative half-litre buckets. This initial engine slice
- * optimizes fuel cash cost; meaningful-stop and generalized-cost labels are
- * layered onto the same state model in the next implementation phase.
+ * Version 1 uses conservative half-litre buckets and critical departure fuel
+ * levels. The practical wrapper applies meaningful-stop and marginal-saving
+ * policy without introducing external state or route-service dependencies.
  */
 final class FuelauFuelStateOptimizer
 {
@@ -104,6 +164,168 @@ final class FuelauFuelStateOptimizer
      * @param list<FuelauOptimizerNode> $nodes
      */
     public function optimize(array $nodes, FuelauOptimizerVehicle $vehicle): FuelauOptimizerPlan
+    {
+        return $this->solve(
+            $nodes,
+            $vehicle,
+            stopCostCents: 0,
+            maximumStops: null,
+            forbiddenNodeIds: [],
+            objective: 'fuel_cost',
+            similarCostCents: 0,
+        );
+    }
+
+    /**
+     * @param list<FuelauOptimizerNode> $nodes
+     */
+    public function optimizePractical(
+        array $nodes,
+        FuelauOptimizerVehicle $vehicle,
+        ?FuelauOptimizerPolicy $policy = null,
+    ): FuelauOptimizerPlan {
+        $nodes = array_values($nodes);
+        $this->validateNodes($nodes);
+        $policy ??= new FuelauOptimizerPolicy();
+
+        $minimumStopPlan = $this->solve(
+            $nodes,
+            $vehicle,
+            stopCostCents: 0,
+            maximumStops: null,
+            forbiddenNodeIds: [],
+            objective: 'fewest_stops',
+            similarCostCents: 0,
+        );
+        $automaticAllowance = min(
+            2,
+            intdiv($nodes[count($nodes) - 1]->progressM, 1_000_000),
+        );
+        $maximumStops = $policy->maximumFuelOnlyStops
+            ?? ($minimumStopPlan->fuelStopCount + $automaticAllowance);
+        if ($maximumStops < $minimumStopPlan->fuelStopCount) {
+            throw new FuelauRouteInfeasibleException(
+                'The configured stop limit is below the minimum feasible stop count.',
+            );
+        }
+
+        $forbidden = [];
+        $required = [];
+        $marginalSavings = [];
+        $plan = $this->solve(
+            $nodes,
+            $vehicle,
+            $policy->stopCostCents(),
+            $maximumStops,
+            $forbidden,
+            $policy->mode === 'fewer_stops' ? 'fewest_stops' : 'generalized_cost',
+            $policy->similarCostCents,
+        );
+
+        for ($stabilizationPass = 0; $stabilizationPass < count($nodes); $stabilizationPass++) {
+            for ($constraintPass = 0; $constraintPass < count($nodes); $constraintPass++) {
+                $changed = false;
+                $previousProgressM = 0;
+                $previousProgressS = 0;
+                foreach ($plan->purchases as $purchase) {
+                    if (isset($required[$purchase->nodeId])) {
+                        $previousProgressM = $purchase->progressM;
+                        $previousProgressS = $purchase->progressS;
+                        continue;
+                    }
+
+                    $minimumPurchaseL = $policy->minimumDiscretionaryPurchaseL
+                        ?? max(15.0, $vehicle->tankCapacityL * 0.25);
+                    $tooSmall = $purchase->purchaseL < $minimumPurchaseL;
+                    $tooClose = ($purchase->progressM - $previousProgressM) < $policy->minimumStopSpacingM
+                        && ($purchase->progressS - $previousProgressS) < $policy->minimumStopSpacingS;
+
+                    if ($tooSmall || $tooClose) {
+                        $alternative = $this->solveWithoutNode(
+                            $nodes,
+                            $vehicle,
+                            $policy,
+                            $maximumStops,
+                            $forbidden,
+                            $purchase->nodeId,
+                        );
+                        if ($alternative === null) {
+                            $required[$purchase->nodeId] = $tooSmall
+                                ? 'minimum_purchase_safety_override'
+                                : 'stop_spacing_safety_override';
+                        } else {
+                            $forbidden[$purchase->nodeId] = true;
+                            $plan = $alternative;
+                            $changed = true;
+                            break;
+                        }
+                    }
+                    $previousProgressM = $purchase->progressM;
+                    $previousProgressS = $purchase->progressS;
+                }
+                if ($changed) {
+                    continue;
+                }
+                break;
+            }
+
+            $auditChangedPlan = false;
+            for ($auditPass = 0; $auditPass < count($nodes); $auditPass++) {
+                $changed = false;
+                foreach ($plan->purchases as $purchase) {
+                    if (isset($required[$purchase->nodeId])) {
+                        continue;
+                    }
+                    $alternative = $this->solveWithoutNode(
+                        $nodes,
+                        $vehicle,
+                        $policy,
+                        $maximumStops,
+                        $forbidden,
+                        $purchase->nodeId,
+                    );
+                    if ($alternative === null) {
+                        $required[$purchase->nodeId] = 'reserve_feasibility';
+                        continue;
+                    }
+
+                    $saving = $alternative->generalizedCostCents - $plan->generalizedCostCents;
+                    $marginalSavings[$purchase->nodeId] = $saving;
+                    if ($saving < $policy->minimumNetSavingCents) {
+                        $forbidden[$purchase->nodeId] = true;
+                        $plan = $alternative;
+                        $changed = true;
+                        $auditChangedPlan = true;
+                        break;
+                    }
+                }
+                if ($changed) {
+                    continue;
+                }
+                break;
+            }
+
+            if (!$auditChangedPlan) {
+                break;
+            }
+        }
+
+        return $this->classifyPlan($plan, $required, $marginalSavings);
+    }
+
+    /**
+     * @param list<FuelauOptimizerNode> $nodes
+     * @param array<string, bool> $forbiddenNodeIds
+     */
+    private function solve(
+        array $nodes,
+        FuelauOptimizerVehicle $vehicle,
+        int $stopCostCents,
+        ?int $maximumStops,
+        array $forbiddenNodeIds,
+        string $objective,
+        int $similarCostCents,
+    ): FuelauOptimizerPlan
     {
         $nodes = array_values($nodes);
         $this->validateNodes($nodes);
@@ -121,7 +343,8 @@ final class FuelauFuelStateOptimizer
         $states[0][$initialKey] = [
             'fuel_buckets' => $startingBuckets,
             'stop_count' => 0,
-            'cost_units' => 0,
+            'fuel_cost_units' => 0,
+            'generalized_cost_units' => 0,
             'previous_node' => -1,
             'previous_key' => '',
             'purchase_buckets' => 0,
@@ -144,12 +367,21 @@ final class FuelauFuelStateOptimizer
                 ) {
                     $purchaseBuckets = $departureBuckets - $arrivalBuckets;
                     $price = $nodes[$fromIndex]->priceTenthsCentsPerL;
+                    if ($purchaseBuckets > 0 && isset($forbiddenNodeIds[$nodes[$fromIndex]->id])) {
+                        continue;
+                    }
                     if ($purchaseBuckets > 0 && $price === null) {
                         continue;
                     }
                     $nextStopCount = (int) $state['stop_count'] + ($purchaseBuckets > 0 ? 1 : 0);
-                    $nextCostUnits = (int) $state['cost_units']
+                    if ($maximumStops !== null && $nextStopCount > $maximumStops) {
+                        continue;
+                    }
+                    $nextFuelCostUnits = (int) $state['fuel_cost_units']
                         + ($purchaseBuckets * (int) ($price ?? 0));
+                    $nextGeneralizedCostUnits = (int) $state['generalized_cost_units']
+                        + ($purchaseBuckets * (int) ($price ?? 0))
+                        + ($purchaseBuckets > 0 ? $stopCostCents * 20 : 0);
 
                     for ($toIndex = $fromIndex + 1; $toIndex <= $lastIndex; $toIndex++) {
                         $fuelUsedBuckets = $this->fuelUsedBuckets(
@@ -165,7 +397,8 @@ final class FuelauFuelStateOptimizer
                         $existing = $states[$toIndex][$nextKey] ?? null;
                         if (
                             $existing !== null
-                            && (int) $existing['cost_units'] <= $nextCostUnits
+                            && (int) $existing['generalized_cost_units'] <= $nextGeneralizedCostUnits
+                            && (int) $existing['fuel_cost_units'] <= $nextFuelCostUnits
                         ) {
                             continue;
                         }
@@ -173,7 +406,8 @@ final class FuelauFuelStateOptimizer
                         $states[$toIndex][$nextKey] = [
                             'fuel_buckets' => $nextFuelBuckets,
                             'stop_count' => $nextStopCount,
-                            'cost_units' => $nextCostUnits,
+                            'fuel_cost_units' => $nextFuelCostUnits,
+                            'generalized_cost_units' => $nextGeneralizedCostUnits,
                             'previous_node' => $fromIndex,
                             'previous_key' => $fromKey,
                             'purchase_buckets' => $purchaseBuckets,
@@ -190,7 +424,11 @@ final class FuelauFuelStateOptimizer
             );
         }
 
-        $bestKey = $this->bestDestinationKey($states[$lastIndex]);
+        $bestKey = $this->bestDestinationKey(
+            $states[$lastIndex],
+            $objective,
+            $similarCostCents,
+        );
 
         return $this->buildPlan($nodes, $states, $lastIndex, $bestKey);
     }
@@ -278,15 +516,58 @@ final class FuelauFuelStateOptimizer
     /**
      * @param array<string, array<string, int|string>> $destinationStates
      */
-    private function bestDestinationKey(array $destinationStates): string
+    private function bestDestinationKey(
+        array $destinationStates,
+        string $objective,
+        int $similarCostCents,
+    ): string
     {
         $keys = array_keys($destinationStates);
-        usort($keys, static function (string $leftKey, string $rightKey) use ($destinationStates): int {
+        if ($objective === 'generalized_cost' && $similarCostCents > 0) {
+            $minimumCostUnits = min(array_map(
+                static fn (array $state): int => (int) $state['generalized_cost_units'],
+                $destinationStates,
+            ));
+            $maximumSimilarCostUnits = $minimumCostUnits + ($similarCostCents * 20);
+            $keys = array_values(array_filter(
+                $keys,
+                static fn (string $key): bool =>
+                    (int) $destinationStates[$key]['generalized_cost_units']
+                    <= $maximumSimilarCostUnits,
+            ));
+            usort(
+                $keys,
+                static fn (string $leftKey, string $rightKey): int =>
+                    ((int) $destinationStates[$leftKey]['stop_count']
+                        <=> (int) $destinationStates[$rightKey]['stop_count'])
+                    ?: ((int) $destinationStates[$leftKey]['generalized_cost_units']
+                        <=> (int) $destinationStates[$rightKey]['generalized_cost_units'])
+                    ?: ((int) $destinationStates[$leftKey]['fuel_buckets']
+                        <=> (int) $destinationStates[$rightKey]['fuel_buckets']),
+            );
+
+            return $keys[0];
+        }
+
+        usort($keys, static function (string $leftKey, string $rightKey) use (
+            $destinationStates,
+            $objective,
+        ): int {
             $left = $destinationStates[$leftKey];
             $right = $destinationStates[$rightKey];
 
-            return ((int) $left['cost_units'] <=> (int) $right['cost_units'])
-                ?: ((int) $left['stop_count'] <=> (int) $right['stop_count'])
+            $primary = match ($objective) {
+                'fewest_stops' => (int) $left['stop_count'] <=> (int) $right['stop_count'],
+                'fuel_cost' => (int) $left['fuel_cost_units'] <=> (int) $right['fuel_cost_units'],
+                default => (int) $left['generalized_cost_units'] <=> (int) $right['generalized_cost_units'],
+            };
+            $secondary = $objective === 'fewest_stops'
+                ? (int) $left['generalized_cost_units'] <=> (int) $right['generalized_cost_units']
+                : (int) $left['stop_count'] <=> (int) $right['stop_count'];
+
+            return $primary
+                ?: $secondary
+                ?: ((int) $left['fuel_cost_units'] <=> (int) $right['fuel_cost_units'])
                 ?: ((int) $left['fuel_buckets'] <=> (int) $right['fuel_buckets']);
         });
 
@@ -319,6 +600,7 @@ final class FuelauFuelStateOptimizer
                     nodeId: $node->id,
                     label: $node->label,
                     progressM: $node->progressM,
+                    progressS: $node->progressS,
                     arrivalFuelL: (int) $fromState['fuel_buckets'] * self::BUCKET_L,
                     purchaseL: $purchaseBuckets * self::BUCKET_L,
                     departureFuelL: (int) $state['departure_buckets'] * self::BUCKET_L,
@@ -339,10 +621,93 @@ final class FuelauFuelStateOptimizer
 
         return new FuelauOptimizerPlan(
             purchases: $purchases,
-            fuelPurchaseCostCents: (int) ceil((int) $destinationState['cost_units'] / 20),
+            fuelPurchaseCostCents: (int) ceil((int) $destinationState['fuel_cost_units'] / 20),
             fuelPurchasedL: $totalPurchasedL,
             endingFuelL: (int) $destinationState['fuel_buckets'] * self::BUCKET_L,
             fuelStopCount: (int) $destinationState['stop_count'],
+            generalizedCostCents: (int) ceil(
+                (int) $destinationState['generalized_cost_units'] / 20,
+            ),
+        );
+    }
+
+    /**
+     * @param list<FuelauOptimizerNode> $nodes
+     * @param array<string, bool> $forbidden
+     */
+    private function solveWithoutNode(
+        array $nodes,
+        FuelauOptimizerVehicle $vehicle,
+        FuelauOptimizerPolicy $policy,
+        int $maximumStops,
+        array $forbidden,
+        string $nodeId,
+    ): ?FuelauOptimizerPlan {
+        $forbidden[$nodeId] = true;
+        try {
+            return $this->solve(
+                $nodes,
+                $vehicle,
+                $policy->stopCostCents(),
+                $maximumStops,
+                $forbidden,
+                $policy->mode === 'fewer_stops' ? 'fewest_stops' : 'generalized_cost',
+                $policy->similarCostCents,
+            );
+        } catch (FuelauRouteInfeasibleException) {
+            return null;
+        }
+    }
+
+    /**
+     * @param array<string, string> $required
+     * @param array<string, int> $marginalSavings
+     */
+    private function classifyPlan(
+        FuelauOptimizerPlan $plan,
+        array $required,
+        array $marginalSavings,
+    ): FuelauOptimizerPlan {
+        $purchases = array_map(
+            static function (FuelauOptimizerPurchase $purchase) use (
+                $required,
+                $marginalSavings,
+            ): FuelauOptimizerPurchase {
+                $requiredReason = $required[$purchase->nodeId] ?? null;
+
+                return new FuelauOptimizerPurchase(
+                    nodeId: $purchase->nodeId,
+                    label: $purchase->label,
+                    progressM: $purchase->progressM,
+                    progressS: $purchase->progressS,
+                    arrivalFuelL: $purchase->arrivalFuelL,
+                    purchaseL: $purchase->purchaseL,
+                    departureFuelL: $purchase->departureFuelL,
+                    priceCentsPerL: $purchase->priceCentsPerL,
+                    purchaseCostCents: $purchase->purchaseCostCents,
+                    classification: $requiredReason !== null ? 'required' : 'strategic',
+                    reasonCodes: [$requiredReason ?? 'lower_trip_cost'],
+                    marginalNetSavingCents: $requiredReason === null
+                        ? ($marginalSavings[$purchase->nodeId] ?? null)
+                        : null,
+                );
+            },
+            $plan->purchases,
+        );
+        $requiredStopCount = count(array_filter(
+            $purchases,
+            static fn (FuelauOptimizerPurchase $purchase): bool => $purchase->classification === 'required',
+        ));
+
+        return new FuelauOptimizerPlan(
+            purchases: $purchases,
+            fuelPurchaseCostCents: $plan->fuelPurchaseCostCents,
+            fuelPurchasedL: $plan->fuelPurchasedL,
+            endingFuelL: $plan->endingFuelL,
+            fuelStopCount: $plan->fuelStopCount,
+            generalizedCostCents: $plan->generalizedCostCents,
+            requiredStopCount: $requiredStopCount,
+            discretionaryStopCount: $plan->fuelStopCount - $requiredStopCount,
         );
     }
 }
