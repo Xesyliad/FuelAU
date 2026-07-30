@@ -721,6 +721,67 @@ Importer logs distinguish API rows fetched, current rows published, history chan
 
 Weekly and monthly charts reconstruct each station/fuel's effective state at Brisbane daily or monthly boundaries, including the last event before the requested range. This prevents change-only history from producing empty or change-biased buckets.
 
+### Historical cleanup audit
+
+Exact station/fuel/timestamp duplicates are prevented by unique indexes. Older installations may still contain
+consecutive observations whose price and other meaningful state did not change. Audit those rows without changing
+the database:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m history_cleanup
+```
+
+The audit:
+
+- opens a read-only transaction for each provider;
+- preserves the first state and every later price, availability, or collection-method transition;
+- treats a return such as `A -> B -> A` as three meaningful states;
+- reports exact candidate and retained row counts plus an approximate logical size reduction; and
+- excludes WA because its daily observations are intentional.
+
+Audit one or more providers with repeated `--provider` options, or produce machine-readable output:
+
+```bash
+docker compose exec app env PYTHONPATH=src python3 -m history_cleanup --provider nt --provider sa
+docker compose exec app env PYTHONPATH=src python3 -m history_cleanup --json
+```
+
+The audit never deletes rows. Deletion requires a separate reviewed procedure, a verified backup, bounded batches,
+and post-cleanup chart/API validation. Deleted InnoDB space remains reusable by MariaDB; returning it to the
+filesystem requires a separately scheduled table rebuild.
+
+For an approved cleanup, first create and validate a fresh `mariadb-dump`, then pause cron without stopping the web
+application. The mutation commands require the backup to pass gzip and dump-marker validation, explicit providers,
+and an exact confirmation phrase:
+
+```bash
+docker compose exec app service cron stop
+
+docker compose run --rm --no-deps \
+  -e FUELAU_CRON_ENABLED=false \
+  -v "$PWD/var/backups:/backups:ro" \
+  app env PYTHONPATH=src python3 -m history_cleanup stage-cleanup \
+  --provider nt --provider sa --provider qld --provider vic \
+  --backup /backups/fuelau-before-history-cleanup.sql.gz
+
+docker compose run --rm --no-deps \
+  -e FUELAU_CRON_ENABLED=false \
+  -v "$PWD/var/backups:/backups:ro" \
+  app env PYTHONPATH=src python3 -m history_cleanup delete-cleanup \
+  --provider nt --provider sa --provider qld --provider vic \
+  --backup /backups/fuelau-before-history-cleanup.sql.gz \
+  --batch-size 50000 \
+  --confirm-delete 'DELETE REDUNDANT HISTORY'
+
+docker compose exec app env PYTHONPATH=src python3 -m history_cleanup
+docker compose exec app service cron start
+```
+
+Deletion is resumable because staged IDs are removed only after the matching history transaction commits. Use
+`--max-batches` to pace a run deliberately. Confirm that the candidate table is empty and the post-cleanup audit
+reports zero candidates for every cleaned provider before dropping the staging table. Keep the backup until the
+cleanup and any separately scheduled table rebuild have both been validated.
+
 The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
 
 Useful checks:

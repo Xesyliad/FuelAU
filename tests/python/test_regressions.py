@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from urllib.error import URLError
 
@@ -353,6 +356,118 @@ class ImporterFreshnessTests(unittest.TestCase):
                 }
             ),
         )
+
+
+class HistoryCleanupAuditTests(unittest.TestCase):
+    def test_audit_queries_are_read_only_and_preserve_state_semantics(self) -> None:
+        from history_cleanup import PROVIDERS
+        from history_cleanup import build_audit_sql
+
+        self.assertNotIn("wa", PROVIDERS)
+        for provider, spec in PROVIDERS.items():
+            with self.subTest(provider=provider):
+                sql = build_audit_sql(spec)
+                upper_sql = sql.upper()
+                self.assertIn("START TRANSACTION READ ONLY", upper_sql)
+                self.assertIn("ROW_NUMBER() OVER", upper_sql)
+                self.assertIn("LAG(", upper_sql)
+                self.assertIn("<=>", sql)
+                self.assertNotIn("DELETE ", upper_sql)
+                self.assertNotIn("UPDATE ", upper_sql)
+                self.assertNotIn("INSERT ", upper_sql)
+                self.assertNotIn("ALTER ", upper_sql)
+                self.assertNotIn("DROP ", upper_sql)
+
+        self.assertEqual(("price", "collection_method"), PROVIDERS["qld"].state_columns)
+        self.assertEqual(("price", "collection_method"), PROVIDERS["sa"].state_columns)
+        self.assertEqual(("price",), PROVIDERS["nsw"].state_columns)
+        self.assertEqual(("price", "is_available"), PROVIDERS["vic"].state_columns)
+        self.assertEqual(("price", "is_available"), PROVIDERS["nt"].state_columns)
+
+    def test_audit_output_reports_candidates_and_estimated_savings(self) -> None:
+        from history_cleanup import PROVIDERS
+        from history_cleanup import parse_audit_output
+
+        result = parse_audit_output(
+            PROVIDERS["nt"],
+            "1000\t750\t104857600\n",
+            duration_seconds=1.25,
+        )
+
+        self.assertEqual(1000, result.total_rows)
+        self.assertEqual(750, result.redundant_rows)
+        self.assertEqual(250, result.retained_rows)
+        self.assertEqual(75.0, result.redundant_percent)
+        self.assertEqual(78643200, result.estimated_reclaimable_bytes)
+        self.assertEqual(1.25, result.duration_seconds)
+
+    def test_text_report_is_explicitly_non_destructive(self) -> None:
+        from history_cleanup import PROVIDERS
+        from history_cleanup import parse_audit_output
+        from history_cleanup import print_text_report
+
+        result = parse_audit_output(PROVIDERS["qld"], "10\t8\t1048576\n", 0.1)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_text_report([result])
+
+        report = output.getvalue()
+        self.assertIn("read-only", report)
+        self.assertIn("WA is excluded", report)
+        self.assertIn("No rows were changed", report)
+
+    def test_cleanup_staging_and_deletion_are_scoped_and_bounded(self) -> None:
+        from history_cleanup import CLEANUP_PROVIDERS
+        from history_cleanup import PROVIDERS
+        from history_cleanup import build_delete_batch_sql
+        from history_cleanup import build_stage_candidates_sql
+
+        self.assertEqual(("nt", "sa", "qld", "vic"), CLEANUP_PROVIDERS)
+        for provider in CLEANUP_PROVIDERS:
+            with self.subTest(provider=provider):
+                stage_sql = build_stage_candidates_sql(PROVIDERS[provider]).upper()
+                delete_sql = build_delete_batch_sql(PROVIDERS[provider], 50000).upper()
+                self.assertIn("FUELAU_HISTORY_CLEANUP_CANDIDATES", stage_sql)
+                self.assertIn("ROW_NUMBER() OVER", stage_sql)
+                self.assertIn("LAG(", stage_sql)
+                self.assertNotIn("_SITE_PRICES_CURRENT", stage_sql)
+                self.assertIn("START TRANSACTION", delete_sql)
+                self.assertIn("LIMIT 50000", delete_sql)
+                self.assertIn("TMP_FUELAU_HISTORY_CLEANUP_BATCH", delete_sql)
+                self.assertNotIn("_SITE_PRICES_CURRENT", delete_sql)
+                self.assertNotIn("DROP TABLE", delete_sql)
+
+        with self.assertRaises(ValueError):
+            build_stage_candidates_sql(PROVIDERS["nsw"])
+        with self.assertRaises(ValueError):
+            build_delete_batch_sql(PROVIDERS["nsw"], 50000)
+        with self.assertRaises(ValueError):
+            build_delete_batch_sql(PROVIDERS["nt"], 100001)
+
+    def test_cleanup_requires_a_complete_gzip_backup(self) -> None:
+        from history_cleanup import verify_backup
+
+        markers = [
+            "CREATE TABLE `nt_site_prices_history`",
+            "CREATE TABLE `sa_site_prices_history`",
+            "CREATE TABLE `fpq_site_prices_history`",
+            "CREATE TABLE `vic_site_prices_history`",
+            "-- Dump completed on 2026-07-30 15:23:05",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "backup.sql.gz"
+            with gzip.open(path, "wb") as backup:
+                backup.write(("\n".join(markers) + "\n").encode("utf-8"))
+
+            digest, size = verify_backup(path)
+            self.assertEqual(64, len(digest))
+            self.assertGreater(size, 0)
+
+            incomplete = Path(directory) / "incomplete.sql.gz"
+            with gzip.open(incomplete, "wb") as backup:
+                backup.write(b"-- incomplete\n")
+            with self.assertRaises(ValueError):
+                verify_backup(incomplete)
 
 
 if __name__ == "__main__":
