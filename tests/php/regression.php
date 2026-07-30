@@ -1121,6 +1121,95 @@ fuelauTest('complete itinerary optimizer buys outbound fuel with return-leg look
     fuelauAssertSame(0, $validated->validation->distanceDeltaM);
 });
 
+fuelauTest('planned physical stop fuel is combined without consuming fuel-only allowance', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Meal stop'],
+            ['lat' => -30.0, 'lon' => 156.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 35,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 0,
+            'minimum_discretionary_purchase_l' => 40,
+            'minimum_stop_spacing_km' => 400,
+            'minimum_stop_spacing_minutes' => 240,
+        ],
+    ]);
+    $locations = $request->itineraryLocations();
+    $combinedStation = [
+        'source' => 'nsw',
+        'state' => 'NSW',
+        'station_id' => 'meal-stop-fuel',
+        'station_name' => 'Meal Stop Fuel',
+        'fuel_code' => 'E10',
+        'latitude' => -30.0,
+        'longitude' => 152.95,
+        'price' => 101,
+        'updated_at' => '2026-07-30T00:00:00Z',
+        'price_status' => 'fresh',
+        'access_distance_m' => 0,
+        'access_duration_s' => 0,
+    ];
+    $result = (new FuelauCompleteItineraryPlanner())->plan($request, [
+        new FuelauPreparedItineraryLeg(
+            0,
+            new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 150.0],
+                    ['lat' => -30.0, 'lon' => 153.0],
+                ],
+            ),
+            $locations[1],
+            [$combinedStation],
+        ),
+        new FuelauPreparedItineraryLeg(
+            1,
+            new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 153.0],
+                    ['lat' => -30.0, 'lon' => 156.0],
+                ],
+            ),
+            $locations[2],
+            [],
+        ),
+    ]);
+    $response = $result->toResponseArray();
+
+    fuelauAssertSame(1, $result->plan->fuelStopCount);
+    fuelauAssertSame(0, $result->plan->fuelOnlyStopCount);
+    fuelauAssertSame(1, $result->plan->combinedStopCount);
+    fuelauAssertSame('combined', $result->plan->purchases[0]->classification);
+    fuelauAssertSame(
+        ['planned_stop_combination'],
+        $result->plan->purchases[0]->reasonCodes,
+    );
+    fuelauAssertSame(30.0, $result->plan->purchases[0]->purchaseL);
+    fuelauAssertSame(3_030, $result->plan->generalizedCostCents);
+    fuelauAssertSame(1, $response['summary']['combined_stop_count']);
+    fuelauAssertSame(0, $response['summary']['required_stop_count']);
+    fuelauAssertSame(0, $response['summary']['discretionary_stop_count']);
+    fuelauAssertSame(
+        1,
+        $result->input->candidatesByNodeId[
+            'station:nsw:NSW:meal-stop-fuel:E10:visit:0'
+        ]->sourceRow['combined_itinerary_stop_index'],
+    );
+});
+
 fuelauTest('single-corridor planner maps request policy and builds response accounting', static function (): void {
     $request = FuelauRouteOptimizationRequest::fromBody([
         'version' => 1,

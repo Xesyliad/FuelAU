@@ -157,6 +157,7 @@ foreach ($routes as $name => $route) {
             'ending_fuel_l' => $summary['ending_fuel_l'],
             'required_stops' => $summary['required_stop_count'],
             'discretionary_stops' => $summary['discretionary_stop_count'],
+            'combined_stops' => $summary['combined_stop_count'],
             'raw_candidates' => $response['diagnostics']['raw_candidate_count'],
             'network_candidates' => $response['diagnostics']['network_shortlist_count'],
             'osrm_route_requests' => $response['diagnostics']['osrm_route_request_count'],

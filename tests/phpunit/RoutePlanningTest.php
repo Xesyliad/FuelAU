@@ -193,6 +193,79 @@ final class RoutePlanningTest extends TestCase
         );
     }
 
+    public function testPlannedStopFuelDoesNotConsumeFuelOnlyStopAllowance(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0],
+            'destinations' => [
+                ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Meal stop'],
+                ['lat' => -30.0, 'lon' => 156.0, 'label' => 'Destination'],
+            ],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'E10',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 35,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 5,
+            ],
+            'preferences' => [
+                'maximum_fuel_only_stops' => 0,
+                'minimum_discretionary_purchase_l' => 40,
+                'minimum_stop_spacing_km' => 400,
+                'minimum_stop_spacing_minutes' => 240,
+            ],
+        ]);
+        $locations = $request->itineraryLocations();
+        $combinedStation = [
+            ...$this->validatedStationRow(
+                'meal-stop-fuel',
+                152.95,
+                101,
+                '2026-07-30T00:00:00Z',
+            ),
+        ];
+        $result = (new FuelauCompleteItineraryPlanner())->plan($request, [
+            new FuelauPreparedItineraryLeg(
+                0,
+                new FuelauRouteCorridor(
+                    300_000,
+                    10_800,
+                    [
+                        ['lat' => -30.0, 'lon' => 150.0],
+                        ['lat' => -30.0, 'lon' => 153.0],
+                    ],
+                ),
+                $locations[1],
+                [$combinedStation],
+            ),
+            new FuelauPreparedItineraryLeg(
+                1,
+                new FuelauRouteCorridor(
+                    300_000,
+                    10_800,
+                    [
+                        ['lat' => -30.0, 'lon' => 153.0],
+                        ['lat' => -30.0, 'lon' => 156.0],
+                    ],
+                ),
+                $locations[2],
+                [],
+            ),
+        ]);
+
+        self::assertSame(1, $result->plan->fuelStopCount);
+        self::assertSame(0, $result->plan->fuelOnlyStopCount);
+        self::assertSame(1, $result->plan->combinedStopCount);
+        self::assertSame('combined', $result->plan->purchases[0]->classification);
+        self::assertSame(3_030, $result->plan->generalizedCostCents);
+        self::assertSame(
+            ['planned_stop_combination'],
+            $result->plan->purchases[0]->reasonCodes,
+        );
+    }
+
     public function testRoadAccessMeasurementUsesOneBoundedTableChunk(): void
     {
         $corridor = new FuelauRouteCorridor(

@@ -384,6 +384,9 @@ final readonly class FuelauCompleteItineraryInput
 
 final class FuelauCompleteItineraryAssembler
 {
+    private const COMBINED_STOP_DISTANCE_M = 5_000;
+    private const COMBINED_STOP_DURATION_S = 300;
+
     /**
      * @param list<FuelauPreparedItineraryLeg> $legs
      */
@@ -439,6 +442,12 @@ final class FuelauCompleteItineraryAssembler
             $selectedCandidateCount += $legInput->selectedCandidateCount;
             foreach ($legInput->candidatesByNodeId as $candidate) {
                 $nodeId = "station:{$candidate->stableId}:visit:{$legIndex}";
+                $combinedStopIndex = $this->combinedStopIndex(
+                    $locations,
+                    $legIndex,
+                    $candidate,
+                    $leg->corridor,
+                );
                 $globalCandidate = new FuelauProjectedStationCandidate(
                     stableId: $candidate->stableId,
                     nodeId: $nodeId,
@@ -453,6 +462,7 @@ final class FuelauCompleteItineraryAssembler
                     sourceRow: [
                         ...$candidate->sourceRow,
                         'itinerary_leg_index' => $legIndex,
+                        'combined_itinerary_stop_index' => $combinedStopIndex,
                     ],
                 );
                 $nodes[] = FuelauOptimizerNode::station(
@@ -463,6 +473,7 @@ final class FuelauCompleteItineraryAssembler
                     progressS: $globalCandidate->progressS,
                     accessDistanceM: $globalCandidate->accessDistanceM,
                     accessDurationS: $globalCandidate->accessDurationS,
+                    combinedStop: $combinedStopIndex !== null,
                 );
                 $candidatesByNodeId[$nodeId] = $globalCandidate;
             }
@@ -518,11 +529,52 @@ final class FuelauCompleteItineraryAssembler
             legSummaries: $legSummaries,
         );
     }
+
+    /**
+     * @param list<FuelauRouteOptimizationLocation> $locations
+     */
+    private function combinedStopIndex(
+        array $locations,
+        int $legIndex,
+        FuelauProjectedStationCandidate $candidate,
+        FuelauRouteCorridor $corridor,
+    ): ?int {
+        $matches = [];
+        $start = $locations[$legIndex];
+        if (
+            $legIndex > 0
+            && $start->physicalStop
+            && $candidate->progressM <= self::COMBINED_STOP_DISTANCE_M
+            && $candidate->progressS <= self::COMBINED_STOP_DURATION_S
+        ) {
+            $matches[$legIndex] = $candidate->progressM;
+        }
+
+        $target = $locations[$legIndex + 1];
+        $remainingDistanceM = $corridor->distanceM - $candidate->progressM;
+        $remainingDurationS = $corridor->durationS - $candidate->progressS;
+        if (
+            $target->physicalStop
+            && $remainingDistanceM <= self::COMBINED_STOP_DISTANCE_M
+            && $remainingDurationS <= self::COMBINED_STOP_DURATION_S
+        ) {
+            $matches[$legIndex + 1] = $remainingDistanceM;
+        }
+        if ($matches === []) {
+            return null;
+        }
+
+        asort($matches, SORT_NUMERIC);
+
+        return (int) array_key_first($matches);
+    }
 }
 
 final class FuelauFixedCorridorCandidateAdapter
 {
     private const OFFICIAL_SOURCES = ['qld', 'sa', 'nsw', 'wa', 'tas', 'vic', 'nt'];
+    private const COMBINED_STOP_DISTANCE_M = 5_000;
+    private const COMBINED_STOP_DURATION_S = 300;
 
     /**
      * @param list<array<string, mixed>> $rows
@@ -533,6 +585,8 @@ final class FuelauFixedCorridorCandidateAdapter
         int $maximumOffRouteM = 75_000,
         int $maximumCandidates = 320,
         int $coverageBinM = 50_000,
+        bool $combineNearOrigin = false,
+        bool $combineNearDestination = false,
     ): FuelauFixedCorridorInput {
         if ($maximumOffRouteM < 0 || $maximumCandidates < 1 || $coverageBinM < 1) {
             throw new InvalidArgumentException('Invalid fixed-corridor candidate limits.');
@@ -602,6 +656,35 @@ final class FuelauFixedCorridorCandidateAdapter
         )];
         $candidatesByNodeId = [];
         foreach ($selected as $candidate) {
+            $combinedStop = (
+                $combineNearOrigin
+                && $candidate->progressM <= self::COMBINED_STOP_DISTANCE_M
+                && $candidate->progressS <= self::COMBINED_STOP_DURATION_S
+            ) || (
+                $combineNearDestination
+                && ($corridor->distanceM - $candidate->progressM)
+                    <= self::COMBINED_STOP_DISTANCE_M
+                && ($corridor->durationS - $candidate->progressS)
+                    <= self::COMBINED_STOP_DURATION_S
+            );
+            if ($combinedStop) {
+                $candidate = new FuelauProjectedStationCandidate(
+                    stableId: $candidate->stableId,
+                    nodeId: $candidate->nodeId,
+                    label: $candidate->label,
+                    progressM: $candidate->progressM,
+                    progressS: $candidate->progressS,
+                    offRouteM: $candidate->offRouteM,
+                    accessDistanceM: $candidate->accessDistanceM,
+                    accessDurationS: $candidate->accessDurationS,
+                    accessEstimated: $candidate->accessEstimated,
+                    priceCentsPerL: $candidate->priceCentsPerL,
+                    sourceRow: [
+                        ...$candidate->sourceRow,
+                        'combined_endpoint_stop' => true,
+                    ],
+                );
+            }
             $nodes[] = FuelauOptimizerNode::station(
                 id: $candidate->nodeId,
                 progressM: $candidate->progressM,
@@ -610,6 +693,7 @@ final class FuelauFixedCorridorCandidateAdapter
                 progressS: $candidate->progressS,
                 accessDistanceM: $candidate->accessDistanceM,
                 accessDurationS: $candidate->accessDurationS,
+                combinedStop: $combinedStop,
             );
             $candidatesByNodeId[$candidate->nodeId] = $candidate;
         }
@@ -1066,7 +1150,10 @@ final readonly class FuelauValidatedSingleCorridorPlan
         $response['summary']['detour_duration_s'] = $exactDetourDurationS;
         $response['summary']['generalized_cost_cents'] =
             $this->result->plan->fuelPurchaseCostCents
-            + ($this->result->plan->fuelStopCount * $this->result->policy->stopCostCents())
+            + (
+                $this->result->plan->fuelOnlyStopCount
+                * $this->result->policy->stopCostCents()
+            )
             + $exactDrivingTimeCostCents;
         $response['route_pieces'] = [[
             'kind' => 'selected_route',
@@ -1397,7 +1484,7 @@ final readonly class FuelauSingleCorridorOptimizationResult
                 'ending_fuel_l' => $this->plan->endingFuelL,
                 'required_stop_count' => $this->plan->requiredStopCount,
                 'discretionary_stop_count' => $this->plan->discretionaryStopCount,
-                'combined_stop_count' => 0,
+                'combined_stop_count' => $this->plan->combinedStopCount,
                 'price_as_of' => $priceTimestamps[0] ?? null,
             ],
             'corridor' => [
@@ -1701,6 +1788,7 @@ final class FuelauSingleCorridorPlanner
         $input = (new FuelauFixedCorridorCandidateAdapter())->build(
             $corridor,
             $freshRows,
+            combineNearDestination: $request->destinations[0]->physicalStop,
         );
         $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
             $input->nodes,

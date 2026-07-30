@@ -3067,6 +3067,7 @@ function renderRouteSummary(plan) {
         cards.push(
             ['Required Stops', String(Number(summary.required_stop_count || 0))],
             ['Strategic Stops', String(Number(summary.discretionary_stop_count || 0))],
+            ['Combined Stops', String(Number(summary.combined_stop_count || 0))],
             ['Ending Fuel', `${Number(summary.ending_fuel_l || 0).toFixed(1)} L`]
         );
     }
