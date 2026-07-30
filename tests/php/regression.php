@@ -289,6 +289,19 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         str_contains($source, 'Physical stop; fatigue spacing restarts here'),
         'The optimized route breakdown must explain physical-stop fatigue resets',
     );
+    fuelauAssertTrue(
+        str_contains($source, 'Alternative route selected for lower complete trip cost')
+            && str_contains($source, 'fuel price, driving time and stop burden'),
+        'The optimized route breakdown must explain alternative-corridor selection',
+    );
+});
+
+fuelauTest('alternative route lookup enforces its bounded corridor count', static function (): void {
+    fuelauAssertThrows(
+        InvalidArgumentException::class,
+        static fn (): array => fuelauAlternativeRoutePlan([], 4),
+        'Alternative route discovery must remain capped at three corridors',
+    );
 });
 
 fuelauTest('route optimizer request resolves practical stop defaults', static function (): void {
@@ -1582,6 +1595,224 @@ fuelauTest('live planner skips station dependencies when starting fuel completes
     fuelauAssertSame(1, $response['diagnostics']['osrm_route_request_count']);
     fuelauAssertSame(0, $response['diagnostics']['raw_candidate_count']);
     fuelauAssertSame(0, count($response['stops']));
+});
+
+fuelauTest('alternative corridor selector compares complete generalized cost', static function (): void {
+    $response = static fn (
+        int $generalizedCostCents,
+        int $durationS,
+        int $fuelCostCents,
+        int $fuelStops,
+    ): array => [
+        'summary' => [
+            'generalized_cost_cents' => $generalizedCostCents,
+            'route_duration_s' => $durationS,
+            'fuel_purchase_cost_cents' => $fuelCostCents,
+            'required_stop_count' => $fuelStops,
+            'discretionary_stop_count' => 0,
+            'combined_stop_count' => 0,
+        ],
+    ];
+    $selector = new FuelauAlternativeCorridorSelector();
+
+    $cheaperAlternative = $selector->select([
+        ['rank' => 0, 'response' => $response(32_000, 21_600, 13_500, 2)],
+        ['rank' => 1, 'response' => $response(29_000, 23_400, 5_400, 2)],
+    ]);
+    $slowerFalseSaving = $selector->select([
+        ['rank' => 0, 'response' => $response(32_000, 21_600, 13_500, 2)],
+        ['rank' => 1, 'response' => $response(32_500, 28_800, 8_000, 2)],
+    ]);
+    $minorSavingExtraStop = $selector->select([
+        ['rank' => 0, 'response' => $response(32_000, 21_600, 13_500, 2)],
+        ['rank' => 1, 'response' => $response(31_900, 22_000, 10_000, 3)],
+    ]);
+
+    fuelauAssertSame(1, $cheaperAlternative['rank']);
+    fuelauAssertSame(0, $slowerFalseSaving['rank']);
+    fuelauAssertSame(0, $minorSavingExtraStop['rank']);
+});
+
+fuelauTest('live route planner selects a cheaper complete alternative corridor', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 156.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 12,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 3,
+            'minimum_discretionary_purchase_l' => 5,
+        ],
+    ]);
+    $fastestRoute = [
+        'distance' => 600_000,
+        'duration' => 21_600,
+        'geometry' => [
+            'type' => 'LineString',
+            'coordinates' => [[150.0, -30.0], [156.0, -30.0]],
+        ],
+    ];
+    $alternativeRoute = [
+        'distance' => 630_000,
+        'duration' => 23_400,
+        'geometry' => [
+            'type' => 'LineString',
+            'coordinates' => [
+                [150.0, -30.0],
+                [153.0, -31.0],
+                [156.0, -30.0],
+            ],
+        ],
+    ];
+    $routeCalls = 0;
+    $candidateCalls = 0;
+    $tableCalls = 0;
+    $planner = new FuelauLiveRoutePlanner(
+        routeLoader: static function (array $coordinates) use (
+            &$routeCalls,
+            $fastestRoute,
+            $alternativeRoute,
+        ): array {
+            $routeCalls++;
+            $usesAlternative = count(array_filter(
+                $coordinates,
+                static fn (array $coordinate): bool => $coordinate['lat'] < -30.4,
+            )) > 0;
+
+            return $usesAlternative ? $alternativeRoute : $fastestRoute;
+        },
+        candidateLoader: static function (array $points) use (
+            &$candidateCalls,
+        ): array {
+            $candidateCalls++;
+            $usesAlternative = count(array_filter(
+                $points,
+                static fn (array $point): bool => $point['lat'] < -30.4,
+            )) > 0;
+            if ($usesAlternative) {
+                return [
+                    ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'alt-early', 'station_name' => 'Alternative Early', 'fuel_code' => 'E10', 'latitude' => -30.158, 'longitude' => 150.475, 'price' => 100, 'updated_at' => '2026-07-30T00:00:00Z'],
+                    ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'alt-middle', 'station_name' => 'Alternative Middle', 'fuel_code' => 'E10', 'latitude' => -31.0, 'longitude' => 153.0, 'price' => 100, 'updated_at' => '2026-07-30T00:00:00Z'],
+                    ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'alt-late', 'station_name' => 'Alternative Late', 'fuel_code' => 'E10', 'latitude' => -30.158, 'longitude' => 155.525, 'price' => 100, 'updated_at' => '2026-07-30T00:00:00Z'],
+                ];
+            }
+
+            return [
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fast-early', 'station_name' => 'Fast Early', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 250, 'updated_at' => '2026-07-30T00:00:00Z'],
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fast-middle', 'station_name' => 'Fast Middle', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 153.0, 'price' => 250, 'updated_at' => '2026-07-30T00:00:00Z'],
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fast-late', 'station_name' => 'Fast Late', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 155.5, 'price' => 250, 'updated_at' => '2026-07-30T00:00:00Z'],
+            ];
+        },
+        tableLoader: static function (array $coordinates) use (&$tableCalls): array {
+            $tableCalls++;
+            $count = count($coordinates);
+
+            return [
+                'distances' => array_fill(0, $count, array_fill(0, $count, 0)),
+                'durations' => array_fill(0, $count, array_fill(0, $count, 0)),
+            ];
+        },
+        clock: static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('2026-07-30T00:00:00Z'),
+        alternativeRouteLoader: static fn (): array => [
+            $fastestRoute,
+            $alternativeRoute,
+        ],
+    );
+
+    $response = $planner->plan($request);
+
+    fuelauAssertSame('corridor-2', $response['corridor']['id']);
+    fuelauAssertSame('alternative', $response['corridor']['kind']);
+    fuelauAssertSame(
+        'lower_complete_generalized_cost',
+        $response['corridor']['selection_reason'],
+    );
+    fuelauAssertSame(2, $response['diagnostics']['corridor_count']);
+    fuelauAssertSame(2, $response['diagnostics']['feasible_corridor_count']);
+    fuelauAssertSame(2, $candidateCalls);
+    fuelauAssertSame(2, $tableCalls);
+    fuelauAssertSame(2, $routeCalls);
+    fuelauAssertSame(6, $response['diagnostics']['evaluated_raw_candidate_count']);
+    fuelauAssertSame('corridor-1', $response['alternatives'][0]['id']);
+    fuelauAssertSame('feasible', $response['alternatives'][0]['status']);
+    fuelauAssertTrue(
+        $response['alternatives'][0]['generalized_cost_delta_cents'] > 0,
+        'The rejected fastest route must have a higher complete generalized cost',
+    );
+    fuelauAssertTrue(
+        count(array_filter(
+            $response['stops'],
+            static fn (array $stop): bool =>
+                str_starts_with($stop['station']['station_id'], 'alt-'),
+        )) === count($response['stops']),
+        'Every selected stop must belong to the chosen alternative corridor',
+    );
+});
+
+fuelauTest('infeasible alternative corridor does not discard the fastest route', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0],
+        'destinations' => [['lat' => -30.0, 'lon' => 155.0]],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 60,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+    ]);
+    $fastestRoute = [
+        'distance' => 500_000,
+        'duration' => 18_000,
+        'geometry' => [
+            'type' => 'LineString',
+            'coordinates' => [[150.0, -30.0], [155.0, -30.0]],
+        ],
+    ];
+    $infeasibleRoute = [
+        'distance' => 600_000,
+        'duration' => 21_600,
+        'geometry' => [
+            'type' => 'LineString',
+            'coordinates' => [[150.0, -30.0], [152.5, -31.0], [155.0, -30.0]],
+        ],
+    ];
+    $candidateCalls = 0;
+    $planner = new FuelauLiveRoutePlanner(
+        routeLoader: static function (): never {
+            throw new RuntimeException('No exact route should be needed.');
+        },
+        candidateLoader: static function () use (&$candidateCalls): array {
+            $candidateCalls++;
+
+            return [];
+        },
+        tableLoader: static fn (): array => [],
+        alternativeRouteLoader: static fn (): array => [
+            $fastestRoute,
+            $infeasibleRoute,
+        ],
+    );
+
+    $response = $planner->plan($request);
+
+    fuelauAssertSame('corridor-1', $response['corridor']['id']);
+    fuelauAssertSame(1, $response['diagnostics']['feasible_corridor_count']);
+    fuelauAssertSame(1, $candidateCalls);
+    fuelauAssertSame('corridor-2', $response['alternatives'][0]['id']);
+    fuelauAssertSame('infeasible', $response['alternatives'][0]['status']);
 });
 
 fuelauTest('live route planner optimizes a direct return as one bounded itinerary', static function (): void {

@@ -507,6 +507,31 @@ function fuelauParseCoordinates(string $coordinates): array
 
 function fuelauRoutePlan(array $coordinates, bool $steps = true): array
 {
+    return fuelauRoutePlanRequest($coordinates, $steps, 1);
+}
+
+function fuelauAlternativeRoutePlan(
+    array $coordinates,
+    int $maximumRoutes = 3,
+    bool $steps = false,
+): array {
+    if ($maximumRoutes < 1 || $maximumRoutes > 3) {
+        throw new InvalidArgumentException('Alternative route count must be between 1 and 3.');
+    }
+
+    return fuelauRoutePlanRequest($coordinates, $steps, $maximumRoutes);
+}
+
+/**
+ * @param list<array{lat: float, lon: float}> $coordinates
+ * @return array<string, mixed>
+ */
+function fuelauRoutePlanRequest(
+    array $coordinates,
+    bool $steps,
+    int $maximumRoutes,
+): array
+{
     $encodedCoordinates = implode(
         ';',
         array_map(
@@ -517,7 +542,7 @@ function fuelauRoutePlan(array $coordinates, bool $steps = true): array
 
     $payload = fuelauHttpJsonRequest(
         fuelauHttpBuildUrl(fuelauServiceBaseUrl('osrm') . "/route/v1/driving/{$encodedCoordinates}", [
-            'alternatives' => 'false',
+            'alternatives' => $maximumRoutes > 1 ? (string) $maximumRoutes : 'false',
             'geometries' => 'geojson',
             'overview' => 'simplified',
             'steps' => $steps ? 'true' : 'false',

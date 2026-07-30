@@ -3064,7 +3064,13 @@ function renderRouteSummary(plan) {
     ];
     if (plan.optimizerResponse) {
         const summary = plan.optimizerResponse.summary || {};
+        const corridor = plan.optimizerResponse.corridor || {};
+        const alternatives = Array.isArray(plan.optimizerResponse.alternatives)
+            ? plan.optimizerResponse.alternatives
+            : [];
         cards.push(
+            ['Selected Route', corridor.kind === 'alternative' ? 'Alternative' : 'Fastest'],
+            ['Routes Compared', String(alternatives.length + 1)],
             ['Required Stops', String(Number(summary.required_stop_count || 0))],
             ['Strategic Stops', String(Number(summary.discretionary_stop_count || 0))],
             ['Combined Stops', String(Number(summary.combined_stop_count || 0))],
@@ -3606,6 +3612,30 @@ function renderFuelStopFinderMap(plan) {
 
 function renderRouteBreakdownInto(targetElement, plan) {
     const rows = [];
+    if (plan.optimizerResponse) {
+        const corridor = plan.optimizerResponse.corridor || {};
+        const alternatives = Array.isArray(plan.optimizerResponse.alternatives)
+            ? plan.optimizerResponse.alternatives
+            : [];
+        if (alternatives.length > 0) {
+            const fastest = alternatives.find((candidate) => candidate?.kind === 'fastest');
+            const savingCents = corridor.kind === 'alternative'
+                ? Number(fastest?.generalized_cost_delta_cents || 0)
+                : 0;
+            rows.push({
+                leg: '-',
+                type: 'Notice',
+                instruction: corridor.kind === 'alternative'
+                    ? 'Alternative route selected for lower complete trip cost'
+                    : 'Fastest route retained after complete trip comparison',
+                distance: '-',
+                duration: '-',
+                details: corridor.kind === 'alternative' && savingCents > 0
+                    ? `Estimated generalized saving: $${(savingCents / 100).toFixed(2)} after fuel price, driving time and stop burden`
+                    : `${alternatives.length + 1} distinct route corridors compared using fuel price, driving time and stop burden`,
+            });
+        }
+    }
     if (plan.reserveNote) {
         rows.push({
             leg: '-',

@@ -2166,28 +2166,481 @@ final class FuelauLiveCompleteItineraryPlanner
     }
 }
 
-final class FuelauLiveRoutePlanner
+final class FuelauAlternativeCorridorSelector
 {
-    private FuelauLiveSingleCorridorPlanner $singleCorridorPlanner;
-    private FuelauLiveCompleteItineraryPlanner $completeItineraryPlanner;
+    /**
+     * @param list<array{rank: int, response: array<string, mixed>}> $candidates
+     * @return array{rank: int, response: array<string, mixed>}
+     */
+    public function select(array $candidates): array
+    {
+        if ($candidates === []) {
+            throw new InvalidArgumentException('At least one feasible corridor is required.');
+        }
+        usort($candidates, [$this, 'compare']);
+
+        return $candidates[0];
+    }
+
+    /**
+     * @param array{rank: int, response: array<string, mixed>} $left
+     * @param array{rank: int, response: array<string, mixed>} $right
+     */
+    private function compare(array $left, array $right): int
+    {
+        $leftSummary = $left['response']['summary'] ?? [];
+        $rightSummary = $right['response']['summary'] ?? [];
+        $leftCost = (int) (
+            $leftSummary['generalized_cost_cents'] ?? PHP_INT_MAX
+        );
+        $rightCost = (int) (
+            $rightSummary['generalized_cost_cents'] ?? PHP_INT_MAX
+        );
+        $leftFuelOnlyStops = (int) ($leftSummary['required_stop_count'] ?? 0)
+            + (int) ($leftSummary['discretionary_stop_count'] ?? 0);
+        $rightFuelOnlyStops = (int) ($rightSummary['required_stop_count'] ?? 0)
+            + (int) ($rightSummary['discretionary_stop_count'] ?? 0);
+        if (abs($leftCost - $rightCost) <= 500) {
+            return ($leftFuelOnlyStops <=> $rightFuelOnlyStops)
+                ?: ((int) ($leftSummary['route_duration_s'] ?? PHP_INT_MAX)
+                    <=> (int) ($rightSummary['route_duration_s'] ?? PHP_INT_MAX))
+                ?: ((int) ($leftSummary['fuel_purchase_cost_cents'] ?? PHP_INT_MAX)
+                    <=> (int) ($rightSummary['fuel_purchase_cost_cents'] ?? PHP_INT_MAX))
+                ?: ($left['rank'] <=> $right['rank']);
+        }
+
+        return ($leftCost <=> $rightCost)
+            ?: ($left['rank'] <=> $right['rank']);
+    }
+}
+
+final class FuelauLiveAlternativeCorridorPlanner
+{
+    private Closure $routeLoader;
+    private Closure $alternativeRouteLoader;
+    private Closure $candidateLoader;
+    private Closure $tableLoader;
+    private Closure $clock;
 
     public function __construct(
         ?Closure $routeLoader = null,
         ?Closure $candidateLoader = null,
         ?Closure $tableLoader = null,
         ?Closure $clock = null,
+        ?Closure $alternativeRouteLoader = null,
     ) {
-        $this->singleCorridorPlanner = new FuelauLiveSingleCorridorPlanner(
-            $routeLoader,
-            $candidateLoader,
-            $tableLoader,
-            $clock,
+        $this->routeLoader = $routeLoader ?? static function (array $coordinates): array {
+            $payload = fuelauRoutePlan($coordinates, false);
+            $route = $payload['routes'][0] ?? null;
+            if (($payload['code'] ?? null) !== 'Ok' || !is_array($route)) {
+                throw new FuelauUpstreamException('OSRM did not return a usable route.');
+            }
+
+            return $route;
+        };
+        if ($alternativeRouteLoader !== null) {
+            $this->alternativeRouteLoader = $alternativeRouteLoader;
+        } elseif ($routeLoader !== null) {
+            $this->alternativeRouteLoader = static fn (array $coordinates): array =>
+                [$routeLoader($coordinates)];
+        } else {
+            $this->alternativeRouteLoader = static function (array $coordinates): array {
+                $payload = fuelauAlternativeRoutePlan($coordinates, 3, false);
+                if (($payload['code'] ?? null) !== 'Ok') {
+                    throw new FuelauUpstreamException(
+                        'OSRM did not return usable alternative routes.',
+                    );
+                }
+
+                return is_array($payload['routes'] ?? null)
+                    ? array_slice($payload['routes'], 0, 3)
+                    : [];
+            };
+        }
+        $this->candidateLoader = $candidateLoader ?? static function (
+            array $points,
+            string $fuel,
+        ): array {
+            return fuelauCachedCoverageBalancedRouteCandidateRows(
+                fuelauPdo(),
+                $points,
+                $fuel,
+                75,
+                5_000,
+                fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
+            );
+        };
+        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+            fuelauOsrmTable($coordinates);
+        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function plan(FuelauRouteOptimizationRequest $request): array
+    {
+        $locations = $request->itineraryLocations();
+        $legCount = count($locations) - 1;
+        $routeSets = [];
+        foreach (array_slice($locations, 1) as $index => $target) {
+            $start = $locations[$index];
+            $routes = ($this->alternativeRouteLoader)([
+                ['lat' => $start->latitude, 'lon' => $start->longitude],
+                ['lat' => $target->latitude, 'lon' => $target->longitude],
+            ]);
+            if (!is_array($routes) || $routes === []) {
+                throw new FuelauUpstreamException('OSRM returned no corridor routes.');
+            }
+            $routeSets[] = array_values(array_filter(
+                array_slice($routes, 0, 3),
+                static fn (mixed $route): bool => is_array($route),
+            ));
+            if ($routeSets[$index] === []) {
+                throw new FuelauUpstreamException('OSRM returned no usable corridor routes.');
+            }
+        }
+
+        $corridors = $this->distinctCorridors($routeSets);
+        $asOf = ($this->clock)();
+        $successful = [];
+        $failures = [];
+        $exactRouteRequestCount = 0;
+        $evaluatedRawCandidateCount = 0;
+        $evaluatedTableRequestCount = 0;
+        foreach ($corridors as $corridor) {
+            $baselineCallIndex = 0;
+            $rank = $corridor['rank'];
+            $routes = $corridor['routes'];
+            $countedCandidateLoader = function (
+                array $points,
+                string $fuel,
+            ) use (&$evaluatedRawCandidateCount): array {
+                $rows = ($this->candidateLoader)($points, $fuel);
+                $evaluatedRawCandidateCount += count($rows);
+
+                return $rows;
+            };
+            $countedTableLoader = function (
+                array $coordinates,
+            ) use (&$evaluatedTableRequestCount): array {
+                $evaluatedTableRequestCount++;
+
+                return ($this->tableLoader)($coordinates);
+            };
+            $seededRouteLoader = function (array $coordinates) use (
+                &$baselineCallIndex,
+                &$exactRouteRequestCount,
+                $legCount,
+                $rank,
+                $routes,
+                $locations,
+            ): array {
+                if ($baselineCallIndex < $legCount) {
+                    return $routes[$baselineCallIndex++];
+                }
+                $exactRouteRequestCount++;
+                if ($rank > 0) {
+                    $coordinates = $this->shapeExactCoordinates(
+                        $coordinates,
+                        $locations,
+                        $routes,
+                    );
+                }
+
+                return ($this->routeLoader)($coordinates);
+            };
+            $fixedClock = static fn (): DateTimeImmutable => $asOf;
+            try {
+                $planner = $request->returnMode === 'one_way'
+                    && count($request->destinations) === 1
+                    ? new FuelauLiveSingleCorridorPlanner(
+                        $seededRouteLoader,
+                        $countedCandidateLoader,
+                        $countedTableLoader,
+                        $fixedClock,
+                    )
+                    : new FuelauLiveCompleteItineraryPlanner(
+                        $seededRouteLoader,
+                        $countedCandidateLoader,
+                        $countedTableLoader,
+                        $fixedClock,
+                    );
+                $response = $planner->plan($request);
+                $successful[] = ['rank' => $rank, 'response' => $response];
+            } catch (
+                FuelauRouteInfeasibleException
+                | FuelauRoutePlanValidationException
+                | FuelauUpstreamException $exception
+            ) {
+                $failures[] = [
+                    'rank' => $rank,
+                    'exception' => $exception,
+                ];
+            }
+        }
+        if ($successful === []) {
+            throw (
+                $failures[0]['exception']
+                ?? new FuelauRouteInfeasibleException('No alternative corridor is feasible.')
+            );
+        }
+
+        $selected = (new FuelauAlternativeCorridorSelector())->select($successful);
+        $response = $selected['response'];
+        $selectedRank = $selected['rank'];
+        $response['corridor']['id'] = 'corridor-' . ($selectedRank + 1);
+        $response['corridor']['kind'] = $selectedRank === 0 ? 'fastest' : 'alternative';
+        $response['corridor']['selection_reason'] = $this->selectionReason(
+            $corridors,
+            $successful,
+            $selected,
         );
-        $this->completeItineraryPlanner = new FuelauLiveCompleteItineraryPlanner(
+        $response['alternatives'] = [];
+        foreach ($successful as $candidate) {
+            if ($candidate['rank'] === $selectedRank) {
+                continue;
+            }
+            $response['alternatives'][] = $this->corridorSummary(
+                $candidate['rank'],
+                $candidate['response'],
+                $response,
+            );
+        }
+        foreach ($failures as $failure) {
+            $response['alternatives'][] = [
+                'id' => 'corridor-' . ($failure['rank'] + 1),
+                'kind' => $failure['rank'] === 0 ? 'fastest' : 'alternative',
+                'status' => $failure['exception'] instanceof FuelauRouteInfeasibleException
+                    ? 'infeasible'
+                    : 'validation_failed',
+                'selected' => false,
+            ];
+        }
+        usort(
+            $response['alternatives'],
+            static fn (array $left, array $right): int =>
+                strcmp((string) $left['id'], (string) $right['id']),
+        );
+        $response['diagnostics']['corridor_count'] = count($corridors);
+        $response['diagnostics']['feasible_corridor_count'] = count($successful);
+        $response['diagnostics']['osrm_route_request_count'] =
+            $legCount + $exactRouteRequestCount;
+        $response['diagnostics']['osrm_table_request_count'] =
+            $evaluatedTableRequestCount;
+        $response['diagnostics']['evaluated_raw_candidate_count'] =
+            $evaluatedRawCandidateCount;
+
+        return $response;
+    }
+
+    /**
+     * @param list<list<array<string, mixed>>> $routeSets
+     * @return list<array{rank: int, routes: list<array<string, mixed>>}>
+     */
+    private function distinctCorridors(array $routeSets): array
+    {
+        $maximumRankCount = max(array_map('count', $routeSets));
+        $seen = [];
+        $corridors = [];
+        for ($rank = 0; $rank < min(3, $maximumRankCount); $rank++) {
+            $routes = [];
+            foreach ($routeSets as $routeSet) {
+                $routes[] = $routeSet[$rank] ?? $routeSet[0];
+            }
+            $fingerprint = hash('sha256', json_encode(array_map(
+                static fn (array $route): array => [
+                    (int) round((float) ($route['distance'] ?? 0)),
+                    (int) round((float) ($route['duration'] ?? 0)),
+                    $route['geometry']['coordinates'] ?? [],
+                ],
+                $routes,
+            ), JSON_UNESCAPED_SLASHES) ?: '');
+            if (isset($seen[$fingerprint])) {
+                continue;
+            }
+            $seen[$fingerprint] = true;
+            $corridors[] = ['rank' => $rank, 'routes' => $routes];
+        }
+
+        return $corridors;
+    }
+
+    /**
+     * @param list<array{lat: float, lon: float}> $coordinates
+     * @param list<FuelauRouteOptimizationLocation> $locations
+     * @param list<array<string, mixed>> $routes
+     * @return list<array{lat: float, lon: float}>
+     */
+    private function shapeExactCoordinates(
+        array $coordinates,
+        array $locations,
+        array $routes,
+    ): array {
+        $corridors = array_map(
+            static fn (array $route): FuelauRouteCorridor =>
+                FuelauRouteCorridor::fromOsrmRoute($route),
+            $routes,
+        );
+        $totalDistanceM = array_sum(array_map(
+            static fn (FuelauRouteCorridor $corridor): int => $corridor->distanceM,
+            $corridors,
+        ));
+        $anchorSpacingM = max(200_000, (int) ceil($totalDistanceM / 40));
+        $result = [$coordinates[0]];
+        $coordinateIndex = 1;
+        foreach ($corridors as $legIndex => $corridor) {
+            $target = $locations[$legIndex + 1];
+            $visits = [];
+            while (isset($coordinates[$coordinateIndex])) {
+                $coordinate = $coordinates[$coordinateIndex++];
+                if ($this->sameCoordinate($coordinate, $target)) {
+                    break;
+                }
+                $projection = $corridor->project(
+                    $coordinate['lat'],
+                    $coordinate['lon'],
+                );
+                $visits[] = [
+                    'progress_m' => $projection->progressM,
+                    'coordinate' => $coordinate,
+                    'kind' => 0,
+                ];
+            }
+            for (
+                $progressM = $anchorSpacingM;
+                $progressM < $corridor->distanceM;
+                $progressM += $anchorSpacingM
+            ) {
+                $visits[] = [
+                    'progress_m' => $progressM,
+                    'coordinate' => $corridor->coordinateAtProgressM($progressM),
+                    'kind' => 1,
+                ];
+            }
+            usort(
+                $visits,
+                static fn (array $left, array $right): int =>
+                    ($left['progress_m'] <=> $right['progress_m'])
+                    ?: ($left['kind'] <=> $right['kind']),
+            );
+            foreach ($visits as $visit) {
+                $result[] = $visit['coordinate'];
+            }
+            $result[] = [
+                'lat' => $target->latitude,
+                'lon' => $target->longitude,
+            ];
+        }
+
+        return array_values(array_filter(
+            $result,
+            static function (array $coordinate, int $index) use ($result): bool {
+                if ($index === 0) {
+                    return true;
+                }
+                $previous = $result[$index - 1];
+
+                return $coordinate['lat'] !== $previous['lat']
+                    || $coordinate['lon'] !== $previous['lon'];
+            },
+            ARRAY_FILTER_USE_BOTH,
+        ));
+    }
+
+    /**
+     * @param array{lat: float, lon: float} $coordinate
+     */
+    private function sameCoordinate(
+        array $coordinate,
+        FuelauRouteOptimizationLocation $location,
+    ): bool {
+        return abs($coordinate['lat'] - $location->latitude) < 0.0000001
+            && abs($coordinate['lon'] - $location->longitude) < 0.0000001;
+    }
+
+    /**
+     * @param array<string, mixed> $candidateResponse
+     * @param array<string, mixed> $selectedResponse
+     * @return array<string, mixed>
+     */
+    private function corridorSummary(
+        int $rank,
+        array $candidateResponse,
+        array $selectedResponse,
+    ): array {
+        $summary = $candidateResponse['summary'];
+        $selectedSummary = $selectedResponse['summary'];
+
+        return [
+            'id' => 'corridor-' . ($rank + 1),
+            'kind' => $rank === 0 ? 'fastest' : 'alternative',
+            'status' => 'feasible',
+            'selected' => false,
+            'distance_m' => (int) $summary['route_distance_m'],
+            'duration_s' => (int) $summary['route_duration_s'],
+            'fuel_purchase_cost_cents' => (int) $summary['fuel_purchase_cost_cents'],
+            'generalized_cost_cents' => (int) $summary['generalized_cost_cents'],
+            'fuel_stop_count' => (int) $summary['required_stop_count']
+                + (int) $summary['discretionary_stop_count']
+                + (int) $summary['combined_stop_count'],
+            'generalized_cost_delta_cents' =>
+                (int) $summary['generalized_cost_cents']
+                - (int) $selectedSummary['generalized_cost_cents'],
+        ];
+    }
+
+    /**
+     * @param list<array{rank: int, routes: list<array<string, mixed>>}> $corridors
+     * @param list<array{rank: int, response: array<string, mixed>}> $successful
+     * @param array{rank: int, response: array<string, mixed>} $selected
+     */
+    private function selectionReason(
+        array $corridors,
+        array $successful,
+        array $selected,
+    ): string {
+        if (count($corridors) === 1) {
+            return 'only_distinct_corridor';
+        }
+        $selectedCost = (int) (
+            $selected['response']['summary']['generalized_cost_cents'] ?? PHP_INT_MAX
+        );
+        $lowestCost = min(array_map(
+            static fn (array $candidate): int => (int) (
+                $candidate['response']['summary']['generalized_cost_cents']
+                ?? PHP_INT_MAX
+            ),
+            $successful,
+        ));
+        if ($selectedCost > $lowestCost) {
+            return 'similar_cost_fewer_fuel_stops';
+        }
+
+        return $selected['rank'] === 0
+            ? 'fastest_corridor_lowest_generalized_cost'
+            : 'lower_complete_generalized_cost';
+    }
+}
+
+final class FuelauLiveRoutePlanner
+{
+    private FuelauLiveAlternativeCorridorPlanner $planner;
+
+    public function __construct(
+        ?Closure $routeLoader = null,
+        ?Closure $candidateLoader = null,
+        ?Closure $tableLoader = null,
+        ?Closure $clock = null,
+        ?Closure $alternativeRouteLoader = null,
+    ) {
+        $this->planner = new FuelauLiveAlternativeCorridorPlanner(
             $routeLoader,
             $candidateLoader,
             $tableLoader,
             $clock,
+            $alternativeRouteLoader,
         );
     }
 
@@ -2196,10 +2649,6 @@ final class FuelauLiveRoutePlanner
      */
     public function plan(FuelauRouteOptimizationRequest $request): array
     {
-        if ($request->returnMode === 'one_way' && count($request->destinations) === 1) {
-            return $this->singleCorridorPlanner->plan($request);
-        }
-
-        return $this->completeItineraryPlanner->plan($request);
+        return $this->planner->plan($request);
     }
 }

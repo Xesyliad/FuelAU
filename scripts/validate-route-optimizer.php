@@ -113,6 +113,25 @@ foreach ($routes as $name => $route) {
                 $dependencyTimeNs['table'] += hrtime(true) - $startedAt;
             }
         },
+        alternativeRouteLoader: static function (
+            array $coordinates,
+        ) use (&$dependencyTimeNs): array {
+            $startedAt = hrtime(true);
+            try {
+                $payload = fuelauAlternativeRoutePlan($coordinates, 3, false);
+                if (($payload['code'] ?? null) !== 'Ok') {
+                    throw new FuelauUpstreamException(
+                        'OSRM did not return usable alternative routes.',
+                    );
+                }
+
+                return is_array($payload['routes'] ?? null)
+                    ? array_slice($payload['routes'], 0, 3)
+                    : [];
+            } finally {
+                $dependencyTimeNs['route'] += hrtime(true) - $startedAt;
+            }
+        },
     );
     $startedAt = hrtime(true);
     try {
@@ -158,7 +177,15 @@ foreach ($routes as $name => $route) {
             'required_stops' => $summary['required_stop_count'],
             'discretionary_stops' => $summary['discretionary_stop_count'],
             'combined_stops' => $summary['combined_stop_count'],
+            'selected_corridor' => $response['corridor']['id'],
+            'selected_corridor_kind' => $response['corridor']['kind'],
+            'corridor_selection_reason' => $response['corridor']['selection_reason'],
+            'corridors_compared' => $response['diagnostics']['corridor_count'],
+            'feasible_corridors' => $response['diagnostics']['feasible_corridor_count'],
+            'alternatives' => $response['alternatives'],
             'raw_candidates' => $response['diagnostics']['raw_candidate_count'],
+            'evaluated_raw_candidates' =>
+                $response['diagnostics']['evaluated_raw_candidate_count'],
             'network_candidates' => $response['diagnostics']['network_shortlist_count'],
             'osrm_route_requests' => $response['diagnostics']['osrm_route_request_count'],
             'osrm_table_requests' => $response['diagnostics']['osrm_table_request_count'],
