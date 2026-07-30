@@ -2873,6 +2873,167 @@ async function buildRoutePlan(resolveStops, fuelQuery, tankCapacityL, economyLPe
     };
 }
 
+function routeOptimizerReturnMode() {
+    const mode = routeReturnMode();
+    if (mode === 'one-way') {
+        return 'one_way';
+    }
+
+    return mode === 'reverses' ? 'reverse' : 'direct';
+}
+
+function routeOptimizerLocation(location) {
+    return {
+        lat: Number(location.lat),
+        lon: Number(location.lon),
+        label: String(location.display_name || location.query || '').slice(0, 200),
+        physical_stop: true,
+    };
+}
+
+function routeOptimizerPlanFromResponse(
+    payload,
+    origin,
+    destinations,
+    fuelQuery,
+    tankCapacityL,
+    economyLPer100km
+) {
+    const summary = payload?.summary || {};
+    const selectedRoute = Array.isArray(payload?.route_pieces)
+        ? payload.route_pieces.find((piece) => piece?.kind === 'selected_route')
+        : null;
+    const routeCoordinates = Array.isArray(selectedRoute?.geometry?.coordinates)
+        ? selectedRoute.geometry.coordinates
+        : [];
+    if (routeCoordinates.length < 2) {
+        throw new Error('Optimized route service returned no geometry.');
+    }
+
+    const itineraryLegs = Array.isArray(payload?.itinerary?.legs)
+        ? payload.itinerary.legs
+        : [];
+    const finalTarget = itineraryLegs[itineraryLegs.length - 1]?.target || destinations[destinations.length - 1];
+    const route = {
+        from: origin,
+        to: {
+            lat: Number(finalTarget?.lat),
+            lon: Number(finalTarget?.lon),
+            display_name: String(finalTarget?.label || finalTarget?.display_name || 'Destination'),
+        },
+        distanceM: Number(summary.route_distance_m || selectedRoute?.distance_m || 0),
+        durationS: Number(summary.route_duration_s || selectedRoute?.duration_s || 0),
+        geometry: routeCoordinates.map((coordinate) => routePoint(coordinate[0], coordinate[1])),
+        steps: [],
+    };
+    const stops = (Array.isArray(payload?.stops) ? payload.stops : []).map((stop) => ({
+        source: String(stop?.station?.source || ''),
+        state: String(stop?.station?.state || ''),
+        station_id: String(stop?.station?.station_id || ''),
+        station_name: String(stop?.station?.station_name || ''),
+        address: String(stop?.station?.address || ''),
+        latitude: Number(stop?.station?.latitude),
+        longitude: Number(stop?.station?.longitude),
+        price: Number(stop?.price_cents_per_l || 0),
+        litresPurchased: Number(stop?.purchase_l || 0),
+        purchaseCents: Number(stop?.purchase_cost_cents || 0),
+        fuelAfterArrival: Number(stop?.arrival_fuel_l || 0),
+        departureFuelL: Number(stop?.departure_fuel_l || 0),
+        classification: String(stop?.classification || ''),
+        reasonCodes: Array.isArray(stop?.reason_codes) ? stop.reason_codes : [],
+        distanceSincePhysicalStopKm: Number(stop?.distance_since_physical_stop_km || 0),
+        minutesSincePhysicalStop: Number(stop?.minutes_since_physical_stop || 0),
+        marginalNetSavingCents: Number(stop?.marginal_net_saving_cents || 0),
+    }));
+    const routePieces = [
+        { type: 'route', route },
+        ...stops.map((stop) => ({
+            type: 'fuel-stop',
+            station: stop,
+            litresPurchased: stop.litresPurchased,
+            purchaseCents: stop.purchaseCents,
+            classification: stop.classification,
+            reasonCodes: stop.reasonCodes,
+            distanceSincePhysicalStopKm: stop.distanceSincePhysicalStopKm,
+            minutesSincePhysicalStop: stop.minutesSincePhysicalStop,
+            marginalNetSavingCents: stop.marginalNetSavingCents,
+        })),
+    ];
+
+    return {
+        optimizerVersion: Number(payload?.version || 1),
+        optimizerResponse: payload,
+        fuelQuery,
+        tankCapacityL,
+        economyLPer100km,
+        segments: [{
+            cursor: origin,
+            destination: route.to,
+            routePieces,
+            stops,
+            excludedStations: [],
+            remainingFuelL: Number(summary.ending_fuel_l || 0),
+            reserveNote: null,
+        }],
+        itineraryLegs,
+        itineraryTargets: itineraryLegs.map((leg) => leg.target).filter(Boolean),
+        itineraryLegCount: Number(payload?.itinerary?.leg_count || itineraryLegs.length || 1),
+        totalDistanceM: Number(summary.route_distance_m || 0),
+        totalDurationS: Number(summary.route_duration_s || 0),
+        totalFuelUsedL: Number(summary.fuel_used_l || 0),
+        totalFillCostCents: Number(summary.fuel_purchase_cost_cents || 0),
+        stationFillCostCents: Number(summary.fuel_purchase_cost_cents || 0),
+        externalReserveCostCents: 0,
+        externalReservePricedL: 0,
+        averageFillPriceCentsPerL: Number(summary.fuel_purchased_l || 0) > 0
+            ? Number(summary.fuel_purchase_cost_cents || 0) / Number(summary.fuel_purchased_l)
+            : 0,
+        fuelRemainingL: Number(summary.ending_fuel_l || 0),
+        reserveNote: null,
+        excludedStations: [],
+        warnings: Array.isArray(payload?.warnings) ? payload.warnings : [],
+    };
+}
+
+async function buildOptimizedRoutePlan(
+    origin,
+    destinations,
+    fuelQuery,
+    tankCapacityL,
+    startingFuelL,
+    economyLPer100km,
+    reserveL
+) {
+    const payload = await apiRequest('/api/route/optimize', {
+        method: 'POST',
+        body: JSON.stringify({
+            version: 1,
+            origin: routeOptimizerLocation(origin),
+            destinations: destinations.map(routeOptimizerLocation),
+            return_mode: routeOptimizerReturnMode(),
+            fuel: {
+                type: fuelQuery,
+                tank_capacity_l: tankCapacityL,
+                starting_fuel_l: startingFuelL,
+                economy_l_per_100km: economyLPer100km,
+                reserve_l: reserveL,
+            },
+            preferences: {
+                mode: String(routeOptimizationMode.value || 'practical_least_cost'),
+            },
+        }),
+    });
+
+    return routeOptimizerPlanFromResponse(
+        payload,
+        origin,
+        destinations,
+        fuelQuery,
+        tankCapacityL,
+        economyLPer100km
+    );
+}
+
 function buildRouteSequence(origin, destinations) {
     const nodes = [origin, ...destinations];
     if (routeReturnMode() === 'one-way') {
@@ -2901,6 +3062,14 @@ function renderRouteSummary(plan) {
         ['Fuel Stops', String(plan.segments.reduce((count, segment) => count + segment.stops.length, 0))],
         ['Total Fill Price', `$${(Number(plan.totalFillCostCents || 0) / 100).toFixed(2)}`],
     ];
+    if (plan.optimizerResponse) {
+        const summary = plan.optimizerResponse.summary || {};
+        cards.push(
+            ['Required Stops', String(Number(summary.required_stop_count || 0))],
+            ['Strategic Stops', String(Number(summary.discretionary_stop_count || 0))],
+            ['Ending Fuel', `${Number(summary.ending_fuel_l || 0).toFixed(1)} L`]
+        );
+    }
     routeSummary.innerHTML = cards.map(([label, value]) => `
         <article class="route-summary-card">
             <strong>${escapeHtml(value)}</strong>
@@ -2991,6 +3160,28 @@ function renderRouteMap(plan) {
             bounds.push([Number(stop.latitude), Number(stop.longitude)]);
         });
     });
+    (Array.isArray(plan.itineraryTargets) ? plan.itineraryTargets.slice(0, -1) : [])
+        .forEach((target, index) => {
+            const latitude = Number(target?.lat);
+            const longitude = Number(target?.lon);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return;
+            }
+            markerFeatures.push({
+                type: 'Feature',
+                properties: {
+                    kind: 'destination',
+                    label: `Itinerary stop ${index + 1}`,
+                    sublabel: String(target?.label || ''),
+                    segment_index: index + 1,
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [longitude, latitude],
+                },
+            });
+            bounds.push([latitude, longitude]);
+        });
     annotateRepeatedRouteFuelMarkers(markerFeatures);
 
     routeMap.innerHTML = '';
@@ -3424,6 +3615,18 @@ function renderRouteBreakdownInto(targetElement, plan) {
             details: `External reserve required: ${Number(plan.reserveNote.requiredExternalReserveL || 0).toFixed(1)} L; priced quantity with 20% allowance: ${Number(plan.externalReservePricedL || 0).toFixed(1)} L; estimated cost: $${(Number(plan.externalReserveCostCents || 0) / 100).toFixed(2)}`,
         });
     }
+    (Array.isArray(plan.itineraryLegs) ? plan.itineraryLegs : []).forEach((leg) => {
+        rows.push({
+            leg: Number(leg.index || 0) + 1,
+            type: 'Planned stop',
+            instruction: String(leg?.target?.label || `Itinerary stop ${Number(leg.index || 0) + 1}`),
+            distance: formatRouteDistance(Number(leg.distance_m || 0)),
+            duration: formatRouteDuration(Number(leg.duration_s || 0)),
+            details: leg?.target?.physical_stop === false
+                ? 'Route waypoint'
+                : 'Physical stop; fatigue spacing restarts here',
+        });
+    });
     plan.segments.forEach((segment, segmentIndex) => {
         segment.routePieces.forEach((piece) => {
             if (piece.type === 'route') {
@@ -3453,13 +3656,22 @@ function renderRouteBreakdownInto(targetElement, plan) {
                     const stopSuffix = piece.destinationFallback
                         ? ' destination reserve stop'
                         : (piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : '')));
+                    const optimizerDetails = piece.classification
+                        ? `, ${piece.classification} stop after ${Number(piece.distanceSincePhysicalStopKm || 0).toFixed(1)} km / ${Number(piece.minutesSincePhysicalStop || 0).toFixed(0)} min`
+                        : '';
+                    const savingDetails = Number(piece.marginalNetSavingCents || 0) > 0
+                        ? `, saves $${(Number(piece.marginalNetSavingCents) / 100).toFixed(2)}`
+                        : '';
+                    const reasonDetails = Array.isArray(piece.reasonCodes) && piece.reasonCodes.length > 0
+                        ? `, ${piece.reasonCodes.map((reason) => String(reason).replace(/_/g, ' ')).join(', ')}`
+                        : '';
                     rows.push({
                         leg: segmentIndex + 1,
                         type: 'Fuel stop',
                         instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',
-                        details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${stopSuffix}`,
+                        details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
                     });
                 }
             }
@@ -3621,8 +3833,22 @@ async function planRoute() {
                 throw new Error(`Geocoding failed for "${value}": ${error.message}`);
             }
         }
-        const tripSequence = buildRouteSequence(origin, destinations);
-        const plan = await buildRoutePlan(tripSequence, routeFuelQueryLabel(), tankCapacity, fuelEconomy);
+        const plan = routeOptimizerV2Default
+            ? await buildOptimizedRoutePlan(
+                origin,
+                destinations,
+                routeFuelQueryLabel(),
+                tankCapacity,
+                startingFuel,
+                fuelEconomy,
+                reserveFuel
+            )
+            : await buildRoutePlan(
+                buildRouteSequence(origin, destinations),
+                routeFuelQueryLabel(),
+                tankCapacity,
+                fuelEconomy
+            );
         renderRouteSummary(plan);
         renderRouteMap(plan);
         renderRouteBreakdown(plan);
@@ -3636,10 +3862,17 @@ async function planRoute() {
                 : 'Return direct to origin';
         const hadContingencyStop = plan.segments.some((segment) => Array.isArray(segment.stops) && segment.stops.some((stop) => stop.contingencyFallback));
         const contingencyMessage = hadContingencyStop ? ' Contingency refill used on one or more legs.' : '';
-        routeStatus.classList.toggle('route-status-warning', Boolean(plan.reserveNote));
+        const warningMessage = Array.isArray(plan.warnings) && plan.warnings.length > 0
+            ? ` ${plan.warnings.join(' ')}`
+            : '';
+        const plannedLegCount = Number(plan.itineraryLegCount || plan.segments.length);
+        routeStatus.classList.toggle(
+            'route-status-warning',
+            Boolean(plan.reserveNote) || warningMessage !== ''
+        );
         routeStatus.textContent = plan.reserveNote
-            ? `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage} ${plan.reserveNote.message}`
-            : `Planned ${plan.segments.length} legs using ${returnMode}.${contingencyMessage}`;
+            ? `Planned ${plannedLegCount} legs using ${returnMode}.${contingencyMessage} ${plan.reserveNote.message}${warningMessage}`
+            : `Planned ${plannedLegCount} legs using ${returnMode}.${contingencyMessage}${warningMessage}`;
     } catch (error) {
         routeStatus.classList.remove('route-status-warning');
         routeStatus.textContent = error.message;

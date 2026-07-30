@@ -265,6 +265,32 @@ fuelauTest('route planner uses bounded request budgets', static function (): voi
     fuelauAssertTrue((int) $fuelMatch[1] <= 50, 'Fuel lookup budget must be at most 50');
 });
 
+fuelauTest('route optimizer default delegates complete itinerary planning to the backend', static function (): void {
+    $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+    fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
+    fuelauAssertTrue(
+        str_contains($source, "apiRequest('/api/route/optimize'"),
+        'The version one browser path must call the backend optimizer',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'const plan = routeOptimizerV2Default'),
+        'The backend optimizer must remain behind the default feature flag',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'destinations: destinations.map(routeOptimizerLocation)'),
+        'The browser must send original destinations for server-side itinerary expansion',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'starting_fuel_l: startingFuelL')
+            && str_contains($source, 'reserve_l: reserveL'),
+        'Starting fuel and terminal reserve must be server-owned optimizer inputs',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'Physical stop; fatigue spacing restarts here'),
+        'The optimized route breakdown must explain physical-stop fatigue resets',
+    );
+});
+
 fuelauTest('route optimizer request resolves practical stop defaults', static function (): void {
     $request = FuelauRouteOptimizationRequest::fromBody([
         'version' => 1,
