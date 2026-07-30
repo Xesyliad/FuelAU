@@ -554,3 +554,81 @@ function fuelauRoutePlan(array $coordinates, bool $steps = true): array
         'waypoints' => $payload['waypoints'] ?? [],
     ];
 }
+
+/**
+ * @param list<array{lat: float, lon: float}> $coordinates
+ * @return array{
+ *     distances: list<list<int|null>>,
+ *     durations: list<list<int|null>>
+ * }
+ */
+function fuelauOsrmTable(array $coordinates): array
+{
+    $coordinates = fuelauNormalizeRouteCandidatePoints($coordinates);
+    if (count($coordinates) < 2 || count($coordinates) > 40) {
+        throw new InvalidArgumentException('OSRM table requests require between 2 and 40 coordinates.');
+    }
+    $encodedCoordinates = implode(
+        ';',
+        array_map(
+            static fn (array $coordinate): string => $coordinate['lon'] . ',' . $coordinate['lat'],
+            $coordinates,
+        ),
+    );
+    $payload = fuelauHttpJsonRequest(
+        fuelauHttpBuildUrl(
+            fuelauServiceBaseUrl('osrm') . "/table/v1/driving/{$encodedCoordinates}",
+            ['annotations' => 'distance,duration'],
+        ),
+        [],
+        30,
+    );
+
+    return fuelauNormalizeOsrmTablePayload($payload, count($coordinates));
+}
+
+/**
+ * @param array<string, mixed> $payload
+ * @return array{
+ *     distances: list<list<int|null>>,
+ *     durations: list<list<int|null>>
+ * }
+ */
+function fuelauNormalizeOsrmTablePayload(array $payload, int $coordinateCount): array
+{
+    if ($coordinateCount < 2 || ($payload['code'] ?? null) !== 'Ok') {
+        throw new FuelauUpstreamException('OSRM table response was not successful.');
+    }
+
+    $normalized = [];
+    foreach (['distances', 'durations'] as $matrixName) {
+        $matrix = $payload[$matrixName] ?? null;
+        if (!is_array($matrix) || count($matrix) !== $coordinateCount) {
+            throw new FuelauUpstreamException("OSRM table {$matrixName} matrix has an invalid size.");
+        }
+        $normalizedRows = [];
+        foreach (array_values($matrix) as $row) {
+            if (!is_array($row) || count($row) !== $coordinateCount) {
+                throw new FuelauUpstreamException("OSRM table {$matrixName} row has an invalid size.");
+            }
+            $normalizedRow = [];
+            foreach (array_values($row) as $value) {
+                if ($value === null) {
+                    $normalizedRow[] = null;
+                    continue;
+                }
+                if (!is_numeric((string) $value) || (float) $value < 0) {
+                    throw new FuelauUpstreamException("OSRM table {$matrixName} contains an invalid value.");
+                }
+                $normalizedRow[] = (int) ceil((float) $value);
+            }
+            $normalizedRows[] = $normalizedRow;
+        }
+        $normalized[$matrixName] = $normalizedRows;
+    }
+
+    return [
+        'distances' => $normalized['distances'],
+        'durations' => $normalized['durations'],
+    ];
+}

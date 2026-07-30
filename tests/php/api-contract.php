@@ -25,17 +25,23 @@ function fuelauRunApiRequest(
     string $configPath,
     string $method,
     string $requestUri,
-    string $remoteAddress = '127.0.0.1'
+    string $remoteAddress = '127.0.0.1',
+    ?array $jsonBody = null,
 ): array {
     $script = <<<'PHP'
 register_shutdown_function(static function (): void {
     fwrite(STDERR, 'STATUS:' . (http_response_code() ?: 200) . PHP_EOL);
 });
-$_SERVER['REQUEST_METHOD'] = $argv[1];
-$_SERVER['REQUEST_URI'] = $argv[2];
-$_SERVER['REMOTE_ADDR'] = $argv[4];
 parse_str((string) parse_url($argv[2], PHP_URL_QUERY), $_GET);
-require $argv[3] . '/public/index.php';
+require $argv[3] . '/src/web.php';
+$request = new FuelauHttpRequest(
+    path: (string) parse_url($argv[2], PHP_URL_PATH),
+    method: $argv[1],
+    query: $_GET,
+    rawBody: stream_get_contents(STDIN),
+    remoteAddress: $argv[4],
+);
+fuelauDispatchApi($request, fuelauConfig());
 PHP;
 
     $environment = array_merge(getenv(), [
@@ -45,6 +51,7 @@ PHP;
     $process = proc_open(
         [PHP_BINARY, '-r', $script, $method, $requestUri, $projectRoot, $remoteAddress],
         [
+            0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
         ],
@@ -56,6 +63,11 @@ PHP;
         throw new RuntimeException('Unable to launch API contract request.');
     }
 
+    $encodedBody = $jsonBody === null
+        ? ''
+        : (json_encode($jsonBody, JSON_UNESCAPED_SLASHES) ?: '{}');
+    fwrite($pipes[0], $encodedBody);
+    fclose($pipes[0]);
     $stdout = stream_get_contents($pipes[1]);
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
@@ -167,13 +179,50 @@ fuelauApiContractTest('route optimizer is disabled by default', static function 
     fuelauApiAssertSame('optimizer_disabled', $response['payload']['error'] ?? null, 'Optimizer disabled error');
 });
 
+fuelauApiContractTest('enabled optimizer rejects unsupported itinerary before upstream work', static function () use (
+    $projectRoot,
+    $configPath,
+    $config,
+): void {
+    file_put_contents(
+        $configPath,
+        $config . PHP_EOL . "ROUTE_OPTIMIZER_V2_ENABLED=true\n",
+    );
+    $response = fuelauRunApiRequest(
+        $projectRoot,
+        $configPath,
+        'POST',
+        '/api/route/optimize',
+        jsonBody: [
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0],
+            'destinations' => [['lat' => -30.0, 'lon' => 151.0]],
+            'return_mode' => 'direct',
+            'fuel' => [
+                'type' => 'E10',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 60,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 6,
+            ],
+        ],
+    );
+
+    fuelauApiAssertSame(422, $response['status'], 'Unsupported itinerary status code');
+    fuelauApiAssertSame(
+        'unsupported_itinerary',
+        $response['payload']['error'] ?? null,
+        'Unsupported itinerary error',
+    );
+});
+
 @unlink($configPath);
 
 fwrite(
     STDOUT,
     sprintf(
         "\nAPI contract summary: %d passed, %d failed\n",
-        7 - count($failures),
+        8 - count($failures),
         count($failures)
     )
 );

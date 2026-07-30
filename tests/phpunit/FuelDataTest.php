@@ -49,4 +49,21 @@ final class FuelDataTest extends TestCase
             fuelauNumericFuelFilterCondition(['fuel' => 'Diesel'], 'h.fuel_id', 'f.name'),
         );
     }
+
+    public function testCoverageWindowsAreMergedRoundRobinWithStableDeduplication(): void
+    {
+        $row = static fn (string $source, string $state, string $stationId): array => [
+            'source' => $source,
+            'state' => $state,
+            'station_id' => $stationId,
+            'fuel_code' => 'E10',
+        ];
+        $rows = fuelauMergeCoverageCandidateWindows([
+            [$row('nsw', 'NSW', 'a'), $row('nsw', 'NSW', 'b'), $row('nsw', 'NSW', 'c')],
+            [$row('nsw', 'NSW', 'a'), $row('nsw', 'NSW', 'd')],
+            [$row('qld', 'QLD', 'e'), $row('qld', 'QLD', 'f')],
+        ], 4);
+
+        self::assertSame(['a', 'd', 'e', 'b'], array_column($rows, 'station_id'));
+    }
 }

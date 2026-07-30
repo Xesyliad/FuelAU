@@ -862,6 +862,124 @@ function fuelauCachedRouteCandidateRows(
     return $rows;
 }
 
+/**
+ * @param list<list<array<string, mixed>>> $windows
+ * @return list<array<string, mixed>>
+ */
+function fuelauMergeCoverageCandidateWindows(array $windows, int $limit): array
+{
+    $limit = fuelauClampInt($limit, 1, 5_000);
+    $windows = array_map(
+        static fn (array $rows): array => array_values($rows),
+        array_values($windows),
+    );
+    $offsets = array_fill(0, count($windows), 0);
+    $selected = [];
+    $seen = [];
+
+    do {
+        $advanced = false;
+        foreach ($windows as $windowIndex => $rows) {
+            while ($offsets[$windowIndex] < count($rows)) {
+                $row = $rows[$offsets[$windowIndex]];
+                $offsets[$windowIndex]++;
+                $key = implode('|', [
+                    strtolower(trim((string) ($row['source'] ?? ''))),
+                    strtoupper(trim((string) ($row['state'] ?? ''))),
+                    trim((string) ($row['station_id'] ?? '')),
+                    trim((string) ($row['fuel_code'] ?? $row['fuel_name'] ?? 'fuel')),
+                ]);
+                if ($key === '|||fuel' || isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $selected[] = $row;
+                $advanced = true;
+                break;
+            }
+            if (count($selected) >= $limit) {
+                break 2;
+            }
+        }
+    } while ($advanced);
+
+    return $selected;
+}
+
+/**
+ * Split long corridors into bounded local database windows before applying the
+ * global result cap. Round-robin merging prevents dense origin regions from
+ * displacing sparse downstream coverage.
+ *
+ * @param list<array{lat: float, lon: float}> $points
+ * @return list<array<string, mixed>>
+ */
+function fuelauCoverageBalancedRouteCandidateRows(
+    PDO $pdo,
+    array $points,
+    string $fuel,
+    float $radiusKm = 75.0,
+    int $limit = 5_000,
+    int $windowPointCount = 10,
+): array {
+    $points = fuelauNormalizeRouteCandidatePoints($points);
+    $limit = fuelauClampInt($limit, 1, 5_000);
+    $windowPointCount = fuelauClampInt($windowPointCount, 2, 20);
+    $pointWindows = array_chunk($points, $windowPointCount);
+    $perWindowLimit = min(
+        1_000,
+        max(100, (int) ceil(($limit / count($pointWindows)) * 2)),
+    );
+    $rowWindows = [];
+    foreach ($pointWindows as $window) {
+        $rowWindows[] = fuelauRouteCandidateRows(
+            $pdo,
+            $window,
+            $fuel,
+            $radiusKm,
+            $perWindowLimit,
+        );
+    }
+
+    return fuelauMergeCoverageCandidateWindows($rowWindows, $limit);
+}
+
+/**
+ * @param list<array{lat: float, lon: float}> $points
+ * @return list<array<string, mixed>>
+ */
+function fuelauCachedCoverageBalancedRouteCandidateRows(
+    PDO $pdo,
+    array $points,
+    string $fuel,
+    float $radiusKm,
+    int $limit,
+    string $cacheDirectory,
+    int $ttlSeconds = 30,
+): array {
+    $points = fuelauNormalizeRouteCandidatePoints($points);
+    $cacheKey = hash('sha256', json_encode([
+        'version' => 1,
+        'points' => $points,
+        'fuel' => trim($fuel),
+        'radius_km' => round($radiusKm, 2),
+        'limit' => $limit,
+    ], JSON_UNESCAPED_SLASHES) ?: '');
+    $cachePath = rtrim($cacheDirectory, '/') . "/coverage-{$cacheKey}.json";
+
+    return fuelauRememberArray(
+        $cachePath,
+        $ttlSeconds,
+        static fn (): array => fuelauCoverageBalancedRouteCandidateRows(
+            $pdo,
+            $points,
+            $fuel,
+            $radiusKm,
+            $limit,
+        ),
+    );
+}
+
 function fuelauRememberArray(
     string $cachePath,
     int $ttlSeconds,

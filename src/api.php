@@ -354,10 +354,6 @@ function fuelauRouteController(FuelauHttpRequest $request): never
     }
 }
 
-/**
- * Phase-one boundary for the versioned optimizer. The feature remains disabled
- * until the backend search engine and exact route validation are connected.
- */
 function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $config): never
 {
     if (strlen($request->rawBody) > 65_536) {
@@ -393,13 +389,33 @@ function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $co
         ], 429);
     }
 
-    // The parsed DTO is intentionally exercised before this temporary response
-    // so the public boundary can be completed and tested independently.
-    unset($optimizationRequest);
-    fuelauJsonResponse([
-        'error' => 'optimizer_unavailable',
-        'message' => 'The version 1 route optimizer engine is not connected yet.',
-    ], 503);
+    try {
+        fuelauJsonResponse(
+            (new FuelauLiveSingleCorridorPlanner())->plan($optimizationRequest),
+        );
+    } catch (FuelauRoutePlanningUnsupportedException $exception) {
+        fuelauJsonResponse([
+            'error' => 'unsupported_itinerary',
+            'message' => $exception->getMessage(),
+        ], 422);
+    } catch (FuelauRouteInfeasibleException $exception) {
+        fuelauJsonResponse([
+            'error' => 'route_infeasible',
+            'message' => $exception->getMessage(),
+        ], 422);
+    } catch (FuelauRoutePlanValidationException $exception) {
+        error_log('FuelAU exact route validation failed: ' . $exception->getMessage());
+        fuelauJsonResponse([
+            'error' => 'route_validation_failed',
+            'message' => 'The selected fuel-stop route could not be validated reliably.',
+        ], 503);
+    } catch (FuelauUpstreamException|PDOException $exception) {
+        error_log('FuelAU route optimization dependency failed: ' . $exception->getMessage());
+        fuelauJsonResponse([
+            'error' => 'upstream_unavailable',
+            'message' => 'A required routing or fuel-price service is unavailable.',
+        ], 503);
+    }
 }
 
 function fuelauFuelSourcesController(): never

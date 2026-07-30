@@ -98,6 +98,120 @@ final class RoutePlanningTest extends TestCase
         self::assertFalse($candidate->accessEstimated);
     }
 
+    public function testPriceFreshnessUsesInjectedReferenceTime(): void
+    {
+        $rows = fuelauClassifyRouteCandidatePriceRows(
+            [
+                ['updated_at' => '2026-07-20T00:00:00Z'],
+                ['updated_at' => '2026-07-16T00:00:00Z'],
+                ['updated_at' => '2026-07-15T23:59:59Z'],
+                ['updated_at' => '2026-07-31T00:00:00Z'],
+                ['updated_at' => 'invalid'],
+            ],
+            new DateTimeImmutable('2026-07-30T00:00:00Z'),
+        );
+
+        self::assertSame(
+            ['fresh', 'fresh', 'stale', 'stale', 'stale'],
+            array_column($rows, 'price_status'),
+        );
+    }
+
+    public function testRoadAccessMeasurementUsesOneBoundedTableChunk(): void
+    {
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 200_000,
+            durationS: 7_200,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 152.0],
+            ],
+        );
+        $calls = 0;
+        $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+            $corridor,
+            [
+                $this->stationRow('first', 150.5, 180),
+                $this->stationRow('second', 151.5, 190),
+            ],
+            static function (array $coordinates) use (&$calls): array {
+                $calls++;
+                $count = count($coordinates);
+                $distances = array_fill(0, $count, array_fill(0, $count, null));
+                $durations = array_fill(0, $count, array_fill(0, $count, null));
+                for ($index = 0; $index < $count; $index++) {
+                    $distances[$index][$index] = 0;
+                    $durations[$index][$index] = 0;
+                }
+                $distances[0][1] = 1_000;
+                $distances[1][0] = 1_200;
+                $durations[0][1] = 100;
+                $durations[1][0] = 120;
+                $distances[2][3] = 2_000;
+                $distances[3][2] = 2_200;
+                $durations[2][3] = 200;
+                $durations[3][2] = 220;
+
+                return ['distances' => $distances, 'durations' => $durations];
+            },
+        );
+
+        self::assertSame(1, $calls);
+        self::assertCount(2, $rows);
+        self::assertSame(1_100, $rows[0]['access_distance_m']);
+        self::assertSame(110, $rows[0]['access_duration_s']);
+        self::assertSame(2_100, $rows[1]['access_distance_m']);
+        self::assertSame(210, $rows[1]['access_duration_s']);
+    }
+
+    public function testRoadAccessShortlistScalesCoverageBinsForLongRoutes(): void
+    {
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 4_500_000,
+            durationS: 180_000,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 110.0],
+                ['lat' => -30.0, 'lon' => 150.5],
+            ],
+        );
+        $candidateRows = [];
+        for ($index = 1; $index <= 90; $index++) {
+            $candidateRows[] = [
+                ...$this->stationRow("station-{$index}", 110.0 + (40.5 * ($index / 91)), 180),
+                'source' => 'wa',
+                'state' => 'WA',
+            ];
+        }
+        $tableCalls = 0;
+        $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+            $corridor,
+            $candidateRows,
+            static function (array $coordinates) use (&$tableCalls): array {
+                $tableCalls++;
+                $count = count($coordinates);
+                $distances = array_fill(0, $count, array_fill(0, $count, null));
+                $durations = array_fill(0, $count, array_fill(0, $count, null));
+                for ($index = 0; $index < $count; $index++) {
+                    $distances[$index][$index] = 0;
+                    $durations[$index][$index] = 0;
+                }
+                for ($index = 0; $index < $count; $index += 2) {
+                    $distances[$index][$index + 1] = 1_000;
+                    $distances[$index + 1][$index] = 1_000;
+                    $durations[$index][$index + 1] = 60;
+                    $durations[$index + 1][$index] = 60;
+                }
+
+                return ['distances' => $distances, 'durations' => $durations];
+            },
+        );
+
+        self::assertCount(80, $rows);
+        self::assertSame(4, $tableCalls);
+        self::assertLessThan(112.0, (float) $rows[0]['longitude']);
+        self::assertGreaterThan(148.0, (float) $rows[count($rows) - 1]['longitude']);
+    }
+
     public function testProjectedCandidatesCanBeOptimizedWithoutShapeConversion(): void
     {
         $corridor = new FuelauRouteCorridor(
@@ -165,6 +279,33 @@ final class RoutePlanningTest extends TestCase
         self::assertSame('2026-07-29T00:00:00Z', $response['summary']['price_as_of']);
         self::assertCount(2, $response['stops']);
         self::assertSame(3, $response['diagnostics']['candidate_count']);
+        self::assertCount(4, $result->exactRouteCoordinates());
+
+        $validator = new FuelauExactRouteValidator();
+        self::assertFalse($validator->validate(
+            $result,
+            ['distance' => 601_000, 'duration' => 21_700],
+        )->requiresReoptimization);
+        self::assertTrue($validator->validate(
+            $result,
+            ['distance' => 603_000, 'duration' => 22_000],
+        )->requiresReoptimization);
+
+        $exactRouteCalls = 0;
+        $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
+            $request,
+            $corridor,
+            $rows,
+            static function (array $coordinates) use (&$exactRouteCalls): array {
+                $exactRouteCalls++;
+                self::assertCount(4, $coordinates);
+
+                return ['distance' => 603_000, 'duration' => 22_000];
+            },
+        );
+        self::assertSame(2, $exactRouteCalls);
+        self::assertSame(2, $validated->validationPassCount);
+        self::assertFalse($validated->validation->requiresReoptimization);
     }
 
     public function testSelectedStationRequiresMeasuredRoadAccess(): void
@@ -201,6 +342,78 @@ final class RoutePlanningTest extends TestCase
                 'price_status' => 'fresh',
             ]],
         );
+    }
+
+    public function testLivePlannerOrchestratesBoundedDependencies(): void
+    {
+        $request = $this->optimizationRequest(['maximum_fuel_only_stops' => 3]);
+        $routeLoaderCalls = 0;
+        $candidateLoaderCalls = 0;
+        $tableLoaderCalls = 0;
+        $route = [
+            'distance' => 600_000,
+            'duration' => 21_600,
+            'geometry' => [
+                'type' => 'LineString',
+                'coordinates' => [[150.0, -30.0], [156.0, -30.0]],
+            ],
+        ];
+        $candidateRows = [
+            $this->stationRow('required', 150.5, 200, 'Required')
+                + ['updated_at' => '2026-07-29T00:00:00Z'],
+            $this->stationRow('strategic', 153.0, 100, 'Strategic')
+                + ['updated_at' => '2026-07-30T00:00:00Z'],
+            $this->stationRow('fallback', 155.5, 300, 'Fallback')
+                + ['updated_at' => '2026-07-30T00:00:00Z'],
+        ];
+        $planner = new FuelauLiveSingleCorridorPlanner(
+            routeLoader: static function (array $coordinates) use (&$routeLoaderCalls, $route): array {
+                $routeLoaderCalls++;
+                self::assertContains(count($coordinates), [2, 4]);
+
+                return $route;
+            },
+            candidateLoader: static function (
+                array $points,
+                string $fuel,
+            ) use (&$candidateLoaderCalls, $candidateRows): array {
+                $candidateLoaderCalls++;
+                self::assertCount(13, $points);
+                self::assertSame('E10', $fuel);
+
+                return $candidateRows;
+            },
+            tableLoader: static function (array $coordinates) use (&$tableLoaderCalls): array {
+                $tableLoaderCalls++;
+                $count = count($coordinates);
+                $distances = array_fill(0, $count, array_fill(0, $count, null));
+                $durations = array_fill(0, $count, array_fill(0, $count, null));
+                for ($index = 0; $index < $count; $index++) {
+                    $distances[$index][$index] = 0;
+                    $durations[$index][$index] = 0;
+                }
+                for ($index = 0; $index < $count; $index += 2) {
+                    $distances[$index][$index + 1] = 0;
+                    $distances[$index + 1][$index] = 0;
+                    $durations[$index][$index + 1] = 0;
+                    $durations[$index + 1][$index] = 0;
+                }
+
+                return ['distances' => $distances, 'durations' => $durations];
+            },
+            clock: static fn (): DateTimeImmutable =>
+                new DateTimeImmutable('2026-07-30T00:00:00Z'),
+        );
+
+        $response = $planner->plan($request);
+
+        self::assertSame(2, $routeLoaderCalls);
+        self::assertSame(1, $candidateLoaderCalls);
+        self::assertSame(1, $tableLoaderCalls);
+        self::assertCount(2, $response['stops']);
+        self::assertSame(600_000, $response['summary']['route_distance_m']);
+        self::assertSame(26_800, $response['summary']['generalized_cost_cents']);
+        self::assertCount(1, $response['route_pieces']);
     }
 
     /**

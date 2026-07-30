@@ -193,6 +193,18 @@ final class FuelauRouteCorridor
     /**
      * @return array{lat: float, lon: float}
      */
+    public function coordinateAtProgressM(int $progressM): array
+    {
+        if ($progressM < 0 || $progressM > $this->distanceM) {
+            throw new InvalidArgumentException('Corridor progress is out of range.');
+        }
+
+        return $this->coordinateAtFraction($progressM / $this->distanceM);
+    }
+
+    /**
+     * @return array{lat: float, lon: float}
+     */
     private function coordinateAtFraction(float $fraction): array
     {
         $targetM = $this->geometryDistanceM * max(0.0, min(1.0, $fraction));
@@ -511,7 +523,422 @@ final class FuelauFixedCorridorCandidateAdapter
     }
 }
 
-final class FuelauRoutePlanValidationException extends RuntimeException {}
+class FuelauRoutePlanValidationException extends RuntimeException {}
+
+final class FuelauRoutePlanningUnsupportedException extends FuelauRoutePlanValidationException {}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ * @return list<array<string, mixed>>
+ */
+function fuelauClassifyRouteCandidatePriceRows(
+    array $rows,
+    DateTimeImmutable $asOf,
+    int $maximumAgeDays = 14,
+): array {
+    if ($maximumAgeDays < 1 || $maximumAgeDays > 90) {
+        throw new InvalidArgumentException('Candidate price age must be between 1 and 90 days.');
+    }
+
+    $minimumTimestamp = $asOf->getTimestamp() - ($maximumAgeDays * 86_400);
+    $maximumTimestamp = $asOf->getTimestamp();
+    $timezone = new DateTimeZone('UTC');
+    foreach ($rows as &$row) {
+        $rawUpdatedAt = trim((string) ($row['updated_at'] ?? ''));
+        try {
+            $updatedAt = $rawUpdatedAt !== ''
+                ? new DateTimeImmutable($rawUpdatedAt, $timezone)
+                : null;
+        } catch (Exception) {
+            $updatedAt = null;
+        }
+        $timestamp = $updatedAt?->getTimestamp();
+        $row['price_status'] = $timestamp !== null
+            && $timestamp >= $minimumTimestamp
+            && $timestamp <= $maximumTimestamp
+            ? 'fresh'
+            : 'stale';
+    }
+    unset($row);
+
+    return array_values($rows);
+}
+
+final class FuelauCandidateRoadAccessMeasurer
+{
+    /**
+     * @param list<array<string, mixed>> $candidateRows
+     * @param callable(list<array{lat: float, lon: float}>): array{
+     *     distances: list<list<int|null>>,
+     *     durations: list<list<int|null>>
+     * } $tableLoader
+     * @return list<array<string, mixed>>
+     */
+    public function measure(
+        FuelauRouteCorridor $corridor,
+        array $candidateRows,
+        callable $tableLoader,
+        int $maximumCandidates = 80,
+        int $chunkSize = 20,
+    ): array {
+        if ($maximumCandidates < 1 || $maximumCandidates > 80 || $chunkSize < 1 || $chunkSize > 20) {
+            throw new InvalidArgumentException('Invalid road-access measurement limits.');
+        }
+
+        $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+            $corridor,
+            $candidateRows,
+            maximumCandidates: $maximumCandidates,
+            coverageBinM: max(
+                50_000,
+                (int) ceil($corridor->distanceM / $maximumCandidates),
+            ),
+        );
+        $candidates = array_values($input->candidatesByNodeId);
+        $measuredRows = [];
+        foreach (array_chunk($candidates, $chunkSize) as $chunk) {
+            $coordinates = [];
+            foreach ($chunk as $candidate) {
+                $coordinates[] = $corridor->coordinateAtProgressM($candidate->progressM);
+                $coordinates[] = [
+                    'lat' => (float) $candidate->sourceRow['latitude'],
+                    'lon' => (float) $candidate->sourceRow['longitude'],
+                ];
+            }
+            $table = $tableLoader($coordinates);
+            $coordinateCount = count($coordinates);
+            foreach ($chunk as $index => $candidate) {
+                $anchorIndex = $index * 2;
+                $stationIndex = $anchorIndex + 1;
+                $outboundDistanceM = $this->matrixValue(
+                    $table,
+                    'distances',
+                    $anchorIndex,
+                    $stationIndex,
+                    $coordinateCount,
+                );
+                $returnDistanceM = $this->matrixValue(
+                    $table,
+                    'distances',
+                    $stationIndex,
+                    $anchorIndex,
+                    $coordinateCount,
+                );
+                $outboundDurationS = $this->matrixValue(
+                    $table,
+                    'durations',
+                    $anchorIndex,
+                    $stationIndex,
+                    $coordinateCount,
+                );
+                $returnDurationS = $this->matrixValue(
+                    $table,
+                    'durations',
+                    $stationIndex,
+                    $anchorIndex,
+                    $coordinateCount,
+                );
+                if (
+                    $outboundDistanceM === null
+                    || $returnDistanceM === null
+                    || $outboundDurationS === null
+                    || $returnDurationS === null
+                ) {
+                    continue;
+                }
+
+                $measuredRows[] = [
+                    ...$candidate->sourceRow,
+                    'access_distance_m' => (int) ceil(
+                        ($outboundDistanceM + $returnDistanceM) / 2,
+                    ),
+                    'access_duration_s' => (int) ceil(
+                        ($outboundDurationS + $returnDurationS) / 2,
+                    ),
+                    'road_access_status' => 'measured',
+                ];
+            }
+        }
+
+        return $measuredRows;
+    }
+
+    /**
+     * @param array<string, mixed> $table
+     */
+    private function matrixValue(
+        array $table,
+        string $matrixName,
+        int $rowIndex,
+        int $columnIndex,
+        int $coordinateCount,
+    ): ?int {
+        $matrix = $table[$matrixName] ?? null;
+        if (!is_array($matrix) || count($matrix) !== $coordinateCount) {
+            throw new FuelauUpstreamException("OSRM {$matrixName} matrix has an invalid size.");
+        }
+        $row = $matrix[$rowIndex] ?? null;
+        if (!is_array($row) || count($row) !== $coordinateCount) {
+            throw new FuelauUpstreamException("OSRM {$matrixName} row has an invalid size.");
+        }
+        $value = $row[$columnIndex] ?? null;
+        if ($value === null) {
+            return null;
+        }
+        if (!is_int($value) || $value < 0) {
+            throw new FuelauUpstreamException("OSRM {$matrixName} matrix contains an invalid value.");
+        }
+
+        return $value;
+    }
+}
+
+final readonly class FuelauExactRouteValidation
+{
+    public function __construct(
+        public int $modeledDistanceM,
+        public int $exactDistanceM,
+        public int $distanceDeltaM,
+        public int $modeledDurationS,
+        public int $exactDurationS,
+        public int $durationDeltaS,
+        public int $fuelBucketDelta,
+        public bool $requiresReoptimization,
+    ) {}
+}
+
+final class FuelauExactRouteValidator
+{
+    /**
+     * @param array<string, mixed> $exactRoute
+     */
+    public function validate(
+        FuelauSingleCorridorOptimizationResult $result,
+        array $exactRoute,
+    ): FuelauExactRouteValidation {
+        $distance = $exactRoute['distance'] ?? null;
+        $duration = $exactRoute['duration'] ?? null;
+        if (
+            !is_numeric((string) $distance)
+            || !is_numeric((string) $duration)
+            || (float) $distance <= 0
+            || (float) $duration <= 0
+        ) {
+            throw new FuelauUpstreamException('Exact OSRM route is missing distance or duration.');
+        }
+
+        $modeledDetourDistanceM = array_reduce(
+            $result->plan->purchases,
+            static fn (int $total, FuelauOptimizerPurchase $purchase): int =>
+                $total + $purchase->detourDistanceM,
+            0,
+        );
+        $modeledDetourDurationS = array_reduce(
+            $result->plan->purchases,
+            static fn (int $total, FuelauOptimizerPurchase $purchase): int =>
+                $total + $purchase->detourDurationS,
+            0,
+        );
+        $modeledDistanceM = $result->corridor->distanceM + $modeledDetourDistanceM;
+        $modeledDurationS = $result->corridor->durationS + $modeledDetourDurationS;
+        $exactDistanceM = (int) round((float) $distance);
+        $exactDurationS = (int) round((float) $duration);
+        $distanceDeltaM = $exactDistanceM - $modeledDistanceM;
+        $durationDeltaS = $exactDurationS - $modeledDurationS;
+        $economyLPer100km = $result->request->fuel->economyLPer100km;
+        $modeledFuelBuckets = (int) ceil(
+            (($modeledDistanceM / 100_000) * $economyLPer100km) / 0.5,
+        );
+        $exactFuelBuckets = (int) ceil(
+            (($exactDistanceM / 100_000) * $economyLPer100km) / 0.5,
+        );
+        $fuelBucketDelta = $exactFuelBuckets - $modeledFuelBuckets;
+
+        return new FuelauExactRouteValidation(
+            modeledDistanceM: $modeledDistanceM,
+            exactDistanceM: $exactDistanceM,
+            distanceDeltaM: $distanceDeltaM,
+            modeledDurationS: $modeledDurationS,
+            exactDurationS: $exactDurationS,
+            durationDeltaS: $durationDeltaS,
+            fuelBucketDelta: $fuelBucketDelta,
+            requiresReoptimization: abs($distanceDeltaM) > 2_000
+                || abs($durationDeltaS) > 180
+                || abs($fuelBucketDelta) > 1,
+        );
+    }
+}
+
+final readonly class FuelauValidatedSingleCorridorPlan
+{
+    /**
+     * @param array<string, mixed> $exactRoute
+     */
+    public function __construct(
+        public FuelauSingleCorridorOptimizationResult $result,
+        public FuelauExactRouteValidation $validation,
+        public array $exactRoute,
+        public int $validationPassCount,
+    ) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toResponseArray(): array
+    {
+        $response = $this->result->toResponseArray();
+        $exactDetourDistanceM = max(
+            0,
+            $this->validation->exactDistanceM - $this->result->corridor->distanceM,
+        );
+        $exactDetourDurationS = max(
+            0,
+            $this->validation->exactDurationS - $this->result->corridor->durationS,
+        );
+        $exactDrivingTimeCostCents = (int) ceil(
+            (
+                $this->validation->exactDurationS
+                * $this->result->policy->driverTimeValueCentsPerHour
+            ) / 3_600,
+        );
+        $response['summary']['route_distance_m'] = $this->validation->exactDistanceM;
+        $response['summary']['route_duration_s'] = $this->validation->exactDurationS;
+        $response['summary']['detour_distance_m'] = $exactDetourDistanceM;
+        $response['summary']['detour_duration_s'] = $exactDetourDurationS;
+        $response['summary']['generalized_cost_cents'] =
+            $this->result->plan->fuelPurchaseCostCents
+            + ($this->result->plan->fuelStopCount * $this->result->policy->stopCostCents())
+            + $exactDrivingTimeCostCents;
+        $response['route_pieces'] = [[
+            'kind' => 'selected_route',
+            'distance_m' => $this->validation->exactDistanceM,
+            'duration_s' => $this->validation->exactDurationS,
+            'geometry' => is_array($this->exactRoute['geometry'] ?? null)
+                ? $this->exactRoute['geometry']
+                : null,
+        ]];
+        $response['diagnostics']['validation_pass_count'] = $this->validationPassCount;
+        $response['diagnostics']['exact_distance_delta_m'] = $this->validation->distanceDeltaM;
+        $response['diagnostics']['exact_duration_delta_s'] = $this->validation->durationDeltaS;
+
+        return $response;
+    }
+}
+
+final class FuelauSingleCorridorValidationCoordinator
+{
+    /**
+     * @param list<array<string, mixed>> $candidateRows
+     * @param callable(list<array{lat: float, lon: float}>): array<string, mixed> $exactRouteLoader
+     */
+    public function planAndValidate(
+        FuelauRouteOptimizationRequest $request,
+        FuelauRouteCorridor $corridor,
+        array $candidateRows,
+        callable $exactRouteLoader,
+        int $maximumValidationPasses = 2,
+    ): FuelauValidatedSingleCorridorPlan {
+        if ($maximumValidationPasses < 1 || $maximumValidationPasses > 2) {
+            throw new InvalidArgumentException('Exact route validation passes must be between 1 and 2.');
+        }
+
+        $planner = new FuelauSingleCorridorPlanner();
+        $validator = new FuelauExactRouteValidator();
+        $rows = array_values($candidateRows);
+        for ($pass = 1; $pass <= $maximumValidationPasses; $pass++) {
+            $result = $planner->plan($request, $corridor, $rows);
+            $exactRoute = $exactRouteLoader($result->exactRouteCoordinates());
+            $validation = $validator->validate($result, $exactRoute);
+            if (!$validation->requiresReoptimization) {
+                return new FuelauValidatedSingleCorridorPlan(
+                    result: $result,
+                    validation: $validation,
+                    exactRoute: $exactRoute,
+                    validationPassCount: $pass,
+                );
+            }
+            if ($pass === $maximumValidationPasses) {
+                break;
+            }
+            $rows = $this->reconcileSelectedAccess($rows, $result, $validation);
+        }
+
+        throw new FuelauRoutePlanValidationException(
+            'Exact selected-stop routing did not stabilize within the validation budget.',
+        );
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function reconcileSelectedAccess(
+        array $rows,
+        FuelauSingleCorridorOptimizationResult $result,
+        FuelauExactRouteValidation $validation,
+    ): array {
+        $selectedIds = [];
+        $currentAccessDistanceM = 0;
+        $currentAccessDurationS = 0;
+        foreach ($result->plan->purchases as $purchase) {
+            $candidate = $result->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null) {
+                continue;
+            }
+            $selectedIds[$candidate->stableId] = true;
+            $currentAccessDistanceM += $candidate->accessDistanceM;
+            $currentAccessDurationS += $candidate->accessDurationS;
+        }
+        if ($selectedIds === []) {
+            return $rows;
+        }
+
+        $targetAccessDistanceM = max(
+            0,
+            (int) ceil(($validation->exactDistanceM - $result->corridor->distanceM) / 2),
+        );
+        $targetAccessDurationS = max(
+            0,
+            (int) ceil(($validation->exactDurationS - $result->corridor->durationS) / 2),
+        );
+        $selectedCount = count($selectedIds);
+        foreach ($rows as &$row) {
+            $stableId = $this->stableRowId($row);
+            if (!isset($selectedIds[$stableId])) {
+                continue;
+            }
+            $row['access_distance_m'] = $currentAccessDistanceM > 0
+                ? (int) ceil(
+                    ((float) ($row['access_distance_m'] ?? 0) / $currentAccessDistanceM)
+                    * $targetAccessDistanceM,
+                )
+                : (int) ceil($targetAccessDistanceM / $selectedCount);
+            $row['access_duration_s'] = $currentAccessDurationS > 0
+                ? (int) ceil(
+                    ((float) ($row['access_duration_s'] ?? 0) / $currentAccessDurationS)
+                    * $targetAccessDurationS,
+                )
+                : (int) ceil($targetAccessDurationS / $selectedCount);
+            $row['road_access_status'] = 'exact_route_reconciled';
+        }
+        unset($row);
+
+        return array_values($rows);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function stableRowId(array $row): string
+    {
+        return implode(':', [
+            strtolower(trim((string) ($row['source'] ?? ''))),
+            strtoupper(trim((string) ($row['state'] ?? ''))),
+            trim((string) ($row['station_id'] ?? '')),
+            trim((string) ($row['fuel_code'] ?? $row['fuel_name'] ?? 'fuel')),
+        ]);
+    }
+}
 
 final readonly class FuelauSingleCorridorOptimizationResult
 {
@@ -522,6 +949,30 @@ final readonly class FuelauSingleCorridorOptimizationResult
         public FuelauOptimizerPlan $plan,
         public FuelauOptimizerPolicy $policy,
     ) {}
+
+    /**
+     * @return list<array{lat: float, lon: float}>
+     */
+    public function exactRouteCoordinates(): array
+    {
+        $coordinates = [[
+            'lat' => $this->request->origin->latitude,
+            'lon' => $this->request->origin->longitude,
+        ]];
+        foreach ($this->plan->purchases as $purchase) {
+            $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            $latitude = $candidate?->sourceRow['latitude'] ?? null;
+            $longitude = $candidate?->sourceRow['longitude'] ?? null;
+            if (!is_numeric((string) $latitude) || !is_numeric((string) $longitude)) {
+                throw new LogicException("Missing station coordinates for {$purchase->nodeId}.");
+            }
+            $coordinates[] = ['lat' => (float) $latitude, 'lon' => (float) $longitude];
+        }
+        $destination = $this->request->destinations[0];
+        $coordinates[] = ['lat' => $destination->latitude, 'lon' => $destination->longitude];
+
+        return $coordinates;
+    }
 
     /**
      * @return array<string, mixed>
@@ -667,7 +1118,7 @@ final class FuelauSingleCorridorPlanner
         array $candidateRows,
     ): FuelauSingleCorridorOptimizationResult {
         if ($request->returnMode !== 'one_way' || count($request->destinations) !== 1) {
-            throw new FuelauRoutePlanValidationException(
+            throw new FuelauRoutePlanningUnsupportedException(
                 'Single-corridor planning currently requires one destination and one_way return mode.',
             );
         }
@@ -724,5 +1175,113 @@ final class FuelauSingleCorridorPlanner
             plan: $plan,
             policy: $policy,
         );
+    }
+}
+
+final class FuelauLiveSingleCorridorPlanner
+{
+    private Closure $routeLoader;
+    private Closure $candidateLoader;
+    private Closure $tableLoader;
+    private Closure $clock;
+
+    public function __construct(
+        ?Closure $routeLoader = null,
+        ?Closure $candidateLoader = null,
+        ?Closure $tableLoader = null,
+        ?Closure $clock = null,
+    ) {
+        $this->routeLoader = $routeLoader ?? static function (array $coordinates): array {
+            $payload = fuelauRoutePlan($coordinates, false);
+            $route = $payload['routes'][0] ?? null;
+            if (($payload['code'] ?? null) !== 'Ok' || !is_array($route)) {
+                throw new FuelauUpstreamException('OSRM did not return a usable route.');
+            }
+
+            return $route;
+        };
+        $this->candidateLoader = $candidateLoader ?? static function (
+            array $points,
+            string $fuel,
+        ): array {
+            return fuelauCachedCoverageBalancedRouteCandidateRows(
+                fuelauPdo(),
+                $points,
+                $fuel,
+                75,
+                5_000,
+                fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
+            );
+        };
+        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+            fuelauOsrmTable($coordinates);
+        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function plan(FuelauRouteOptimizationRequest $request): array
+    {
+        if ($request->returnMode !== 'one_way' || count($request->destinations) !== 1) {
+            throw new FuelauRoutePlanningUnsupportedException(
+                'Live optimization currently supports one one-way destination.',
+            );
+        }
+
+        $routeRequestCount = 0;
+        $tableRequestCount = 0;
+        $loadRoute = function (array $coordinates) use (&$routeRequestCount): array {
+            $routeRequestCount++;
+
+            return ($this->routeLoader)($coordinates);
+        };
+        $baselineCoordinates = [
+            ['lat' => $request->origin->latitude, 'lon' => $request->origin->longitude],
+            [
+                'lat' => $request->destinations[0]->latitude,
+                'lon' => $request->destinations[0]->longitude,
+            ],
+        ];
+        $baselineRoute = $loadRoute($baselineCoordinates);
+        $corridor = FuelauRouteCorridor::fromOsrmRoute($baselineRoute);
+        $candidateRows = ($this->candidateLoader)(
+            $corridor->candidateLookupPoints(),
+            $request->fuel->type,
+        );
+        if (!is_array($candidateRows)) {
+            throw new RuntimeException('Route candidate loader returned an invalid result.');
+        }
+        $classifiedRows = fuelauClassifyRouteCandidatePriceRows(
+            array_values($candidateRows),
+            ($this->clock)(),
+        );
+        $freshRows = array_values(array_filter(
+            $classifiedRows,
+            static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
+        ));
+        $measuredRows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+            $corridor,
+            $freshRows,
+            function (array $coordinates) use (&$tableRequestCount): array {
+                $tableRequestCount++;
+
+                return ($this->tableLoader)($coordinates);
+            },
+        );
+        $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
+            $request,
+            $corridor,
+            $measuredRows,
+            $loadRoute,
+        );
+        $response = $validated->toResponseArray();
+        $response['diagnostics']['raw_candidate_count'] = count($candidateRows);
+        $response['diagnostics']['fresh_candidate_count'] = count($freshRows);
+        $response['diagnostics']['osrm_route_request_count'] = $routeRequestCount;
+        $response['diagnostics']['osrm_table_request_count'] = $tableRequestCount;
+
+        return $response;
     }
 }

@@ -129,6 +129,26 @@ fuelauTest('all-source NSW filter selects only NSW storage', static function ():
     fuelauAssertSame(['nsw'], $sources);
 });
 
+fuelauTest('coverage candidate merging cannot be monopolized by the first window', static function (): void {
+    $rows = fuelauMergeCoverageCandidateWindows([
+        [
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'a', 'fuel_code' => 'E10'],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'b', 'fuel_code' => 'E10'],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'c', 'fuel_code' => 'E10'],
+        ],
+        [
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'a', 'fuel_code' => 'E10'],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'd', 'fuel_code' => 'E10'],
+        ],
+        [
+            ['source' => 'qld', 'state' => 'QLD', 'station_id' => 'e', 'fuel_code' => 'E10'],
+            ['source' => 'qld', 'state' => 'QLD', 'station_id' => 'f', 'fuel_code' => 'E10'],
+        ],
+    ], 4);
+
+    fuelauAssertSame(['a', 'd', 'e', 'b'], array_column($rows, 'station_id'));
+});
+
 fuelauTest('geocoding results obey requested limit', static function (): void {
     fuelauAssertTrue(
         function_exists('fuelauLimitNominatimResults'),
@@ -177,6 +197,32 @@ fuelauTest('coordinates reject excessive waypoint count', static function (): vo
         InvalidArgumentException::class,
         static fn (): array => fuelauParseCoordinates($coordinates),
         'Excessive route waypoint counts must be rejected'
+    );
+});
+
+fuelauTest('OSRM table payloads are normalized conservatively', static function (): void {
+    $table = fuelauNormalizeOsrmTablePayload([
+        'code' => 'Ok',
+        'distances' => [
+            [0, 1_000.2],
+            [1_100.1, 0],
+        ],
+        'durations' => [
+            [0, 100.2],
+            [110.1, null],
+        ],
+    ], 2);
+
+    fuelauAssertSame([[0, 1_001], [1_101, 0]], $table['distances']);
+    fuelauAssertSame([[0, 101], [111, null]], $table['durations']);
+    fuelauAssertThrows(
+        FuelauUpstreamException::class,
+        static fn (): array => fuelauNormalizeOsrmTablePayload([
+            'code' => 'Ok',
+            'distances' => [[0]],
+            'durations' => [[0]],
+        ], 2),
+        'Truncated OSRM matrices must be rejected',
     );
 });
 
@@ -721,6 +767,126 @@ fuelauTest('corridor candidates use stable station identity and eligibility filt
     fuelauAssertSame(false, $candidate->accessEstimated);
 });
 
+fuelauTest('candidate price freshness is classified against an injected clock', static function (): void {
+    $rows = fuelauClassifyRouteCandidatePriceRows(
+        [
+            ['station_id' => 'fresh', 'updated_at' => '2026-07-20T00:00:00Z'],
+            ['station_id' => 'boundary', 'updated_at' => '2026-07-16T00:00:00Z'],
+            ['station_id' => 'stale', 'updated_at' => '2026-07-15T23:59:59Z'],
+            ['station_id' => 'future', 'updated_at' => '2026-07-31T00:00:00Z'],
+            ['station_id' => 'invalid', 'updated_at' => 'not-a-date'],
+        ],
+        new DateTimeImmutable('2026-07-30T00:00:00Z'),
+    );
+
+    fuelauAssertSame(
+        ['fresh', 'fresh', 'stale', 'stale', 'stale'],
+        array_column($rows, 'price_status'),
+    );
+});
+
+fuelauTest('candidate road access is measured in bounded OSRM table chunks', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 200_000,
+        durationS: 7_200,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 152.0],
+        ],
+    );
+    $calls = 0;
+    $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+        $corridor,
+        [
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'first', 'fuel_code' => 'E10', 'latitude' => -30.01, 'longitude' => 150.5, 'price' => 180, 'price_status' => 'fresh'],
+            ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'second', 'fuel_code' => 'E10', 'latitude' => -30.01, 'longitude' => 151.5, 'price' => 190, 'price_status' => 'fresh'],
+        ],
+        static function (array $coordinates) use (&$calls): array {
+            $calls++;
+            $count = count($coordinates);
+            $distances = array_fill(0, $count, array_fill(0, $count, null));
+            $durations = array_fill(0, $count, array_fill(0, $count, null));
+            for ($index = 0; $index < $count; $index++) {
+                $distances[$index][$index] = 0;
+                $durations[$index][$index] = 0;
+            }
+            $distances[0][1] = 1_000;
+            $distances[1][0] = 1_200;
+            $durations[0][1] = 100;
+            $durations[1][0] = 120;
+            $distances[2][3] = 2_000;
+            $distances[3][2] = 2_200;
+            $durations[2][3] = 200;
+            $durations[3][2] = 220;
+
+            return ['distances' => $distances, 'durations' => $durations];
+        },
+    );
+
+    fuelauAssertSame(1, $calls);
+    fuelauAssertSame(2, count($rows));
+    fuelauAssertSame(1_100, $rows[0]['access_distance_m']);
+    fuelauAssertSame(110, $rows[0]['access_duration_s']);
+    fuelauAssertSame(2_100, $rows[1]['access_distance_m']);
+    fuelauAssertSame(210, $rows[1]['access_duration_s']);
+});
+
+fuelauTest('road access shortlist preserves bounded coverage on transcontinental routes', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 4_500_000,
+        durationS: 180_000,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 110.0],
+            ['lat' => -30.0, 'lon' => 150.5],
+        ],
+    );
+    $candidateRows = [];
+    for ($index = 1; $index <= 90; $index++) {
+        $candidateRows[] = [
+            'source' => 'wa',
+            'state' => 'WA',
+            'station_id' => "station-{$index}",
+            'fuel_code' => 'E10',
+            'latitude' => -30.01,
+            'longitude' => 110.0 + (40.5 * ($index / 91)),
+            'price' => 180 + ($index % 10),
+            'price_status' => 'fresh',
+        ];
+    }
+
+    $tableCalls = 0;
+    $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+        $corridor,
+        $candidateRows,
+        static function (array $coordinates) use (&$tableCalls): array {
+            $tableCalls++;
+            $count = count($coordinates);
+            $distances = array_fill(0, $count, array_fill(0, $count, null));
+            $durations = array_fill(0, $count, array_fill(0, $count, null));
+            for ($index = 0; $index < $count; $index++) {
+                $distances[$index][$index] = 0;
+                $durations[$index][$index] = 0;
+            }
+            for ($index = 0; $index < $count; $index += 2) {
+                $distances[$index][$index + 1] = 1_000;
+                $distances[$index + 1][$index] = 1_000;
+                $durations[$index][$index + 1] = 60;
+                $durations[$index + 1][$index] = 60;
+            }
+
+            return ['distances' => $distances, 'durations' => $durations];
+        },
+    );
+
+    fuelauAssertSame(80, count($rows));
+    fuelauAssertSame(4, $tableCalls);
+    fuelauAssertTrue(
+        (float) $rows[0]['longitude'] < 112.0
+            && (float) $rows[count($rows) - 1]['longitude'] > 148.0,
+        'The bounded shortlist must retain both early and late route coverage',
+    );
+});
+
 fuelauTest('projected corridor candidates feed the practical optimizer', static function (): void {
     $corridor = new FuelauRouteCorridor(
         distanceM: 600_000,
@@ -797,6 +963,37 @@ fuelauTest('single-corridor planner maps request policy and builds response acco
     fuelauAssertSame('2026-07-29T00:00:00Z', $response['summary']['price_as_of']);
     fuelauAssertSame(2, count($response['stops']));
     fuelauAssertSame(3, $response['diagnostics']['candidate_count']);
+    fuelauAssertSame(4, count($result->exactRouteCoordinates()));
+    $validator = new FuelauExactRouteValidator();
+    fuelauAssertSame(
+        false,
+        $validator->validate(
+            $result,
+            ['distance' => 601_000, 'duration' => 21_700],
+        )->requiresReoptimization,
+    );
+    fuelauAssertSame(
+        true,
+        $validator->validate(
+            $result,
+            ['distance' => 603_000, 'duration' => 22_000],
+        )->requiresReoptimization,
+    );
+    $exactRouteCalls = 0;
+    $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
+        $request,
+        $corridor,
+        $rows,
+        static function (array $coordinates) use (&$exactRouteCalls): array {
+            $exactRouteCalls++;
+            fuelauAssertSame(4, count($coordinates));
+
+            return ['distance' => 603_000, 'duration' => 22_000];
+        },
+    );
+    fuelauAssertSame(2, $exactRouteCalls);
+    fuelauAssertSame(2, $validated->validationPassCount);
+    fuelauAssertSame(false, $validated->validation->requiresReoptimization);
 });
 
 fuelauTest('single-corridor response requires measured station access', static function (): void {
@@ -834,6 +1031,86 @@ fuelauTest('single-corridor response requires measured station access', static f
             ),
         'A successful response must not expose geometric detour estimates',
     );
+});
+
+fuelauTest('live single-corridor orchestration stays within bounded dependencies', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0],
+        'destinations' => [['lat' => -30.0, 'lon' => 156.0]],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 12,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+        'preferences' => ['maximum_fuel_only_stops' => 3],
+    ]);
+    $routeLoaderCalls = 0;
+    $candidateLoaderCalls = 0;
+    $tableLoaderCalls = 0;
+    $route = [
+        'distance' => 600_000,
+        'duration' => 21_600,
+        'geometry' => [
+            'type' => 'LineString',
+            'coordinates' => [[150.0, -30.0], [156.0, -30.0]],
+        ],
+    ];
+    $planner = new FuelauLiveSingleCorridorPlanner(
+        routeLoader: static function (array $coordinates) use (&$routeLoaderCalls, $route): array {
+            $routeLoaderCalls++;
+            fuelauAssertTrue(
+                count($coordinates) === 2 || count($coordinates) === 4,
+                'Only the baseline and selected-stop routes should be requested',
+            );
+
+            return $route;
+        },
+        candidateLoader: static function (array $points, string $fuel) use (&$candidateLoaderCalls): array {
+            $candidateLoaderCalls++;
+            fuelauAssertSame(13, count($points));
+            fuelauAssertSame('E10', $fuel);
+
+            return [
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'required', 'station_name' => 'Required', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200, 'updated_at' => '2026-07-29T00:00:00Z'],
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'strategic', 'station_name' => 'Strategic', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 153.0, 'price' => 100, 'updated_at' => '2026-07-30T00:00:00Z'],
+                ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fallback', 'station_name' => 'Fallback', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 155.5, 'price' => 300, 'updated_at' => '2026-07-30T00:00:00Z'],
+            ];
+        },
+        tableLoader: static function (array $coordinates) use (&$tableLoaderCalls): array {
+            $tableLoaderCalls++;
+            $count = count($coordinates);
+            $distances = array_fill(0, $count, array_fill(0, $count, null));
+            $durations = array_fill(0, $count, array_fill(0, $count, null));
+            for ($index = 0; $index < $count; $index++) {
+                $distances[$index][$index] = 0;
+                $durations[$index][$index] = 0;
+            }
+            for ($index = 0; $index < $count; $index += 2) {
+                $distances[$index][$index + 1] = 0;
+                $distances[$index + 1][$index] = 0;
+                $durations[$index][$index + 1] = 0;
+                $durations[$index + 1][$index] = 0;
+            }
+
+            return ['distances' => $distances, 'durations' => $durations];
+        },
+        clock: static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('2026-07-30T00:00:00Z'),
+    );
+
+    $response = $planner->plan($request);
+
+    fuelauAssertSame(2, $routeLoaderCalls);
+    fuelauAssertSame(1, $candidateLoaderCalls);
+    fuelauAssertSame(1, $tableLoaderCalls);
+    fuelauAssertSame(2, count($response['stops']));
+    fuelauAssertSame(600_000, $response['summary']['route_distance_m']);
+    fuelauAssertSame(26_800, $response['summary']['generalized_cost_cents']);
+    fuelauAssertSame(1, count($response['route_pieces']));
 });
 
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {
