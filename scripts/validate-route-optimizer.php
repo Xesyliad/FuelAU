@@ -10,6 +10,7 @@ require_once dirname(__DIR__) . '/src/web.php';
  * Usage:
  *   php scripts/validate-route-optimizer.php
  *   php scripts/validate-route-optimizer.php brisbane-cairns
+ *   php scripts/validate-route-optimizer.php brisbane-sydney direct
  */
 
 $routes = [
@@ -48,6 +49,11 @@ $routes = [
 ];
 
 $selectedRoute = trim((string) ($argv[1] ?? 'all'));
+$returnMode = trim((string) ($argv[2] ?? 'one_way'));
+if (!in_array($returnMode, ['one_way', 'direct', 'reverse'], true)) {
+    fwrite(STDERR, 'Return mode must be one_way, direct, or reverse.' . PHP_EOL);
+    exit(2);
+}
 if ($selectedRoute !== 'all') {
     if (!isset($routes[$selectedRoute])) {
         fwrite(
@@ -66,7 +72,7 @@ foreach ($routes as $name => $route) {
         'candidate' => 0,
         'table' => 0,
     ];
-    $planner = new FuelauLiveSingleCorridorPlanner(
+    $planner = new FuelauLiveRoutePlanner(
         routeLoader: static function (array $coordinates) use (&$dependencyTimeNs): array {
             $startedAt = hrtime(true);
             try {
@@ -120,7 +126,7 @@ foreach ($routes as $name => $route) {
                 'lat' => $route['destination'][0],
                 'lon' => $route['destination'][1],
             ]],
-            'return_mode' => 'one_way',
+            'return_mode' => $returnMode,
             'fuel' => [
                 'type' => 'Diesel',
                 'tank_capacity_l' => 80,
@@ -135,6 +141,7 @@ foreach ($routes as $name => $route) {
         $summary = $response['summary'];
         $result = [
             'route' => $name,
+            'return_mode' => $returnMode,
             'status' => 'ok',
             'elapsed_ms' => (int) round($elapsedNs / 1_000_000),
             'dependency_ms' => [
@@ -173,6 +180,7 @@ foreach ($routes as $name => $route) {
         $dependencyNs = array_sum($dependencyTimeNs);
         $result = [
             'route' => $name,
+            'return_mode' => $returnMode,
             'status' => 'failed',
             'elapsed_ms' => (int) round($elapsedNs / 1_000_000),
             'dependency_ms' => [

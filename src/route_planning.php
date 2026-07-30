@@ -203,6 +203,14 @@ final class FuelauRouteCorridor
     }
 
     /**
+     * @return list<array{lat: float, lon: float}>
+     */
+    public function geometryPoints(): array
+    {
+        return $this->geometry;
+    }
+
+    /**
      * @return array{lat: float, lon: float}
      */
     private function coordinateAtFraction(float $fraction): array
@@ -306,6 +314,212 @@ final readonly class FuelauFixedCorridorInput
     ) {}
 }
 
+final readonly class FuelauPreparedItineraryLeg
+{
+    /**
+     * @param list<array<string, mixed>> $candidateRows
+     */
+    public function __construct(
+        public int $index,
+        public FuelauRouteCorridor $corridor,
+        public FuelauRouteOptimizationLocation $target,
+        public array $candidateRows,
+    ) {}
+}
+
+final readonly class FuelauCompleteItineraryInput
+{
+    /**
+     * @param list<array{
+     *     index: int,
+     *     start_m: int,
+     *     end_m: int,
+     *     start_s: int,
+     *     end_s: int,
+     *     target: FuelauRouteOptimizationLocation
+     * }> $legSummaries
+     */
+    public function __construct(
+        public FuelauRouteCorridor $corridor,
+        public FuelauFixedCorridorInput $input,
+        public array $legSummaries,
+    ) {}
+
+    /**
+     * @return list<array{lat: float, lon: float}>
+     */
+    public function exactRouteCoordinates(FuelauOptimizerPlan $plan): array
+    {
+        $coordinates = [];
+        $firstGeometryPoint = $this->corridor->geometryPoints()[0];
+        $coordinates[] = $firstGeometryPoint;
+        $purchaseIndex = 0;
+        foreach ($this->legSummaries as $leg) {
+            while (
+                isset($plan->purchases[$purchaseIndex])
+                && $plan->purchases[$purchaseIndex]->progressM < $leg['end_m']
+            ) {
+                $purchase = $plan->purchases[$purchaseIndex];
+                $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+                $latitude = $candidate?->sourceRow['latitude'] ?? null;
+                $longitude = $candidate?->sourceRow['longitude'] ?? null;
+                if (!is_numeric((string) $latitude) || !is_numeric((string) $longitude)) {
+                    throw new LogicException("Missing station coordinates for {$purchase->nodeId}.");
+                }
+                $coordinates[] = [
+                    'lat' => (float) $latitude,
+                    'lon' => (float) $longitude,
+                ];
+                $purchaseIndex++;
+            }
+            $coordinates[] = [
+                'lat' => $leg['target']->latitude,
+                'lon' => $leg['target']->longitude,
+            ];
+        }
+
+        return $coordinates;
+    }
+}
+
+final class FuelauCompleteItineraryAssembler
+{
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     */
+    public function build(
+        FuelauRouteOptimizationRequest $request,
+        array $legs,
+        FuelauOptimizerPolicy $policy,
+    ): FuelauCompleteItineraryInput {
+        $locations = $request->itineraryLocations();
+        if (count($legs) !== count($locations) - 1 || $legs === []) {
+            throw new InvalidArgumentException(
+                'Prepared itinerary legs must match the expanded request itinerary.',
+            );
+        }
+
+        $nodes = [new FuelauOptimizerNode(
+            'origin',
+            0,
+            progressS: 0,
+            physicalStop: true,
+        )];
+        $candidatesByNodeId = [];
+        $combinedGeometry = [];
+        $legSummaries = [];
+        $distanceOffsetM = 0;
+        $durationOffsetS = 0;
+        $eligibleCandidateCount = 0;
+        $selectedCandidateCount = 0;
+        foreach (array_values($legs) as $legIndex => $leg) {
+            if (!$leg instanceof FuelauPreparedItineraryLeg || $leg->index !== $legIndex) {
+                throw new InvalidArgumentException('Prepared itinerary leg order is invalid.');
+            }
+            $expectedTarget = $locations[$legIndex + 1];
+            if (
+                $leg->target->latitude !== $expectedTarget->latitude
+                || $leg->target->longitude !== $expectedTarget->longitude
+                || $leg->target->label !== $expectedTarget->label
+                || $leg->target->physicalStop !== $expectedTarget->physicalStop
+            ) {
+                throw new InvalidArgumentException(
+                    "Prepared itinerary leg {$legIndex} has an unexpected target.",
+                );
+            }
+            $eligibleRows = fuelauEligibleOptimizerCandidateRows(
+                $leg->candidateRows,
+                $policy,
+            );
+            $legInput = (new FuelauFixedCorridorCandidateAdapter())->build(
+                $leg->corridor,
+                $eligibleRows,
+            );
+            $eligibleCandidateCount += $legInput->eligibleCandidateCount;
+            $selectedCandidateCount += $legInput->selectedCandidateCount;
+            foreach ($legInput->candidatesByNodeId as $candidate) {
+                $nodeId = "station:{$candidate->stableId}:visit:{$legIndex}";
+                $globalCandidate = new FuelauProjectedStationCandidate(
+                    stableId: $candidate->stableId,
+                    nodeId: $nodeId,
+                    label: $candidate->label,
+                    progressM: $distanceOffsetM + $candidate->progressM,
+                    progressS: $durationOffsetS + $candidate->progressS,
+                    offRouteM: $candidate->offRouteM,
+                    accessDistanceM: $candidate->accessDistanceM,
+                    accessDurationS: $candidate->accessDurationS,
+                    accessEstimated: $candidate->accessEstimated,
+                    priceCentsPerL: $candidate->priceCentsPerL,
+                    sourceRow: [
+                        ...$candidate->sourceRow,
+                        'itinerary_leg_index' => $legIndex,
+                    ],
+                );
+                $nodes[] = FuelauOptimizerNode::station(
+                    id: $nodeId,
+                    progressM: $globalCandidate->progressM,
+                    priceCentsPerL: $globalCandidate->priceCentsPerL,
+                    label: $globalCandidate->label,
+                    progressS: $globalCandidate->progressS,
+                    accessDistanceM: $globalCandidate->accessDistanceM,
+                    accessDurationS: $globalCandidate->accessDurationS,
+                );
+                $candidatesByNodeId[$nodeId] = $globalCandidate;
+            }
+
+            $legStartM = $distanceOffsetM;
+            $legStartS = $durationOffsetS;
+            $distanceOffsetM += $leg->corridor->distanceM;
+            $durationOffsetS += $leg->corridor->durationS;
+            $nodes[] = new FuelauOptimizerNode(
+                $legIndex === count($legs) - 1
+                    ? 'destination'
+                    : "itinerary-stop:" . ($legIndex + 1),
+                $distanceOffsetM,
+                label: $leg->target->label,
+                progressS: $durationOffsetS,
+                physicalStop: $leg->target->physicalStop,
+            );
+            $legSummaries[] = [
+                'index' => $legIndex,
+                'start_m' => $legStartM,
+                'end_m' => $distanceOffsetM,
+                'start_s' => $legStartS,
+                'end_s' => $durationOffsetS,
+                'target' => $leg->target,
+            ];
+            foreach ($leg->corridor->geometryPoints() as $pointIndex => $point) {
+                if ($combinedGeometry !== [] && $pointIndex === 0) {
+                    continue;
+                }
+                $combinedGeometry[] = $point;
+            }
+        }
+
+        usort(
+            $nodes,
+            static fn (FuelauOptimizerNode $left, FuelauOptimizerNode $right): int =>
+                ($left->progressM <=> $right->progressM)
+                ?: strcmp($left->id, $right->id),
+        );
+
+        return new FuelauCompleteItineraryInput(
+            corridor: new FuelauRouteCorridor(
+                $distanceOffsetM,
+                $durationOffsetS,
+                $combinedGeometry,
+            ),
+            input: new FuelauFixedCorridorInput(
+                nodes: $nodes,
+                candidatesByNodeId: $candidatesByNodeId,
+                eligibleCandidateCount: $eligibleCandidateCount,
+                selectedCandidateCount: $selectedCandidateCount,
+            ),
+            legSummaries: $legSummaries,
+        );
+    }
+}
+
 final class FuelauFixedCorridorCandidateAdapter
 {
     private const OFFICIAL_SOURCES = ['qld', 'sa', 'nsw', 'wa', 'tas', 'vic', 'nt'];
@@ -380,7 +594,12 @@ final class FuelauFixedCorridorCandidateAdapter
                 ?: strcmp($left->stableId, $right->stableId),
         );
 
-        $nodes = [new FuelauOptimizerNode('origin', 0, progressS: 0)];
+        $nodes = [new FuelauOptimizerNode(
+            'origin',
+            0,
+            progressS: 0,
+            physicalStop: true,
+        )];
         $candidatesByNodeId = [];
         foreach ($selected as $candidate) {
             $nodes[] = FuelauOptimizerNode::station(
@@ -398,6 +617,7 @@ final class FuelauFixedCorridorCandidateAdapter
             'destination',
             $corridor->distanceM,
             progressS: $corridor->durationS,
+            physicalStop: true,
         );
 
         return new FuelauFixedCorridorInput(
@@ -1001,12 +1221,18 @@ final class FuelauSingleCorridorValidationCoordinator
 
 final readonly class FuelauSingleCorridorOptimizationResult
 {
+    /**
+     * @param list<array{lat: float, lon: float}>|null $itineraryCoordinates
+     * @param list<array<string, mixed>> $itineraryLegs
+     */
     public function __construct(
         public FuelauRouteOptimizationRequest $request,
         public FuelauRouteCorridor $corridor,
         public FuelauFixedCorridorInput $input,
         public FuelauOptimizerPlan $plan,
         public FuelauOptimizerPolicy $policy,
+        public ?array $itineraryCoordinates = null,
+        public array $itineraryLegs = [],
     ) {}
 
     /**
@@ -1014,6 +1240,9 @@ final readonly class FuelauSingleCorridorOptimizationResult
      */
     public function exactRouteCoordinates(): array
     {
+        if ($this->itineraryCoordinates !== null) {
+            return $this->itineraryCoordinates;
+        }
         $coordinates = [[
             'lat' => $this->request->origin->latitude,
             'lon' => $this->request->origin->longitude,
@@ -1049,6 +1278,19 @@ final readonly class FuelauSingleCorridorOptimizationResult
         $previousAccessDurationS = 0;
 
         foreach ($this->plan->purchases as $index => $purchase) {
+            foreach ($this->input->nodes as $node) {
+                if (
+                    !$node->physicalStop
+                    || $node->progressM <= $previousProgressM
+                    || $node->progressM >= $purchase->progressM
+                ) {
+                    continue;
+                }
+                $previousProgressM = $node->progressM;
+                $previousProgressS = $node->progressS;
+                $previousAccessDistanceM = 0;
+                $previousAccessDurationS = 0;
+            }
             $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
             if ($candidate === null) {
                 throw new LogicException("Missing candidate metadata for {$purchase->nodeId}.");
@@ -1131,7 +1373,7 @@ final readonly class FuelauSingleCorridorOptimizationResult
             ($this->corridor->durationS * $this->policy->driverTimeValueCentsPerHour) / 3_600,
         );
 
-        return [
+        $response = [
             'version' => 1,
             'status' => 'ok',
             'objective' => [
@@ -1173,6 +1415,265 @@ final readonly class FuelauSingleCorridorOptimizationResult
                 'network_shortlist_count' => $this->input->selectedCandidateCount,
             ],
         ];
+        if ($this->itineraryLegs !== []) {
+            $response['itinerary'] = [
+                'return_mode' => $this->request->returnMode,
+                'leg_count' => count($this->itineraryLegs),
+                'legs' => $this->itineraryLegs,
+            ];
+        }
+
+        return $response;
+    }
+}
+
+function fuelauOptimizerPolicyForRequest(
+    FuelauRouteOptimizationRequest $request,
+): FuelauOptimizerPolicy {
+    $preferences = $request->preferences;
+
+    return new FuelauOptimizerPolicy(
+        mode: $preferences->mode,
+        maximumFuelOnlyStops: $preferences->maximumFuelOnlyStops,
+        minimumDiscretionaryPurchaseL: $preferences->minimumDiscretionaryPurchaseL,
+        minimumStopSpacingM: (int) round($preferences->minimumStopSpacingKm * 1_000),
+        minimumStopSpacingS: (int) round($preferences->minimumStopSpacingMinutes * 60),
+        maximumDiscretionaryDetourM: (int) round(
+            $preferences->maximumDiscretionaryDetourKm * 1_000,
+        ),
+        maximumDiscretionaryDetourS: (int) round(
+            $preferences->maximumDiscretionaryDetourMinutes * 60,
+        ),
+        minimumNetSavingCents: $preferences->minimumNetSavingCents,
+        driverTimeValueCentsPerHour: $preferences->driverTimeValueCentsPerHour,
+        fuelOnlyStopSeconds: (int) round($preferences->fuelOnlyStopMinutes * 60),
+    );
+}
+
+/**
+ * @param list<array<string, mixed>> $candidateRows
+ * @return list<array<string, mixed>>
+ */
+function fuelauEligibleOptimizerCandidateRows(
+    array $candidateRows,
+    FuelauOptimizerPolicy $policy,
+): array {
+    return array_values(array_filter(
+        $candidateRows,
+        static function (array $row) use ($policy): bool {
+            if (($row['price_status'] ?? null) !== 'fresh') {
+                return false;
+            }
+            $accessDistanceM = $row['access_distance_m'] ?? null;
+            $accessDurationS = $row['access_duration_s'] ?? null;
+
+            return !is_numeric((string) $accessDistanceM)
+                || !is_numeric((string) $accessDurationS)
+                || (
+                    ((float) $accessDistanceM * 2) <= $policy->maximumSafetyDetourM
+                    && ((float) $accessDurationS * 2) <= $policy->maximumSafetyDetourS
+                );
+        },
+    ));
+}
+
+final class FuelauCompleteItineraryPlanner
+{
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     */
+    public function plan(
+        FuelauRouteOptimizationRequest $request,
+        array $legs,
+    ): FuelauSingleCorridorOptimizationResult {
+        $policy = fuelauOptimizerPolicyForRequest($request);
+        $itinerary = (new FuelauCompleteItineraryAssembler())->build(
+            $request,
+            $legs,
+            $policy,
+        );
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            $itinerary->input->nodes,
+            new FuelauOptimizerVehicle(
+                tankCapacityL: $request->fuel->tankCapacityL,
+                startingFuelL: $request->fuel->startingFuelL,
+                reserveL: $request->fuel->reserveL,
+                economyLPer100km: $request->fuel->economyLPer100km,
+            ),
+            $policy,
+        );
+        foreach ($plan->purchases as $purchase) {
+            $candidate = $itinerary->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null || $candidate->accessEstimated) {
+                throw new FuelauRoutePlanValidationException(
+                    'Selected station access must be validated with road-network distance and duration.',
+                );
+            }
+        }
+        $legSummaries = array_map(
+            static fn (array $leg): array => [
+                'index' => $leg['index'],
+                'distance_m' => $leg['end_m'] - $leg['start_m'],
+                'duration_s' => $leg['end_s'] - $leg['start_s'],
+                'target' => $leg['target']->toArray(),
+            ],
+            $itinerary->legSummaries,
+        );
+
+        return new FuelauSingleCorridorOptimizationResult(
+            request: $request,
+            corridor: $itinerary->corridor,
+            input: $itinerary->input,
+            plan: $plan,
+            policy: $policy,
+            itineraryCoordinates: $itinerary->exactRouteCoordinates($plan),
+            itineraryLegs: $legSummaries,
+        );
+    }
+}
+
+final class FuelauCompleteItineraryValidationCoordinator
+{
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     * @param callable(list<array{lat: float, lon: float}>): array<string, mixed> $exactRouteLoader
+     */
+    public function planAndValidate(
+        FuelauRouteOptimizationRequest $request,
+        array $legs,
+        callable $exactRouteLoader,
+        int $maximumValidationPasses = 2,
+    ): FuelauValidatedSingleCorridorPlan {
+        if ($maximumValidationPasses < 1 || $maximumValidationPasses > 2) {
+            throw new InvalidArgumentException('Exact route validation passes must be between 1 and 2.');
+        }
+
+        $planner = new FuelauCompleteItineraryPlanner();
+        $validator = new FuelauExactRouteValidator();
+        $preparedLegs = array_values($legs);
+        for ($pass = 1; $pass <= $maximumValidationPasses; $pass++) {
+            $result = $planner->plan($request, $preparedLegs);
+            $exactRoute = $exactRouteLoader($result->exactRouteCoordinates());
+            $validation = $validator->validate($result, $exactRoute);
+            if (!$validation->requiresReoptimization) {
+                return new FuelauValidatedSingleCorridorPlan(
+                    result: $result,
+                    validation: $validation,
+                    exactRoute: $exactRoute,
+                    validationPassCount: $pass,
+                );
+            }
+            if ($pass === $maximumValidationPasses) {
+                if ($validator->isAcceptableConservativeVariance($validation)) {
+                    return new FuelauValidatedSingleCorridorPlan(
+                        result: $result,
+                        validation: $validation,
+                        exactRoute: $exactRoute,
+                        validationPassCount: $pass,
+                        acceptedConservativeVariance: true,
+                    );
+                }
+                break;
+            }
+            $preparedLegs = $this->reconcileSelectedAccess(
+                $preparedLegs,
+                $result,
+                $validation,
+            );
+        }
+
+        throw new FuelauRoutePlanValidationException(sprintf(
+            'Exact selected-stop itinerary did not stabilize within the validation budget '
+                . '(distance delta %d m, duration delta %d s, fuel bucket delta %d).',
+            $validation->distanceDeltaM,
+            $validation->durationDeltaS,
+            $validation->fuelBucketDelta,
+        ));
+    }
+
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     * @return list<FuelauPreparedItineraryLeg>
+     */
+    private function reconcileSelectedAccess(
+        array $legs,
+        FuelauSingleCorridorOptimizationResult $result,
+        FuelauExactRouteValidation $validation,
+    ): array {
+        $selectedVisits = [];
+        $currentAccessDistanceM = 0;
+        $currentAccessDurationS = 0;
+        foreach ($result->plan->purchases as $purchase) {
+            $candidate = $result->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null) {
+                continue;
+            }
+            $legIndex = $candidate->sourceRow['itinerary_leg_index'] ?? null;
+            if (!is_int($legIndex)) {
+                continue;
+            }
+            $selectedVisits["{$legIndex}:{$candidate->stableId}"] = true;
+            $currentAccessDistanceM += $candidate->accessDistanceM;
+            $currentAccessDurationS += $candidate->accessDurationS;
+        }
+        if ($selectedVisits === []) {
+            return $legs;
+        }
+
+        $targetAccessDistanceM = max(
+            0,
+            (int) ceil(($validation->exactDistanceM - $result->corridor->distanceM) / 2),
+        );
+        $targetAccessDurationS = max(
+            0,
+            (int) ceil(($validation->exactDurationS - $result->corridor->durationS) / 2),
+        );
+        $selectedCount = count($selectedVisits);
+        $reconciled = [];
+        foreach ($legs as $leg) {
+            $rows = $leg->candidateRows;
+            foreach ($rows as &$row) {
+                $visitKey = "{$leg->index}:{$this->stableRowId($row)}";
+                if (!isset($selectedVisits[$visitKey])) {
+                    continue;
+                }
+                $row['access_distance_m'] = $currentAccessDistanceM > 0
+                    ? (int) ceil(
+                        ((float) ($row['access_distance_m'] ?? 0) / $currentAccessDistanceM)
+                        * $targetAccessDistanceM,
+                    )
+                    : (int) ceil($targetAccessDistanceM / $selectedCount);
+                $row['access_duration_s'] = $currentAccessDurationS > 0
+                    ? (int) ceil(
+                        ((float) ($row['access_duration_s'] ?? 0) / $currentAccessDurationS)
+                        * $targetAccessDurationS,
+                    )
+                    : (int) ceil($targetAccessDurationS / $selectedCount);
+                $row['road_access_status'] = 'exact_route_reconciled';
+            }
+            unset($row);
+            $reconciled[] = new FuelauPreparedItineraryLeg(
+                index: $leg->index,
+                corridor: $leg->corridor,
+                target: $leg->target,
+                candidateRows: array_values($rows),
+            );
+        }
+
+        return $reconciled;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function stableRowId(array $row): string
+    {
+        return implode(':', [
+            strtolower(trim((string) ($row['source'] ?? ''))),
+            strtoupper(trim((string) ($row['state'] ?? ''))),
+            trim((string) ($row['station_id'] ?? '')),
+            trim((string) ($row['fuel_code'] ?? $row['fuel_name'] ?? 'fuel')),
+        ]);
     }
 }
 
@@ -1192,40 +1693,11 @@ final class FuelauSingleCorridorPlanner
             );
         }
 
-        $preferences = $request->preferences;
-        $policy = new FuelauOptimizerPolicy(
-            mode: $preferences->mode,
-            maximumFuelOnlyStops: $preferences->maximumFuelOnlyStops,
-            minimumDiscretionaryPurchaseL: $preferences->minimumDiscretionaryPurchaseL,
-            minimumStopSpacingM: (int) round($preferences->minimumStopSpacingKm * 1_000),
-            minimumStopSpacingS: (int) round($preferences->minimumStopSpacingMinutes * 60),
-            maximumDiscretionaryDetourM: (int) round(
-                $preferences->maximumDiscretionaryDetourKm * 1_000,
-            ),
-            maximumDiscretionaryDetourS: (int) round(
-                $preferences->maximumDiscretionaryDetourMinutes * 60,
-            ),
-            minimumNetSavingCents: $preferences->minimumNetSavingCents,
-            driverTimeValueCentsPerHour: $preferences->driverTimeValueCentsPerHour,
-            fuelOnlyStopSeconds: (int) round($preferences->fuelOnlyStopMinutes * 60),
-        );
-        $freshRows = array_values(array_filter(
+        $policy = fuelauOptimizerPolicyForRequest($request);
+        $freshRows = fuelauEligibleOptimizerCandidateRows(
             $candidateRows,
-            static function (array $row) use ($policy): bool {
-                if (($row['price_status'] ?? null) !== 'fresh') {
-                    return false;
-                }
-                $accessDistanceM = $row['access_distance_m'] ?? null;
-                $accessDurationS = $row['access_duration_s'] ?? null;
-
-                return !is_numeric((string) $accessDistanceM)
-                    || !is_numeric((string) $accessDurationS)
-                    || (
-                        ((float) $accessDistanceM * 2) <= $policy->maximumSafetyDetourM
-                        && ((float) $accessDurationS * 2) <= $policy->maximumSafetyDetourS
-                    );
-            },
-        ));
+            $policy,
+        );
         $input = (new FuelauFixedCorridorCandidateAdapter())->build(
             $corridor,
             $freshRows,
@@ -1398,5 +1870,248 @@ final class FuelauLiveSingleCorridorPlanner
         $response['diagnostics']['osrm_table_request_count'] = $tableRequestCount;
 
         return $response;
+    }
+}
+
+final class FuelauLiveCompleteItineraryPlanner
+{
+    private const GLOBAL_ROAD_CANDIDATE_LIMIT = 160;
+
+    private Closure $routeLoader;
+    private Closure $candidateLoader;
+    private Closure $tableLoader;
+    private Closure $clock;
+
+    public function __construct(
+        ?Closure $routeLoader = null,
+        ?Closure $candidateLoader = null,
+        ?Closure $tableLoader = null,
+        ?Closure $clock = null,
+    ) {
+        $this->routeLoader = $routeLoader ?? static function (array $coordinates): array {
+            $payload = fuelauRoutePlan($coordinates, false);
+            $route = $payload['routes'][0] ?? null;
+            if (($payload['code'] ?? null) !== 'Ok' || !is_array($route)) {
+                throw new FuelauUpstreamException('OSRM did not return a usable route.');
+            }
+
+            return $route;
+        };
+        $this->candidateLoader = $candidateLoader ?? static function (
+            array $points,
+            string $fuel,
+        ): array {
+            return fuelauCachedCoverageBalancedRouteCandidateRows(
+                fuelauPdo(),
+                $points,
+                $fuel,
+                75,
+                5_000,
+                fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
+            );
+        };
+        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+            fuelauOsrmTable($coordinates);
+        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function plan(FuelauRouteOptimizationRequest $request): array
+    {
+        $locations = $request->itineraryLocations();
+        $legCount = count($locations) - 1;
+        if ($legCount < 1 || $legCount > 20) {
+            throw new FuelauRoutePlanningUnsupportedException(
+                'Expanded itineraries must contain between 1 and 20 route legs.',
+            );
+        }
+
+        $routeRequestCount = 0;
+        $tableRequestCount = 0;
+        $loadRoute = function (array $coordinates) use (&$routeRequestCount): array {
+            $routeRequestCount++;
+
+            return ($this->routeLoader)($coordinates);
+        };
+
+        $preparedLegs = [];
+        foreach (array_slice($locations, 1) as $index => $target) {
+            $start = $locations[$index];
+            $route = $loadRoute([
+                ['lat' => $start->latitude, 'lon' => $start->longitude],
+                ['lat' => $target->latitude, 'lon' => $target->longitude],
+            ]);
+            $preparedLegs[] = new FuelauPreparedItineraryLeg(
+                index: $index,
+                corridor: FuelauRouteCorridor::fromOsrmRoute($route),
+                target: $target,
+                candidateRows: [],
+            );
+        }
+        $baselineRoute = $this->combinedBaselineRoute($preparedLegs);
+
+        try {
+            $noStopResult = (new FuelauCompleteItineraryPlanner())->plan(
+                $request,
+                $preparedLegs,
+            );
+            $noStopValidation = (new FuelauExactRouteValidator())->validate(
+                $noStopResult,
+                $baselineRoute,
+            );
+            if (!$noStopValidation->requiresReoptimization) {
+                $response = (new FuelauValidatedSingleCorridorPlan(
+                    result: $noStopResult,
+                    validation: $noStopValidation,
+                    exactRoute: $baselineRoute,
+                    validationPassCount: 1,
+                ))->toResponseArray();
+                $response['diagnostics']['raw_candidate_count'] = 0;
+                $response['diagnostics']['fresh_candidate_count'] = 0;
+                $response['diagnostics']['osrm_route_request_count'] = $routeRequestCount;
+                $response['diagnostics']['osrm_table_request_count'] = 0;
+                $response['diagnostics']['itinerary_leg_count'] = $legCount;
+
+                return $response;
+            }
+        } catch (FuelauRouteInfeasibleException) {
+            // Candidate work is only needed when starting fuel cannot finish
+            // the complete itinerary with the requested terminal reserve.
+        }
+
+        $rawCandidateCount = 0;
+        $freshCandidateCount = 0;
+        $candidateLimitPerLeg = max(
+            8,
+            intdiv(self::GLOBAL_ROAD_CANDIDATE_LIMIT, $legCount),
+        );
+        $candidateLimitPerLeg = min(80, $candidateLimitPerLeg);
+        $measuredLegs = [];
+        $asOf = ($this->clock)();
+        foreach ($preparedLegs as $leg) {
+            $candidateRows = ($this->candidateLoader)(
+                $leg->corridor->candidateLookupPoints(),
+                $request->fuel->type,
+            );
+            if (!is_array($candidateRows)) {
+                throw new RuntimeException('Route candidate loader returned an invalid result.');
+            }
+            $candidateRows = array_values($candidateRows);
+            $rawCandidateCount += count($candidateRows);
+            $classifiedRows = fuelauClassifyRouteCandidatePriceRows(
+                $candidateRows,
+                $asOf,
+            );
+            $freshRows = array_values(array_filter(
+                $classifiedRows,
+                static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
+            ));
+            $freshCandidateCount += count($freshRows);
+            $roadCandidateLimit = min(
+                $candidateLimitPerLeg,
+                max(12, (int) ceil($leg->corridor->distanceM / 50_000)),
+            );
+            $measuredRows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+                $leg->corridor,
+                $freshRows,
+                function (array $coordinates) use (&$tableRequestCount): array {
+                    $tableRequestCount++;
+
+                    return ($this->tableLoader)($coordinates);
+                },
+                maximumCandidates: $roadCandidateLimit,
+            );
+            $measuredLegs[] = new FuelauPreparedItineraryLeg(
+                index: $leg->index,
+                corridor: $leg->corridor,
+                target: $leg->target,
+                candidateRows: $measuredRows,
+            );
+        }
+
+        $validated = (new FuelauCompleteItineraryValidationCoordinator())->planAndValidate(
+            $request,
+            $measuredLegs,
+            $loadRoute,
+        );
+        $response = $validated->toResponseArray();
+        $response['diagnostics']['raw_candidate_count'] = $rawCandidateCount;
+        $response['diagnostics']['fresh_candidate_count'] = $freshCandidateCount;
+        $response['diagnostics']['osrm_route_request_count'] = $routeRequestCount;
+        $response['diagnostics']['osrm_table_request_count'] = $tableRequestCount;
+        $response['diagnostics']['itinerary_leg_count'] = $legCount;
+
+        return $response;
+    }
+
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     * @return array<string, mixed>
+     */
+    private function combinedBaselineRoute(array $legs): array
+    {
+        $distanceM = 0;
+        $durationS = 0;
+        $coordinates = [];
+        foreach ($legs as $leg) {
+            $distanceM += $leg->corridor->distanceM;
+            $durationS += $leg->corridor->durationS;
+            foreach ($leg->corridor->geometryPoints() as $index => $point) {
+                if ($coordinates !== [] && $index === 0) {
+                    continue;
+                }
+                $coordinates[] = [$point['lon'], $point['lat']];
+            }
+        }
+
+        return [
+            'distance' => $distanceM,
+            'duration' => $durationS,
+            'geometry' => [
+                'type' => 'LineString',
+                'coordinates' => $coordinates,
+            ],
+        ];
+    }
+}
+
+final class FuelauLiveRoutePlanner
+{
+    private FuelauLiveSingleCorridorPlanner $singleCorridorPlanner;
+    private FuelauLiveCompleteItineraryPlanner $completeItineraryPlanner;
+
+    public function __construct(
+        ?Closure $routeLoader = null,
+        ?Closure $candidateLoader = null,
+        ?Closure $tableLoader = null,
+        ?Closure $clock = null,
+    ) {
+        $this->singleCorridorPlanner = new FuelauLiveSingleCorridorPlanner(
+            $routeLoader,
+            $candidateLoader,
+            $tableLoader,
+            $clock,
+        );
+        $this->completeItineraryPlanner = new FuelauLiveCompleteItineraryPlanner(
+            $routeLoader,
+            $candidateLoader,
+            $tableLoader,
+            $clock,
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function plan(FuelauRouteOptimizationRequest $request): array
+    {
+        if ($request->returnMode === 'one_way' && count($request->destinations) === 1) {
+            return $this->singleCorridorPlanner->plan($request);
+        }
+
+        return $this->completeItineraryPlanner->plan($request);
     }
 }

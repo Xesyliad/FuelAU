@@ -294,6 +294,46 @@ fuelauTest('route optimizer request resolves practical stop defaults', static fu
     fuelauAssertSame(6.0, $request->fuel->reserveL);
 });
 
+fuelauTest('route optimizer expands direct and reverse itinerary semantics deterministically', static function (): void {
+    $body = [
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'origin'],
+        'destinations' => [
+            ['lat' => -31.0, 'lon' => 151.0, 'label' => 'first'],
+            ['lat' => -32.0, 'lon' => 152.0, 'label' => 'second'],
+            ['lat' => -33.0, 'lon' => 153.0, 'label' => 'third'],
+        ],
+        'return_mode' => 'direct',
+        'fuel' => [
+            'type' => 'Diesel',
+            'tank_capacity_l' => 80,
+            'starting_fuel_l' => 50,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 10,
+        ],
+    ];
+    $direct = FuelauRouteOptimizationRequest::fromBody($body);
+    $reverse = FuelauRouteOptimizationRequest::fromBody([
+        ...$body,
+        'return_mode' => 'reverse',
+    ]);
+
+    fuelauAssertSame(
+        ['origin', 'first', 'second', 'third', 'origin'],
+        array_map(
+            static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+            $direct->itineraryLocations(),
+        ),
+    );
+    fuelauAssertSame(
+        ['origin', 'first', 'second', 'third', 'second', 'first', 'origin'],
+        array_map(
+            static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+            $reverse->itineraryLocations(),
+        ),
+    );
+});
+
 fuelauTest('route optimizer rejects impossible starting fuel and stop counts', static function (): void {
     $base = [
         'version' => 1,
@@ -952,6 +992,109 @@ fuelauTest('projected corridor candidates feed the practical optimizer', static 
     fuelauAssertSame('strategic', $plan->purchases[1]->classification);
 });
 
+fuelauTest('complete itinerary optimizer buys outbound fuel with return-leg lookahead', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'direct',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 70,
+            'starting_fuel_l' => 35,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 3,
+            'minimum_discretionary_purchase_l' => 5,
+            'minimum_stop_spacing_km' => 100,
+            'minimum_stop_spacing_minutes' => 60,
+        ],
+    ]);
+    $station = [
+        'source' => 'nsw',
+        'state' => 'NSW',
+        'station_id' => 'round-trip-cheap',
+        'station_name' => 'Round Trip Cheap',
+        'fuel_code' => 'E10',
+        'latitude' => -30.0,
+        'longitude' => 152.5,
+        'price' => 100,
+        'updated_at' => '2026-07-30T00:00:00Z',
+        'price_status' => 'fresh',
+        'access_distance_m' => 0,
+        'access_duration_s' => 0,
+    ];
+    $locations = $request->itineraryLocations();
+    $legs = [
+        new FuelauPreparedItineraryLeg(
+            index: 0,
+            corridor: new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 150.0],
+                    ['lat' => -30.0, 'lon' => 153.0],
+                ],
+            ),
+            target: $locations[1],
+            candidateRows: [$station],
+        ),
+        new FuelauPreparedItineraryLeg(
+            index: 1,
+            corridor: new FuelauRouteCorridor(
+                300_000,
+                10_800,
+                [
+                    ['lat' => -30.0, 'lon' => 153.0],
+                    ['lat' => -30.0, 'lon' => 150.0],
+                ],
+            ),
+            target: $locations[2],
+            candidateRows: [$station],
+        ),
+    ];
+    $result = (new FuelauCompleteItineraryPlanner())->plan($request, $legs);
+    $response = $result->toResponseArray();
+
+    fuelauAssertSame(1, $result->plan->fuelStopCount);
+    fuelauAssertSame(
+        'station:nsw:NSW:round-trip-cheap:E10:visit:0',
+        $result->plan->purchases[0]->nodeId,
+    );
+    fuelauAssertSame(30.0, $result->plan->purchases[0]->purchaseL);
+    fuelauAssertSame(3_000, $result->plan->fuelPurchaseCostCents);
+    fuelauAssertSame(2, $response['itinerary']['leg_count']);
+    fuelauAssertSame(600_000, $response['corridor']['distance_m']);
+    fuelauAssertSame(4, count($result->exactRouteCoordinates()));
+    fuelauAssertSame(
+        [
+            'station:nsw:NSW:round-trip-cheap:E10:visit:0',
+            'station:nsw:NSW:round-trip-cheap:E10:visit:1',
+        ],
+        array_keys($result->input->candidatesByNodeId),
+        'Repeated physical stations need visit-specific state nodes',
+    );
+
+    $exactRouteCalls = 0;
+    $validated = (new FuelauCompleteItineraryValidationCoordinator())->planAndValidate(
+        $request,
+        $legs,
+        static function (array $coordinates) use (&$exactRouteCalls): array {
+            $exactRouteCalls++;
+            fuelauAssertSame(4, count($coordinates));
+
+            return ['distance' => 603_000, 'duration' => 21_600];
+        },
+    );
+    fuelauAssertSame(2, $validated->validationPassCount);
+    fuelauAssertSame(2, $exactRouteCalls);
+    fuelauAssertSame(0, $validated->validation->distanceDeltaM);
+});
+
 fuelauTest('single-corridor planner maps request policy and builds response accounting', static function (): void {
     $request = FuelauRouteOptimizationRequest::fromBody([
         'version' => 1,
@@ -1324,6 +1467,151 @@ fuelauTest('live planner skips station dependencies when starting fuel completes
     fuelauAssertSame(1, $response['diagnostics']['osrm_route_request_count']);
     fuelauAssertSame(0, $response['diagnostics']['raw_candidate_count']);
     fuelauAssertSame(0, count($response['stops']));
+});
+
+fuelauTest('live route planner optimizes a direct return as one bounded itinerary', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'direct',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 70,
+            'starting_fuel_l' => 35,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 3,
+            'minimum_discretionary_purchase_l' => 5,
+        ],
+    ]);
+    $routeCalls = 0;
+    $candidateCalls = 0;
+    $tableCalls = 0;
+    $planner = new FuelauLiveRoutePlanner(
+        routeLoader: static function (array $coordinates) use (&$routeCalls): array {
+            $routeCalls++;
+            $geometry = array_map(
+                static fn (array $coordinate): array => [$coordinate['lon'], $coordinate['lat']],
+                $coordinates,
+            );
+
+            return [
+                'distance' => count($coordinates) === 2 ? 300_000 : 600_000,
+                'duration' => count($coordinates) === 2 ? 10_800 : 21_600,
+                'geometry' => [
+                    'type' => 'LineString',
+                    'coordinates' => $geometry,
+                ],
+            ];
+        },
+        candidateLoader: static function () use (&$candidateCalls): array {
+            $candidateCalls++;
+
+            return [[
+                'source' => 'nsw',
+                'state' => 'NSW',
+                'station_id' => 'round-trip-cheap',
+                'station_name' => 'Round Trip Cheap',
+                'fuel_code' => 'E10',
+                'latitude' => -30.0,
+                'longitude' => 152.5,
+                'price' => 100,
+                'updated_at' => '2026-07-30T00:00:00Z',
+            ]];
+        },
+        tableLoader: static function (array $coordinates) use (&$tableCalls): array {
+            $tableCalls++;
+            $count = count($coordinates);
+            $distances = array_fill(0, $count, array_fill(0, $count, 0));
+            $durations = array_fill(0, $count, array_fill(0, $count, 0));
+
+            return ['distances' => $distances, 'durations' => $durations];
+        },
+        clock: static fn (): DateTimeImmutable =>
+            new DateTimeImmutable('2026-07-30T00:00:00Z'),
+    );
+
+    $response = $planner->plan($request);
+
+    fuelauAssertSame(3, $routeCalls);
+    fuelauAssertSame(2, $candidateCalls);
+    fuelauAssertSame(2, $tableCalls);
+    fuelauAssertSame(2, $response['itinerary']['leg_count']);
+    fuelauAssertSame(1, count($response['stops']));
+    fuelauAssertSame(30.0, $response['stops'][0]['purchase_l']);
+    fuelauAssertSame(600_000, $response['summary']['route_distance_m']);
+    fuelauAssertSame(2, $response['diagnostics']['itinerary_leg_count']);
+});
+
+fuelauTest('live route planner expands reverse multi-destination legs without fuel work', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 151.0, 'label' => 'First'],
+            ['lat' => -30.0, 'lon' => 152.0, 'label' => 'Second'],
+            ['lat' => -30.0, 'lon' => 153.0, 'label' => 'Third'],
+        ],
+        'return_mode' => 'reverse',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 100,
+            'starting_fuel_l' => 80,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+    ]);
+    $routeCalls = 0;
+    $candidateCalls = 0;
+    $tableCalls = 0;
+    $planner = new FuelauLiveRoutePlanner(
+        routeLoader: static function (array $coordinates) use (&$routeCalls): array {
+            $routeCalls++;
+
+            return [
+                'distance' => 100_000,
+                'duration' => 3_600,
+                'geometry' => [
+                    'type' => 'LineString',
+                    'coordinates' => array_map(
+                        static fn (array $coordinate): array => [
+                            $coordinate['lon'],
+                            $coordinate['lat'],
+                        ],
+                        $coordinates,
+                    ),
+                ],
+            ];
+        },
+        candidateLoader: static function () use (&$candidateCalls): array {
+            $candidateCalls++;
+
+            return [];
+        },
+        tableLoader: static function () use (&$tableCalls): array {
+            $tableCalls++;
+
+            return [];
+        },
+    );
+
+    $response = $planner->plan($request);
+
+    fuelauAssertSame(6, $routeCalls);
+    fuelauAssertSame(0, $candidateCalls);
+    fuelauAssertSame(0, $tableCalls);
+    fuelauAssertSame(6, $response['itinerary']['leg_count']);
+    fuelauAssertSame(
+        ['First', 'Second', 'Third', 'Second', 'First', 'Origin'],
+        array_column(array_column($response['itinerary']['legs'], 'target'), 'label'),
+    );
+    fuelauAssertSame(600_000, $response['summary']['route_distance_m']);
+    fuelauAssertSame(20.0, $response['summary']['ending_fuel_l']);
 });
 
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {

@@ -391,7 +391,7 @@ function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $co
 
     try {
         fuelauJsonResponse(
-            (new FuelauLiveSingleCorridorPlanner())->plan($optimizationRequest),
+            (new FuelauLiveRoutePlanner())->plan($optimizationRequest),
         );
     } catch (FuelauRoutePlanningUnsupportedException $exception) {
         fuelauJsonResponse([

@@ -179,7 +179,7 @@ fuelauApiContractTest('route optimizer is disabled by default', static function 
     fuelauApiAssertSame('optimizer_disabled', $response['payload']['error'] ?? null, 'Optimizer disabled error');
 });
 
-fuelauApiContractTest('enabled optimizer rejects unsupported itinerary before upstream work', static function () use (
+fuelauApiContractTest('enabled optimizer accepts a supported return itinerary', static function () use (
     $projectRoot,
     $configPath,
     $config,
@@ -208,12 +208,15 @@ fuelauApiContractTest('enabled optimizer rejects unsupported itinerary before up
         ],
     );
 
-    fuelauApiAssertSame(422, $response['status'], 'Unsupported itinerary status code');
-    fuelauApiAssertSame(
-        'unsupported_itinerary',
-        $response['payload']['error'] ?? null,
-        'Unsupported itinerary error',
-    );
+    if (!in_array($response['status'], [200, 503], true)) {
+        throw new RuntimeException(
+            'Supported return itinerary status: expected 200 or dependency 503, got '
+                . var_export($response['status'], true),
+        );
+    }
+    if (($response['payload']['error'] ?? null) === 'unsupported_itinerary') {
+        throw new RuntimeException('Direct return itineraries must reach the live planner.');
+    }
 });
 
 @unlink($configPath);

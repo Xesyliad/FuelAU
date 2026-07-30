@@ -541,6 +541,26 @@ final readonly class FuelauRouteOptimizationRequest
             ),
         );
     }
+
+    /**
+     * @return list<FuelauRouteOptimizationLocation>
+     */
+    public function itineraryLocations(): array
+    {
+        $locations = [$this->origin, ...$this->destinations];
+        if ($this->returnMode === 'one_way') {
+            return $locations;
+        }
+        if ($this->returnMode === 'reverse') {
+            $locations = [
+                ...$locations,
+                ...array_reverse(array_slice($this->destinations, 0, -1)),
+            ];
+        }
+        $locations[] = $this->origin;
+
+        return $locations;
+    }
 }
 
 final readonly class FuelauRouteCandidateRequest

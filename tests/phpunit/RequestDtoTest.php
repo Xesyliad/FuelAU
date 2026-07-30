@@ -98,6 +98,47 @@ final class RequestDtoTest extends TestCase
         self::assertSame(3000, $request->preferences->driverTimeValueCentsPerHour);
     }
 
+    public function testDirectAndReverseItinerarySemanticsAreExpandedInOrder(): void
+    {
+        $body = [
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'origin'],
+            'destinations' => [
+                ['lat' => -31.0, 'lon' => 151.0, 'label' => 'first'],
+                ['lat' => -32.0, 'lon' => 152.0, 'label' => 'second'],
+                ['lat' => -33.0, 'lon' => 153.0, 'label' => 'third'],
+            ],
+            'return_mode' => 'direct',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 80,
+                'starting_fuel_l' => 50,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 10,
+            ],
+        ];
+        $direct = FuelauRouteOptimizationRequest::fromBody($body);
+        $reverse = FuelauRouteOptimizationRequest::fromBody([
+            ...$body,
+            'return_mode' => 'reverse',
+        ]);
+
+        self::assertSame(
+            ['origin', 'first', 'second', 'third', 'origin'],
+            array_map(
+                static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+                $direct->itineraryLocations(),
+            ),
+        );
+        self::assertSame(
+            ['origin', 'first', 'second', 'third', 'second', 'first', 'origin'],
+            array_map(
+                static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+                $reverse->itineraryLocations(),
+            ),
+        );
+    }
+
     public function testRouteOptimizationRequestRejectsStartingFuelAboveCapacity(): void
     {
         $this->expectException(FuelauValidationException::class);

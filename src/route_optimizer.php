@@ -37,6 +37,7 @@ final readonly class FuelauOptimizerNode
         public int $progressS = 0,
         public int $accessDistanceM = 0,
         public int $accessDurationS = 0,
+        public bool $physicalStop = false,
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('Optimizer node ID must not be empty.');
@@ -69,6 +70,7 @@ final readonly class FuelauOptimizerNode
             progressS: $progressS,
             accessDistanceM: $accessDistanceM,
             accessDurationS: $accessDurationS,
+            physicalStop: false,
         );
     }
 }
@@ -249,6 +251,21 @@ final class FuelauFuelStateOptimizer
                 $previousAccessDistanceM = 0;
                 $previousAccessDurationS = 0;
                 foreach ($plan->purchases as $purchase) {
+                    $resetByPlannedStop = false;
+                    foreach ($nodes as $node) {
+                        if (
+                            !$node->physicalStop
+                            || $node->progressM <= $previousProgressM
+                            || $node->progressM >= $purchase->progressM
+                        ) {
+                            continue;
+                        }
+                        $previousProgressM = $node->progressM;
+                        $previousProgressS = $node->progressS;
+                        $previousAccessDistanceM = 0;
+                        $previousAccessDurationS = 0;
+                        $resetByPlannedStop = true;
+                    }
                     if (isset($required[$purchase->nodeId])) {
                         $previousProgressM = $purchase->progressM;
                         $previousProgressS = $purchase->progressS;
@@ -298,6 +315,7 @@ final class FuelauFuelStateOptimizer
                             };
                         } elseif (
                             !$tooFar
+                            && !$resetByPlannedStop
                             && $alternative->fuelStopCount >= $plan->fuelStopCount
                         ) {
                             $required[$purchase->nodeId] = $tooSmall
