@@ -9,6 +9,7 @@ parameters:
         - src/http.php
         - src/migrations.php
         - src/request.php
+        - src/route_optimizer.php
         - src/routing.php
         - src/web.php
         - templates/app.php

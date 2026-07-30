@@ -13,6 +13,7 @@ $finder = PhpCsFixer\Finder::create()
         __DIR__ . '/src/http.php',
         __DIR__ . '/src/migrations.php',
         __DIR__ . '/src/request.php',
+        __DIR__ . '/src/route_optimizer.php',
         __DIR__ . '/src/web.php',
         __DIR__ . '/templates/app.php',
     ]);

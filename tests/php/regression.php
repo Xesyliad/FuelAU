@@ -8,6 +8,7 @@ require dirname(__DIR__, 2) . '/src/fuel.php';
 require dirname(__DIR__, 2) . '/src/migrations.php';
 require dirname(__DIR__, 2) . '/src/routing.php';
 require dirname(__DIR__, 2) . '/src/request.php';
+require dirname(__DIR__, 2) . '/src/route_optimizer.php';
 
 $tests = [];
 $failures = [];
@@ -264,6 +265,74 @@ fuelauTest('route optimizer rejects impossible starting fuel and stop counts', s
         FuelauValidationException::class,
         static fn (): FuelauRouteOptimizationRequest => FuelauRouteOptimizationRequest::fromBody($base),
         'Excessive fuel-only stop limits must be rejected',
+    );
+});
+
+fuelauTest('fuel-state optimizer avoids terminal overfill', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimize(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('station-b', 500_000, 150, 'Station B'),
+            new FuelauOptimizerNode('destination', 700_000),
+        ],
+        new FuelauOptimizerVehicle(
+            tankCapacityL: 60,
+            startingFuelL: 60,
+            reserveL: 6,
+            economyLPer100km: 10,
+        ),
+    );
+
+    fuelauAssertSame(1, $plan->fuelStopCount);
+    fuelauAssertSame(16.0, $plan->fuelPurchasedL);
+    fuelauAssertSame(2400, $plan->fuelPurchaseCostCents);
+    fuelauAssertSame(6.0, $plan->endingFuelL);
+    fuelauAssertSame('station-b', $plan->purchases[0]->nodeId);
+    fuelauAssertSame(16.0, $plan->purchases[0]->purchaseL);
+});
+
+fuelauTest('fuel-state optimizer buys only enough expensive fuel to reach cheaper fuel', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimize(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('station-a', 50_000, 200, 'Station A'),
+            FuelauOptimizerNode::station('station-b', 400_000, 150, 'Station B'),
+            new FuelauOptimizerNode('destination', 600_000),
+        ],
+        new FuelauOptimizerVehicle(
+            tankCapacityL: 60,
+            startingFuelL: 12,
+            reserveL: 6,
+            economyLPer100km: 10,
+        ),
+    );
+
+    fuelauAssertSame(2, $plan->fuelStopCount);
+    fuelauAssertSame(54.0, $plan->fuelPurchasedL);
+    fuelauAssertSame(9800, $plan->fuelPurchaseCostCents);
+    fuelauAssertSame(6.0, $plan->endingFuelL);
+    fuelauAssertSame('station-a', $plan->purchases[0]->nodeId);
+    fuelauAssertSame(34.0, $plan->purchases[0]->purchaseL);
+    fuelauAssertSame('station-b', $plan->purchases[1]->nodeId);
+    fuelauAssertSame(20.0, $plan->purchases[1]->purchaseL);
+});
+
+fuelauTest('fuel-state optimizer rejects an unbridgeable range gap', static function (): void {
+    fuelauAssertThrows(
+        FuelauRouteInfeasibleException::class,
+        static fn (): FuelauOptimizerPlan => (new FuelauFuelStateOptimizer())->optimize(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                new FuelauOptimizerNode('destination', 700_000),
+            ],
+            new FuelauOptimizerVehicle(
+                tankCapacityL: 60,
+                startingFuelL: 60,
+                reserveL: 6,
+                economyLPer100km: 10,
+            ),
+        ),
+        'An unbridgeable full-tank range gap must be infeasible',
     );
 });
 
