@@ -81,6 +81,10 @@ final readonly class FuelauOptimizerPolicy
         public ?float $minimumDiscretionaryPurchaseL = null,
         public int $minimumStopSpacingM = 150_000,
         public int $minimumStopSpacingS = 5_400,
+        public int $maximumDiscretionaryDetourM = 20_000,
+        public int $maximumDiscretionaryDetourS = 1_200,
+        public int $maximumSafetyDetourM = 75_000,
+        public int $maximumSafetyDetourS = 3_600,
         public int $minimumNetSavingCents = 1_000,
         public int $driverTimeValueCentsPerHour = 3_000,
         public int $fuelOnlyStopSeconds = 600,
@@ -98,6 +102,10 @@ final readonly class FuelauOptimizerPolicy
         foreach ([
             $minimumStopSpacingM,
             $minimumStopSpacingS,
+            $maximumDiscretionaryDetourM,
+            $maximumDiscretionaryDetourS,
+            $maximumSafetyDetourM,
+            $maximumSafetyDetourS,
             $minimumNetSavingCents,
             $driverTimeValueCentsPerHour,
             $fuelOnlyStopSeconds,
@@ -260,8 +268,12 @@ final class FuelauFuelStateOptimizer
                         + intdiv($purchase->detourDurationS, 2);
                     $tooClose = $distanceSincePhysicalStopM < $policy->minimumStopSpacingM
                         && $durationSincePhysicalStopS < $policy->minimumStopSpacingS;
+                    $tooFar = $purchase->detourDistanceM > $policy->maximumDiscretionaryDetourM
+                        || $purchase->detourDurationS > $policy->maximumDiscretionaryDetourS;
+                    $beyondSafetyDetour = $purchase->detourDistanceM > $policy->maximumSafetyDetourM
+                        || $purchase->detourDurationS > $policy->maximumSafetyDetourS;
 
-                    if ($tooSmall || $tooClose) {
+                    if ($tooSmall || $tooClose || $tooFar || $beyondSafetyDetour) {
                         $alternative = $this->solveWithoutNode(
                             $nodes,
                             $vehicle,
@@ -271,9 +283,16 @@ final class FuelauFuelStateOptimizer
                             $purchase->nodeId,
                         );
                         if ($alternative === null) {
-                            $required[$purchase->nodeId] = $tooSmall
-                                ? 'minimum_purchase_safety_override'
-                                : 'stop_spacing_safety_override';
+                            if ($beyondSafetyDetour) {
+                                throw new FuelauRouteInfeasibleException(
+                                    'The only reachable station exceeds the maximum safety detour.',
+                                );
+                            }
+                            $required[$purchase->nodeId] = match (true) {
+                                $tooFar => 'sparse_corridor',
+                                $tooSmall => 'minimum_purchase_safety_override',
+                                default => 'stop_spacing_safety_override',
+                            };
                         } else {
                             $forbidden[$purchase->nodeId] = true;
                             $plan = $alternative;

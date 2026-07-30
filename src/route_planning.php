@@ -274,6 +274,7 @@ final readonly class FuelauProjectedStationCandidate
         public int $offRouteM,
         public int $accessDistanceM,
         public int $accessDurationS,
+        public bool $accessEstimated,
         public float $priceCentsPerL,
         public array $sourceRow,
     ) {}
@@ -442,12 +443,14 @@ final class FuelauFixedCorridorCandidateAdapter
         $address = trim((string) ($row['address'] ?? ''));
         $measuredAccessDistanceM = $row['access_distance_m'] ?? null;
         $measuredAccessDurationS = $row['access_duration_s'] ?? null;
-        $accessDistanceM = is_numeric((string) $measuredAccessDistanceM)
-            && (float) $measuredAccessDistanceM >= 0
+        $hasMeasuredAccessDistance = is_numeric((string) $measuredAccessDistanceM)
+            && (float) $measuredAccessDistanceM >= 0;
+        $hasMeasuredAccessDuration = is_numeric((string) $measuredAccessDurationS)
+            && (float) $measuredAccessDurationS >= 0;
+        $accessDistanceM = $hasMeasuredAccessDistance
             ? (int) round((float) $measuredAccessDistanceM)
             : (int) ceil($projection->offRouteM * 1.15);
-        $accessDurationS = is_numeric((string) $measuredAccessDurationS)
-            && (float) $measuredAccessDurationS >= 0
+        $accessDurationS = $hasMeasuredAccessDuration
             ? (int) round((float) $measuredAccessDurationS)
             : 0;
         $label = implode(' - ', array_filter(
@@ -464,6 +467,7 @@ final class FuelauFixedCorridorCandidateAdapter
             offRouteM: $projection->offRouteM,
             accessDistanceM: $accessDistanceM,
             accessDurationS: $accessDurationS,
+            accessEstimated: !$hasMeasuredAccessDistance || !$hasMeasuredAccessDuration,
             priceCentsPerL: $price,
             sourceRow: $row,
         );
@@ -504,5 +508,221 @@ final class FuelauFixedCorridorCandidateAdapter
         }
 
         return array_values($byProgress);
+    }
+}
+
+final class FuelauRoutePlanValidationException extends RuntimeException {}
+
+final readonly class FuelauSingleCorridorOptimizationResult
+{
+    public function __construct(
+        public FuelauRouteOptimizationRequest $request,
+        public FuelauRouteCorridor $corridor,
+        public FuelauFixedCorridorInput $input,
+        public FuelauOptimizerPlan $plan,
+        public FuelauOptimizerPolicy $policy,
+    ) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toResponseArray(): array
+    {
+        $detourDistanceM = 0;
+        $detourDurationS = 0;
+        $priceTimestamps = [];
+        $warnings = [];
+        $stops = [];
+        $previousProgressM = 0;
+        $previousProgressS = 0;
+        $previousAccessDistanceM = 0;
+        $previousAccessDurationS = 0;
+
+        foreach ($this->plan->purchases as $index => $purchase) {
+            $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null) {
+                throw new LogicException("Missing candidate metadata for {$purchase->nodeId}.");
+            }
+            $row = $candidate->sourceRow;
+            $accessDistanceM = intdiv($purchase->detourDistanceM, 2);
+            $accessDurationS = intdiv($purchase->detourDurationS, 2);
+            $distanceSincePhysicalStopM = ($purchase->progressM - $previousProgressM)
+                + $previousAccessDistanceM
+                + $accessDistanceM;
+            $durationSincePhysicalStopS = ($purchase->progressS - $previousProgressS)
+                + $previousAccessDurationS
+                + $accessDurationS;
+            $updatedAt = trim((string) ($row['updated_at'] ?? ''));
+            if ($updatedAt !== '') {
+                $priceTimestamps[] = $updatedAt;
+            }
+            if (in_array('sparse_corridor', $purchase->reasonCodes, true)) {
+                $sequence = $index + 1;
+                $warnings[] = "Stop {$sequence} exceeds normal discretionary detour limits for route safety.";
+            }
+
+            $stops[] = [
+                'sequence' => $index + 1,
+                'classification' => $purchase->classification,
+                'reason_codes' => $purchase->reasonCodes,
+                'station' => [
+                    'source' => (string) ($row['source'] ?? ''),
+                    'state' => (string) ($row['state'] ?? ''),
+                    'station_id' => (string) ($row['station_id'] ?? ''),
+                    'station_name' => (string) ($row['station_name'] ?? ''),
+                    'address' => (string) ($row['address'] ?? ''),
+                    'latitude' => is_numeric((string) ($row['latitude'] ?? null))
+                        ? (float) $row['latitude']
+                        : null,
+                    'longitude' => is_numeric((string) ($row['longitude'] ?? null))
+                        ? (float) $row['longitude']
+                        : null,
+                ],
+                'price_cents_per_l' => $purchase->priceCentsPerL,
+                'price_status' => 'fresh',
+                'route_progress_km' => round($purchase->progressM / 1_000, 1),
+                'arrival_fuel_l' => $purchase->arrivalFuelL,
+                'purchase_l' => $purchase->purchaseL,
+                'departure_fuel_l' => $purchase->departureFuelL,
+                'purchase_cost_cents' => $purchase->purchaseCostCents,
+                'detour_distance_m' => $purchase->detourDistanceM,
+                'detour_duration_s' => $purchase->detourDurationS,
+                'distance_since_physical_stop_km' => round(
+                    $distanceSincePhysicalStopM / 1_000,
+                    1,
+                ),
+                'minutes_since_physical_stop' => round($durationSincePhysicalStopS / 60, 1),
+                'marginal_net_saving_cents' => $purchase->marginalNetSavingCents,
+            ];
+
+            $detourDistanceM += $purchase->detourDistanceM;
+            $detourDurationS += $purchase->detourDurationS;
+            $previousProgressM = $purchase->progressM;
+            $previousProgressS = $purchase->progressS;
+            $previousAccessDistanceM = $accessDistanceM;
+            $previousAccessDurationS = $accessDurationS;
+        }
+
+        sort($priceTimestamps, SORT_STRING);
+        $fuelUsedL = $this->request->fuel->startingFuelL
+            + $this->plan->fuelPurchasedL
+            - $this->plan->endingFuelL;
+        $corridorTimeCostCents = (int) ceil(
+            ($this->corridor->durationS * $this->policy->driverTimeValueCentsPerHour) / 3_600,
+        );
+
+        return [
+            'version' => 1,
+            'status' => 'ok',
+            'objective' => [
+                'mode' => $this->request->preferences->mode,
+                'starting_fuel_cost_included' => false,
+                'terminal_reserve_l' => $this->request->fuel->reserveL,
+                'driver_time_value_cents_per_hour' => $this->policy->driverTimeValueCentsPerHour,
+                'minimum_net_saving_cents' => $this->policy->minimumNetSavingCents,
+            ],
+            'summary' => [
+                'route_distance_m' => $this->corridor->distanceM + $detourDistanceM,
+                'route_duration_s' => $this->corridor->durationS + $detourDurationS,
+                'detour_distance_m' => $detourDistanceM,
+                'detour_duration_s' => $detourDurationS,
+                'fuel_used_l' => round($fuelUsedL, 1),
+                'fuel_purchased_l' => $this->plan->fuelPurchasedL,
+                'fuel_purchase_cost_cents' => $this->plan->fuelPurchaseCostCents,
+                'generalized_cost_cents' => $this->plan->generalizedCostCents
+                    + $corridorTimeCostCents,
+                'starting_fuel_l' => $this->request->fuel->startingFuelL,
+                'ending_fuel_l' => $this->plan->endingFuelL,
+                'required_stop_count' => $this->plan->requiredStopCount,
+                'discretionary_stop_count' => $this->plan->discretionaryStopCount,
+                'combined_stop_count' => 0,
+                'price_as_of' => $priceTimestamps[0] ?? null,
+            ],
+            'corridor' => [
+                'id' => 'corridor-1',
+                'kind' => 'fastest',
+                'distance_m' => $this->corridor->distanceM,
+                'duration_s' => $this->corridor->durationS,
+            ],
+            'route_pieces' => [],
+            'stops' => $stops,
+            'alternatives' => [],
+            'warnings' => array_values(array_unique($warnings)),
+            'diagnostics' => [
+                'candidate_count' => $this->input->eligibleCandidateCount,
+                'network_shortlist_count' => $this->input->selectedCandidateCount,
+            ],
+        ];
+    }
+}
+
+final class FuelauSingleCorridorPlanner
+{
+    /**
+     * @param list<array<string, mixed>> $candidateRows
+     */
+    public function plan(
+        FuelauRouteOptimizationRequest $request,
+        FuelauRouteCorridor $corridor,
+        array $candidateRows,
+    ): FuelauSingleCorridorOptimizationResult {
+        if ($request->returnMode !== 'one_way' || count($request->destinations) !== 1) {
+            throw new FuelauRoutePlanValidationException(
+                'Single-corridor planning currently requires one destination and one_way return mode.',
+            );
+        }
+
+        $freshRows = array_values(array_filter(
+            $candidateRows,
+            static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
+        ));
+        $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+            $corridor,
+            $freshRows,
+        );
+        $preferences = $request->preferences;
+        $policy = new FuelauOptimizerPolicy(
+            mode: $preferences->mode,
+            maximumFuelOnlyStops: $preferences->maximumFuelOnlyStops,
+            minimumDiscretionaryPurchaseL: $preferences->minimumDiscretionaryPurchaseL,
+            minimumStopSpacingM: (int) round($preferences->minimumStopSpacingKm * 1_000),
+            minimumStopSpacingS: (int) round($preferences->minimumStopSpacingMinutes * 60),
+            maximumDiscretionaryDetourM: (int) round(
+                $preferences->maximumDiscretionaryDetourKm * 1_000,
+            ),
+            maximumDiscretionaryDetourS: (int) round(
+                $preferences->maximumDiscretionaryDetourMinutes * 60,
+            ),
+            minimumNetSavingCents: $preferences->minimumNetSavingCents,
+            driverTimeValueCentsPerHour: $preferences->driverTimeValueCentsPerHour,
+            fuelOnlyStopSeconds: (int) round($preferences->fuelOnlyStopMinutes * 60),
+        );
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            $input->nodes,
+            new FuelauOptimizerVehicle(
+                tankCapacityL: $request->fuel->tankCapacityL,
+                startingFuelL: $request->fuel->startingFuelL,
+                reserveL: $request->fuel->reserveL,
+                economyLPer100km: $request->fuel->economyLPer100km,
+            ),
+            $policy,
+        );
+
+        foreach ($plan->purchases as $purchase) {
+            $candidate = $input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null || $candidate->accessEstimated) {
+                throw new FuelauRoutePlanValidationException(
+                    'Selected station access must be validated with road-network distance and duration.',
+                );
+            }
+        }
+
+        return new FuelauSingleCorridorOptimizationResult(
+            request: $request,
+            corridor: $corridor,
+            input: $input,
+            plan: $plan,
+            policy: $policy,
+        );
     }
 }

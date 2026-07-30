@@ -128,6 +128,76 @@ final class RouteOptimizerTest extends TestCase
         self::assertSame(3700, $practicalPlan->generalizedCostCents);
     }
 
+    public function testDiscretionaryDetourLimitRejectsRemoteCheapFuel(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'cheap-detour',
+                    50_000,
+                    100,
+                    accessDistanceM: 20_000,
+                ),
+                FuelauOptimizerNode::station('on-route', 60_000, 200),
+                new FuelauOptimizerNode('destination', 300_000),
+            ],
+            new FuelauOptimizerVehicle(60, 20, 6, 10),
+            new FuelauOptimizerPolicy(
+                maximumFuelOnlyStops: 1,
+                minimumDiscretionaryPurchaseL: 0,
+                minimumStopSpacingM: 0,
+                minimumStopSpacingS: 0,
+                minimumNetSavingCents: 0,
+                driverTimeValueCentsPerHour: 0,
+                similarCostCents: 0,
+            ),
+        );
+
+        self::assertSame('on-route', $plan->purchases[0]->nodeId);
+    }
+
+    public function testSparseCorridorCanRequireAStopBeyondNormalDetourLimit(): void
+    {
+        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'remote-safety',
+                    50_000,
+                    180,
+                    accessDistanceM: 20_000,
+                ),
+                new FuelauOptimizerNode('destination', 100_000),
+            ],
+            new FuelauOptimizerVehicle(60, 13, 6, 10),
+        );
+
+        self::assertSame(1, $plan->fuelStopCount);
+        self::assertSame('required', $plan->purchases[0]->classification);
+        self::assertSame(['sparse_corridor'], $plan->purchases[0]->reasonCodes);
+        self::assertSame(40_000, $plan->purchases[0]->detourDistanceM);
+    }
+
+    public function testSafetyDetourLimitCannotBeBypassed(): void
+    {
+        $this->expectException(FuelauRouteInfeasibleException::class);
+
+        (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'unsafe-detour',
+                    50_000,
+                    180,
+                    accessDistanceM: 40_000,
+                ),
+                new FuelauOptimizerNode('destination', 100_000),
+            ],
+            new FuelauOptimizerVehicle(60, 15, 6, 10),
+        );
+    }
+
     public function testSpacingIncludesAccessTravelBetweenStops(): void
     {
         $plan = (new FuelauFuelStateOptimizer())->optimizePractical(

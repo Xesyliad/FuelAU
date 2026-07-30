@@ -409,6 +409,75 @@ fuelauTest('practical optimizer rejects cheap fuel with excessive detour time', 
     fuelauAssertSame(3_700, $practicalPlan->generalizedCostCents);
 });
 
+fuelauTest('practical optimizer enforces discretionary detour limits', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'cheap-detour',
+                50_000,
+                100,
+                accessDistanceM: 20_000,
+            ),
+            FuelauOptimizerNode::station('on-route', 60_000, 200),
+            new FuelauOptimizerNode('destination', 300_000),
+        ],
+        new FuelauOptimizerVehicle(60, 20, 6, 10),
+        new FuelauOptimizerPolicy(
+            maximumFuelOnlyStops: 1,
+            minimumDiscretionaryPurchaseL: 0,
+            minimumStopSpacingM: 0,
+            minimumStopSpacingS: 0,
+            minimumNetSavingCents: 0,
+            driverTimeValueCentsPerHour: 0,
+            similarCostCents: 0,
+        ),
+    );
+
+    fuelauAssertSame('on-route', $plan->purchases[0]->nodeId);
+});
+
+fuelauTest('required sparse-corridor stops may exceed discretionary detour limits', static function (): void {
+    $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station(
+                'remote-safety',
+                50_000,
+                180,
+                accessDistanceM: 20_000,
+            ),
+            new FuelauOptimizerNode('destination', 100_000),
+        ],
+        new FuelauOptimizerVehicle(60, 13, 6, 10),
+    );
+
+    fuelauAssertSame(1, $plan->fuelStopCount);
+    fuelauAssertSame('required', $plan->purchases[0]->classification);
+    fuelauAssertSame(['sparse_corridor'], $plan->purchases[0]->reasonCodes);
+    fuelauAssertSame(40_000, $plan->purchases[0]->detourDistanceM);
+});
+
+fuelauTest('route is infeasible when its only station exceeds the safety detour', static function (): void {
+    fuelauAssertThrows(
+        FuelauRouteInfeasibleException::class,
+        static fn (): FuelauOptimizerPlan => (new FuelauFuelStateOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station(
+                    'unsafe-detour',
+                    50_000,
+                    180,
+                    accessDistanceM: 40_000,
+                ),
+                new FuelauOptimizerNode('destination', 100_000),
+            ],
+            new FuelauOptimizerVehicle(60, 15, 6, 10),
+        ),
+        'Safety overrides must remain bounded',
+    );
+});
+
 fuelauTest('meaningful spacing includes access travel between fuel stops', static function (): void {
     $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
         [
@@ -649,6 +718,7 @@ fuelauTest('corridor candidates use stable station identity and eligibility filt
     fuelauAssertSame(190.0, $candidate->priceCentsPerL);
     fuelauAssertSame(1_234, $candidate->accessDistanceM);
     fuelauAssertSame(120, $candidate->accessDurationS);
+    fuelauAssertSame(false, $candidate->accessEstimated);
 });
 
 fuelauTest('projected corridor candidates feed the practical optimizer', static function (): void {
@@ -678,6 +748,92 @@ fuelauTest('projected corridor candidates feed the practical optimizer', static 
     fuelauAssertSame('Required', $plan->purchases[0]->label);
     fuelauAssertSame('Strategic', $plan->purchases[1]->label);
     fuelauAssertSame('strategic', $plan->purchases[1]->classification);
+});
+
+fuelauTest('single-corridor planner maps request policy and builds response accounting', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+        'destinations' => [
+            ['lat' => -30.0, 'lon' => 156.0, 'label' => 'Destination'],
+        ],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 12,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 3,
+            'maximum_discretionary_detour_km' => 12,
+            'maximum_discretionary_detour_minutes' => 8,
+        ],
+    ]);
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 600_000,
+        durationS: 21_600,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 156.0],
+        ],
+    );
+    $rows = [
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'required', 'station_name' => 'Required', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200, 'updated_at' => '2026-07-29T00:00:00Z', 'price_status' => 'fresh', 'access_distance_m' => 0, 'access_duration_s' => 0],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'strategic', 'station_name' => 'Strategic', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 153.0, 'price' => 100, 'updated_at' => '2026-07-30T00:00:00Z', 'price_status' => 'fresh', 'access_distance_m' => 0, 'access_duration_s' => 0],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'fallback', 'station_name' => 'Fallback', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 155.5, 'price' => 300, 'updated_at' => '2026-07-30T00:00:00Z', 'price_status' => 'fresh', 'access_distance_m' => 0, 'access_duration_s' => 0],
+        ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'stale', 'station_name' => 'Stale', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 154.0, 'price' => 50, 'updated_at' => '2026-01-01T00:00:00Z', 'price_status' => 'stale', 'access_distance_m' => 0, 'access_duration_s' => 0],
+    ];
+
+    $result = (new FuelauSingleCorridorPlanner())->plan($request, $corridor, $rows);
+    $response = $result->toResponseArray();
+
+    fuelauAssertSame(12_000, $result->policy->maximumDiscretionaryDetourM);
+    fuelauAssertSame(480, $result->policy->maximumDiscretionaryDetourS);
+    fuelauAssertSame(60.0, $response['summary']['fuel_used_l']);
+    fuelauAssertSame(7_800, $response['summary']['fuel_purchase_cost_cents']);
+    fuelauAssertSame(26_800, $response['summary']['generalized_cost_cents']);
+    fuelauAssertSame('2026-07-29T00:00:00Z', $response['summary']['price_as_of']);
+    fuelauAssertSame(2, count($response['stops']));
+    fuelauAssertSame(3, $response['diagnostics']['candidate_count']);
+});
+
+fuelauTest('single-corridor response requires measured station access', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0],
+        'destinations' => [['lat' => -30.0, 'lon' => 151.0]],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'E10',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 12,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 6,
+        ],
+    ]);
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 100_000,
+        durationS: 3_600,
+        geometry: [
+            ['lat' => -30.0, 'lon' => 150.0],
+            ['lat' => -30.0, 'lon' => 151.0],
+        ],
+    );
+
+    fuelauAssertThrows(
+        FuelauRoutePlanValidationException::class,
+        static fn (): FuelauSingleCorridorOptimizationResult =>
+            (new FuelauSingleCorridorPlanner())->plan(
+                $request,
+                $corridor,
+                [
+                    ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'estimated', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 180, 'price_status' => 'fresh'],
+                ],
+            ),
+        'A successful response must not expose geometric detour estimates',
+    );
 });
 
 fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {

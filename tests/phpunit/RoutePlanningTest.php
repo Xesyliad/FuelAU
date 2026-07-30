@@ -95,6 +95,7 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(190.0, $candidate->priceCentsPerL);
         self::assertSame(1_234, $candidate->accessDistanceM);
         self::assertSame(120, $candidate->accessDurationS);
+        self::assertFalse($candidate->accessEstimated);
     }
 
     public function testProjectedCandidatesCanBeOptimizedWithoutShapeConversion(): void
@@ -128,6 +129,80 @@ final class RoutePlanningTest extends TestCase
         self::assertSame('strategic', $plan->purchases[1]->classification);
     }
 
+    public function testSingleCorridorPlannerBuildsResponseAndMapsPreferences(): void
+    {
+        $request = $this->optimizationRequest([
+            'maximum_fuel_only_stops' => 3,
+            'maximum_discretionary_detour_km' => 12,
+            'maximum_discretionary_detour_minutes' => 8,
+        ]);
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 600_000,
+            durationS: 21_600,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 156.0],
+            ],
+        );
+        $rows = [
+            $this->validatedStationRow('required', 150.5, 200, '2026-07-29T00:00:00Z'),
+            $this->validatedStationRow('strategic', 153.0, 100, '2026-07-30T00:00:00Z'),
+            $this->validatedStationRow('fallback', 155.5, 300, '2026-07-30T00:00:00Z'),
+            [
+                ...$this->validatedStationRow('stale', 154.0, 50, '2026-01-01T00:00:00Z'),
+                'price_status' => 'stale',
+            ],
+        ];
+
+        $result = (new FuelauSingleCorridorPlanner())->plan($request, $corridor, $rows);
+        $response = $result->toResponseArray();
+
+        self::assertSame(12_000, $result->policy->maximumDiscretionaryDetourM);
+        self::assertSame(480, $result->policy->maximumDiscretionaryDetourS);
+        self::assertSame(60.0, $response['summary']['fuel_used_l']);
+        self::assertSame(7800, $response['summary']['fuel_purchase_cost_cents']);
+        self::assertSame(26_800, $response['summary']['generalized_cost_cents']);
+        self::assertSame('2026-07-29T00:00:00Z', $response['summary']['price_as_of']);
+        self::assertCount(2, $response['stops']);
+        self::assertSame(3, $response['diagnostics']['candidate_count']);
+    }
+
+    public function testSelectedStationRequiresMeasuredRoadAccess(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0],
+            'destinations' => [['lat' => -30.0, 'lon' => 151.0]],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'E10',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 12,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 6,
+            ],
+        ]);
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 100_000,
+            durationS: 3_600,
+            geometry: [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 151.0],
+            ],
+        );
+
+        $this->expectException(FuelauRoutePlanValidationException::class);
+
+        (new FuelauSingleCorridorPlanner())->plan(
+            $request,
+            $corridor,
+            [[
+                ...$this->stationRow('estimated', 150.5, 180),
+                'price_status' => 'fresh',
+            ]],
+        );
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -146,6 +221,47 @@ final class RoutePlanningTest extends TestCase
             'latitude' => -30.0,
             'longitude' => $longitude,
             'price' => $price,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $preferences
+     */
+    private function optimizationRequest(array $preferences = []): FuelauRouteOptimizationRequest
+    {
+        return FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+            'destinations' => [
+                ['lat' => -30.0, 'lon' => 156.0, 'label' => 'Destination'],
+            ],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'E10',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 12,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 6,
+            ],
+            'preferences' => $preferences,
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validatedStationRow(
+        string $stationId,
+        float $longitude,
+        float $price,
+        string $updatedAt,
+    ): array {
+        return [
+            ...$this->stationRow($stationId, $longitude, $price, ucfirst($stationId)),
+            'updated_at' => $updatedAt,
+            'price_status' => 'fresh',
+            'access_distance_m' => 0,
+            'access_duration_s' => 0,
         ];
     }
 }
