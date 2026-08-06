@@ -95,8 +95,9 @@ final readonly class FuelauOptimizerPolicy
         public string $mode = 'practical_least_cost',
         public ?int $maximumFuelOnlyStops = null,
         public ?float $minimumDiscretionaryPurchaseL = null,
-        public int $minimumStopSpacingM = 150_000,
-        public int $minimumStopSpacingS = 5_400,
+        // Retained for request compatibility; these legacy values are ignored.
+        public int $minimumStopSpacingM = 0,
+        public int $minimumStopSpacingS = 0,
         public int $maximumDiscretionaryDetourM = 20_000,
         public int $maximumDiscretionaryDetourS = 1_200,
         public int $maximumSafetyDetourM = 75_000,
@@ -266,53 +267,21 @@ final class FuelauFuelStateOptimizer
         for ($stabilizationPass = 0; $stabilizationPass < count($nodes); $stabilizationPass++) {
             for ($constraintPass = 0; $constraintPass < count($nodes); $constraintPass++) {
                 $changed = false;
-                $previousProgressM = 0;
-                $previousProgressS = 0;
-                $previousAccessDistanceM = 0;
-                $previousAccessDurationS = 0;
                 foreach ($plan->purchases as $purchase) {
                     $combinedStop = $nodesById[$purchase->nodeId]->combinedStop ?? false;
-                    $resetByPlannedStop = false;
-                    foreach ($nodes as $node) {
-                        if (
-                            !$node->physicalStop
-                            || $node->progressM <= $previousProgressM
-                            || $node->progressM >= $purchase->progressM
-                        ) {
-                            continue;
-                        }
-                        $previousProgressM = $node->progressM;
-                        $previousProgressS = $node->progressS;
-                        $previousAccessDistanceM = 0;
-                        $previousAccessDurationS = 0;
-                        $resetByPlannedStop = true;
-                    }
                     if (isset($required[$purchase->nodeId])) {
-                        $previousProgressM = $purchase->progressM;
-                        $previousProgressS = $purchase->progressS;
-                        $previousAccessDistanceM = intdiv($purchase->detourDistanceM, 2);
-                        $previousAccessDurationS = intdiv($purchase->detourDurationS, 2);
                         continue;
                     }
 
                     $minimumPurchaseL = $policy->minimumDiscretionaryPurchaseL
                         ?? max(15.0, $vehicle->tankCapacityL * 0.25);
                     $tooSmall = !$combinedStop && $purchase->purchaseL < $minimumPurchaseL;
-                    $distanceSincePhysicalStopM = ($purchase->progressM - $previousProgressM)
-                        + $previousAccessDistanceM
-                        + intdiv($purchase->detourDistanceM, 2);
-                    $durationSincePhysicalStopS = ($purchase->progressS - $previousProgressS)
-                        + $previousAccessDurationS
-                        + intdiv($purchase->detourDurationS, 2);
-                    $tooClose = !$combinedStop
-                        && $distanceSincePhysicalStopM < $policy->minimumStopSpacingM
-                        && $durationSincePhysicalStopS < $policy->minimumStopSpacingS;
                     $tooFar = $purchase->detourDistanceM > $policy->maximumDiscretionaryDetourM
                         || $purchase->detourDurationS > $policy->maximumDiscretionaryDetourS;
                     $beyondSafetyDetour = $purchase->detourDistanceM > $policy->maximumSafetyDetourM
                         || $purchase->detourDurationS > $policy->maximumSafetyDetourS;
 
-                    if ($tooSmall || $tooClose || $tooFar || $beyondSafetyDetour) {
+                    if ($tooSmall || $tooFar || $beyondSafetyDetour) {
                         $alternative = $this->solveWithoutNode(
                             $nodes,
                             $vehicle,
@@ -333,16 +302,15 @@ final class FuelauFuelStateOptimizer
                             $required[$purchase->nodeId] = match (true) {
                                 $tooFar => 'sparse_corridor',
                                 $tooSmall => 'minimum_purchase_safety_override',
-                                default => 'stop_spacing_safety_override',
+                                default => 'detour_safety_override',
                             };
                         } elseif (
                             !$tooFar
-                            && !$resetByPlannedStop
                             && $alternative->fuelOnlyStopCount >= $plan->fuelOnlyStopCount
                         ) {
                             $required[$purchase->nodeId] = $tooSmall
                                 ? 'minimum_purchase_safety_override'
-                                : 'stop_spacing_safety_override';
+                                : 'detour_safety_override';
                         } else {
                             $forbidden[$purchase->nodeId] = true;
                             $plan = $alternative;
@@ -350,10 +318,6 @@ final class FuelauFuelStateOptimizer
                             break;
                         }
                     }
-                    $previousProgressM = $purchase->progressM;
-                    $previousProgressS = $purchase->progressS;
-                    $previousAccessDistanceM = intdiv($purchase->detourDistanceM, 2);
-                    $previousAccessDurationS = intdiv($purchase->detourDurationS, 2);
                 }
                 if ($changed) {
                     continue;
@@ -464,7 +428,7 @@ final class FuelauFuelStateOptimizer
 
         /** @var array<int, array<string, array<string, int|string>>> $states */
         $states = array_fill(0, count($nodes), []);
-        $initialKey = $this->stateKey($startingBuckets, 0, 0);
+        $initialKey = $this->stateKey($startingBuckets, 0);
         $states[0][$initialKey] = [
             'fuel_buckets' => $startingBuckets,
             'stop_count' => 0,
@@ -550,14 +514,18 @@ final class FuelauFuelStateOptimizer
 
                         $nextKey = $this->stateKey(
                             $nextFuelBuckets,
-                            $nextStopCount,
                             $nextFuelOnlyStopCount,
                         );
                         $existing = $states[$toIndex][$nextKey] ?? null;
                         if (
                             $existing !== null
-                            && (int) $existing['generalized_cost_units'] <= $nextGeneralizedCostUnits
-                            && (int) $existing['fuel_cost_units'] <= $nextFuelCostUnits
+                            && $this->preferExistingState(
+                                $existing,
+                                $nextStopCount,
+                                $nextFuelCostUnits,
+                                $nextGeneralizedCostUnits,
+                                $objective,
+                            )
                         ) {
                             continue;
                         }
@@ -693,11 +661,46 @@ final class FuelauFuelStateOptimizer
 
     private function stateKey(
         int $fuelBuckets,
-        int $stopCount,
         int $fuelOnlyStopCount,
     ): string
     {
-        return "{$fuelBuckets}:{$stopCount}:{$fuelOnlyStopCount}";
+        // Historical purchases at already-completed planned stops do not
+        // change the feasible future from the same node and fuel state. Keep
+        // total stop count as a tie-break value, not a graph dimension.
+        return "{$fuelBuckets}:{$fuelOnlyStopCount}";
+    }
+
+    /**
+     * @param array<string, int|string> $existing
+     */
+    private function preferExistingState(
+        array $existing,
+        int $candidateStopCount,
+        int $candidateFuelCostUnits,
+        int $candidateGeneralizedCostUnits,
+        string $objective,
+    ): bool {
+        $existingStopCount = (int) $existing['stop_count'];
+        $existingFuelCostUnits = (int) $existing['fuel_cost_units'];
+        $existingGeneralizedCostUnits = (int) $existing['generalized_cost_units'];
+
+        if ($objective === 'fewest_stops') {
+            return (
+                [$existingStopCount, $existingGeneralizedCostUnits, $existingFuelCostUnits]
+                <=> [$candidateStopCount, $candidateGeneralizedCostUnits, $candidateFuelCostUnits]
+            ) <= 0;
+        }
+        if ($objective === 'fuel_cost') {
+            return (
+                [$existingFuelCostUnits, $existingStopCount, $existingGeneralizedCostUnits]
+                <=> [$candidateFuelCostUnits, $candidateStopCount, $candidateGeneralizedCostUnits]
+            ) <= 0;
+        }
+
+        return (
+            [$existingGeneralizedCostUnits, $existingStopCount, $existingFuelCostUnits]
+            <=> [$candidateGeneralizedCostUnits, $candidateStopCount, $candidateFuelCostUnits]
+        ) <= 0;
     }
 
     /**

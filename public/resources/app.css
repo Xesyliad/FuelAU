@@ -138,6 +138,11 @@ p {
     font-weight: 700;
 }
 
+.status-line.route-status-error {
+    color: #b42318;
+    font-weight: 700;
+}
+
 .status-line.route-status-muted {
     color: var(--muted);
 }
@@ -803,6 +808,15 @@ p {
     color: #7c2d12;
 }
 
+.route-breakdown-additional {
+    color: #991b1b;
+    background: #fff7ed;
+}
+
+.route-breakdown-additional .route-breakdown-step {
+    color: #991b1b;
+}
+
 .route-table {
     width: 100%;
     border-collapse: collapse;
@@ -831,6 +845,20 @@ p {
     border-radius: 8px;
     color: var(--muted);
     font-size: 13px;
+}
+
+.route-error {
+    display: grid;
+    gap: 6px;
+    border: 1px solid #f0b8b2;
+    border-radius: 8px;
+    background: #fff5f4;
+    color: #8f1d14;
+    padding: 14px;
+}
+
+.route-error span {
+    overflow-wrap: anywhere;
 }
 
 .route-muted {

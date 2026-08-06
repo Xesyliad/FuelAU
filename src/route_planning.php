@@ -867,13 +867,28 @@ function fuelauClassifyRouteCandidatePriceRows(
 
     $minimumTimestamp = $asOf->getTimestamp() - ($maximumAgeDays * 86_400);
     $maximumTimestamp = $asOf->getTimestamp();
-    $timezone = new DateTimeZone('UTC');
+    $utcTimezone = new DateTimeZone('UTC');
+    $waTimezone = new DateTimeZone('Australia/Perth');
     foreach ($rows as &$row) {
         $rawUpdatedAt = trim((string) ($row['updated_at'] ?? ''));
         try {
-            $updatedAt = $rawUpdatedAt !== ''
-                ? new DateTimeImmutable($rawUpdatedAt, $timezone)
-                : null;
+            if (
+                strtolower(trim((string) ($row['source'] ?? ''))) === 'wa'
+                && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $rawUpdatedAt) === 1
+            ) {
+                // FuelWatch publishes a WA calendar date rather than an
+                // instant. Parsing that date as UTC makes today's prices look
+                // several hours into the future until 08:00 AWST.
+                $updatedAt = DateTimeImmutable::createFromFormat(
+                    '!Y-m-d',
+                    $rawUpdatedAt,
+                    $waTimezone,
+                ) ?: null;
+            } else {
+                $updatedAt = $rawUpdatedAt !== ''
+                    ? new DateTimeImmutable($rawUpdatedAt, $utcTimezone)
+                    : null;
+            }
         } catch (Exception) {
             $updatedAt = null;
         }
@@ -1341,6 +1356,7 @@ final readonly class FuelauSingleCorridorOptimizationResult
         public FuelauOptimizerPolicy $policy,
         public ?array $itineraryCoordinates = null,
         public array $itineraryLegs = [],
+        public ?float $effectiveFuelCapacityL = null,
     ) {}
 
     /**
@@ -1380,38 +1396,20 @@ final readonly class FuelauSingleCorridorOptimizationResult
         $priceTimestamps = [];
         $warnings = [];
         $stops = [];
-        $previousProgressM = 0;
-        $previousProgressS = 0;
-        $previousAccessDistanceM = 0;
-        $previousAccessDurationS = 0;
+        $additionalFuelRequirements = $this->additionalFuelRequirements();
+        $additionalFuelByNodeId = [];
+        foreach ($additionalFuelRequirements as $requirement) {
+            $additionalFuelByNodeId[$requirement['station_node_id']] = $requirement;
+            $warnings[] = $requirement['message'];
+            $warnings[] = $requirement['purchase_instruction'];
+        }
 
         foreach ($this->plan->purchases as $index => $purchase) {
-            foreach ($this->input->nodes as $node) {
-                if (
-                    !$node->physicalStop
-                    || $node->progressM <= $previousProgressM
-                    || $node->progressM >= $purchase->progressM
-                ) {
-                    continue;
-                }
-                $previousProgressM = $node->progressM;
-                $previousProgressS = $node->progressS;
-                $previousAccessDistanceM = 0;
-                $previousAccessDurationS = 0;
-            }
             $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
             if ($candidate === null) {
                 throw new LogicException("Missing candidate metadata for {$purchase->nodeId}.");
             }
             $row = $candidate->sourceRow;
-            $accessDistanceM = intdiv($purchase->detourDistanceM, 2);
-            $accessDurationS = intdiv($purchase->detourDurationS, 2);
-            $distanceSincePhysicalStopM = ($purchase->progressM - $previousProgressM)
-                + $previousAccessDistanceM
-                + $accessDistanceM;
-            $durationSincePhysicalStopS = ($purchase->progressS - $previousProgressS)
-                + $previousAccessDurationS
-                + $accessDurationS;
             $updatedAt = trim((string) ($row['updated_at'] ?? ''));
             if ($updatedAt !== '') {
                 $priceTimestamps[] = $updatedAt;
@@ -1420,21 +1418,22 @@ final readonly class FuelauSingleCorridorOptimizationResult
                 $sequence = $index + 1;
                 $warnings[] = "Stop {$sequence} exceeds normal discretionary detour limits for route safety.";
             }
-            if (in_array('stop_spacing_safety_override', $purchase->reasonCodes, true)) {
-                $sequence = $index + 1;
-                $warnings[] =
-                    "Stop {$sequence} occurs sooner than preferred because it is required for route safety.";
-            }
             if (in_array('minimum_purchase_safety_override', $purchase->reasonCodes, true)) {
                 $sequence = $index + 1;
                 $warnings[] =
                     "Stop {$sequence} buys less than the preferred minimum because it is required for route safety.";
             }
+            $additionalFuel = $additionalFuelByNodeId[$purchase->nodeId] ?? null;
 
             $stops[] = [
                 'sequence' => $index + 1,
                 'classification' => $purchase->classification,
-                'reason_codes' => $purchase->reasonCodes,
+                'reason_codes' => $additionalFuel === null
+                    ? $purchase->reasonCodes
+                    : array_values(array_unique([
+                        ...$purchase->reasonCodes,
+                        'additional_fuel_required',
+                    ])),
                 'station' => [
                     'source' => (string) ($row['source'] ?? ''),
                     'state' => (string) ($row['state'] ?? ''),
@@ -1457,20 +1456,16 @@ final readonly class FuelauSingleCorridorOptimizationResult
                 'purchase_cost_cents' => $purchase->purchaseCostCents,
                 'detour_distance_m' => $purchase->detourDistanceM,
                 'detour_duration_s' => $purchase->detourDurationS,
-                'distance_since_physical_stop_km' => round(
-                    $distanceSincePhysicalStopM / 1_000,
-                    1,
-                ),
-                'minutes_since_physical_stop' => round($durationSincePhysicalStopS / 60, 1),
                 'marginal_net_saving_cents' => $purchase->marginalNetSavingCents,
+                'additional_fuel_l' => $additionalFuel['additional_fuel_l'] ?? 0.0,
+                'additional_fuel_cost_cents' =>
+                    $additionalFuel['additional_fuel_cost_cents'] ?? 0,
+                'additional_fuel_next_stop' => $additionalFuel['next_stop_name'] ?? null,
+                'additional_fuel_leg_index' => $additionalFuel['leg_index'] ?? null,
             ];
 
             $detourDistanceM += $purchase->detourDistanceM;
             $detourDurationS += $purchase->detourDurationS;
-            $previousProgressM = $purchase->progressM;
-            $previousProgressS = $purchase->progressS;
-            $previousAccessDistanceM = $accessDistanceM;
-            $previousAccessDurationS = $accessDurationS;
         }
 
         sort($priceTimestamps, SORT_STRING);
@@ -1480,6 +1475,22 @@ final readonly class FuelauSingleCorridorOptimizationResult
         $corridorTimeCostCents = (int) ceil(
             ($this->corridor->durationS * $this->policy->driverTimeValueCentsPerHour) / 3_600,
         );
+        $additionalFuelL = array_sum(array_column(
+            $additionalFuelRequirements,
+            'additional_fuel_l',
+        ));
+        $additionalFuelCostCents = array_sum(array_column(
+            $additionalFuelRequirements,
+            'additional_fuel_cost_cents',
+        ));
+        $legFuelTotals = $this->legFuelTotals();
+        foreach ($additionalFuelRequirements as &$requirement) {
+            $requirement['leg_fuel_purchased_l'] =
+                $legFuelTotals[$requirement['leg_index']]['fuel_purchased_l'] ?? 0.0;
+            $requirement['leg_fuel_purchase_cost_cents'] =
+                $legFuelTotals[$requirement['leg_index']]['fuel_purchase_cost_cents'] ?? 0;
+        }
+        unset($requirement);
 
         $response = [
             'version' => 1,
@@ -1503,6 +1514,10 @@ final readonly class FuelauSingleCorridorOptimizationResult
                     + $corridorTimeCostCents,
                 'starting_fuel_l' => $this->request->fuel->startingFuelL,
                 'ending_fuel_l' => $this->plan->endingFuelL,
+                'effective_fuel_capacity_l' =>
+                    $this->effectiveFuelCapacityL ?? $this->request->fuel->tankCapacityL,
+                'additional_required_fuel_l' => round($additionalFuelL, 1),
+                'additional_fuel_cost_cents' => $additionalFuelCostCents,
                 'required_stop_count' => $this->plan->requiredStopCount,
                 'discretionary_stop_count' => $this->plan->discretionaryStopCount,
                 'combined_stop_count' => $this->plan->combinedStopCount,
@@ -1516,6 +1531,7 @@ final readonly class FuelauSingleCorridorOptimizationResult
             ],
             'route_pieces' => [],
             'stops' => $stops,
+            'additional_fuel_requirements' => $additionalFuelRequirements,
             'alternatives' => [],
             'warnings' => array_values(array_unique($warnings)),
             'diagnostics' => [
@@ -1524,14 +1540,163 @@ final readonly class FuelauSingleCorridorOptimizationResult
             ],
         ];
         if ($this->itineraryLegs !== []) {
+            $itineraryLegs = array_map(
+                static function (array $leg) use (
+                    $additionalFuelRequirements,
+                    $legFuelTotals,
+                ): array {
+                    $legIndex = (int) ($leg['index'] ?? 0);
+                    $requirements = array_values(array_filter(
+                        $additionalFuelRequirements,
+                        static fn (array $requirement): bool =>
+                            $requirement['leg_index'] === $legIndex,
+                    ));
+                    $totals = $legFuelTotals[$legIndex] ?? [
+                        'fuel_purchased_l' => 0.0,
+                        'fuel_purchase_cost_cents' => 0,
+                    ];
+
+                    return [
+                        ...$leg,
+                        ...$totals,
+                        'requires_additional_fuel' => $requirements !== [],
+                        'additional_fuel_requirements' => $requirements,
+                        'additional_required_fuel_l' => round((float) array_sum(
+                            array_column($requirements, 'additional_fuel_l'),
+                        ), 1),
+                        'additional_fuel_cost_cents' => (int) array_sum(
+                            array_column($requirements, 'additional_fuel_cost_cents'),
+                        ),
+                    ];
+                },
+                $this->itineraryLegs,
+            );
             $response['itinerary'] = [
                 'return_mode' => $this->request->returnMode,
-                'leg_count' => count($this->itineraryLegs),
-                'legs' => $this->itineraryLegs,
+                'leg_count' => count($itineraryLegs),
+                'legs' => $itineraryLegs,
             ];
         }
 
         return $response;
+    }
+
+    /**
+     * @return list<array<string, int|float|string>>
+     */
+    private function additionalFuelRequirements(): array
+    {
+        $physicalCapacityL = $this->request->fuel->tankCapacityL;
+        if (($this->effectiveFuelCapacityL ?? $physicalCapacityL) <= $physicalCapacityL) {
+            return [];
+        }
+
+        $requirements = [];
+        foreach ($this->plan->purchases as $index => $purchase) {
+            $overflowOnArrivalL = max(0.0, $purchase->arrivalFuelL - $physicalCapacityL);
+            $overflowOnDepartureL = max(0.0, $purchase->departureFuelL - $physicalCapacityL);
+            $additionalFuelL = round(
+                max(0.0, $overflowOnDepartureL - $overflowOnArrivalL),
+                1,
+            );
+            if ($additionalFuelL <= 0) {
+                continue;
+            }
+
+            $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            if ($candidate === null) {
+                throw new LogicException("Missing candidate metadata for {$purchase->nodeId}.");
+            }
+            $legIndex = $this->purchaseLegIndex($candidate);
+            $nextPurchase = $this->plan->purchases[$index + 1] ?? null;
+            $nextStopName = trim((string) ($nextPurchase?->label ?? ''));
+            if ($nextStopName === '') {
+                $nextStopName = $this->nextItineraryStopName($legIndex);
+            }
+            $stationName = trim((string) ($candidate->sourceRow['station_name'] ?? ''));
+            if ($stationName === '') {
+                $stationName = trim($purchase->label) !== ''
+                    ? trim($purchase->label)
+                    : 'the preceding station';
+            }
+            $litresText = number_format($additionalFuelL, 1, '.', '');
+            $legNumber = $legIndex + 1;
+
+            $requirements[] = [
+                'leg_index' => $legIndex,
+                'leg_number' => $legNumber,
+                'station_node_id' => $purchase->nodeId,
+                'station_name' => $stationName,
+                'next_stop_name' => $nextStopName,
+                'additional_fuel_l' => $additionalFuelL,
+                'additional_fuel_cost_cents' => (int) ceil(
+                    $additionalFuelL * $purchase->priceCentsPerL,
+                ),
+                'price_cents_per_l' => $purchase->priceCentsPerL,
+                'message' => "Leg {$legNumber} requires additional {$litresText} litres of fuel to reach next stop",
+                'purchase_instruction' => "Purchase additional {$litresText} litres of fuel at {$stationName} in order to reach next stop at {$nextStopName}.",
+            ];
+        }
+
+        return $requirements;
+    }
+
+    private function nextItineraryStopName(int $purchaseLegIndex): string
+    {
+        foreach ($this->itineraryLegs as $leg) {
+            $legIndex = (int) ($leg['index'] ?? 0);
+            if ($legIndex < $purchaseLegIndex) {
+                continue;
+            }
+            $label = trim((string) ($leg['target']['label'] ?? ''));
+            if ($label !== '') {
+                return $label;
+            }
+        }
+
+        $destination = $this->request->destinations[count($this->request->destinations) - 1];
+        $label = trim($destination->label);
+
+        return $label !== '' ? $label : 'the destination';
+    }
+
+    /**
+     * @return array<int, array{fuel_purchased_l: float, fuel_purchase_cost_cents: int}>
+     */
+    private function legFuelTotals(): array
+    {
+        $totals = [];
+        foreach ($this->plan->purchases as $purchase) {
+            $candidate = $this->input->candidatesByNodeId[$purchase->nodeId] ?? null;
+            $legIndex = $candidate === null ? 0 : $this->purchaseLegIndex($candidate);
+            $totals[$legIndex] ??= [
+                'fuel_purchased_l' => 0.0,
+                'fuel_purchase_cost_cents' => 0,
+            ];
+            $totals[$legIndex]['fuel_purchased_l'] += $purchase->purchaseL;
+            $totals[$legIndex]['fuel_purchase_cost_cents'] += $purchase->purchaseCostCents;
+        }
+
+        return $totals;
+    }
+
+    private function purchaseLegIndex(FuelauProjectedStationCandidate $candidate): int
+    {
+        $sourceLegIndex = is_int($candidate->sourceRow['itinerary_leg_index'] ?? null)
+            ? $candidate->sourceRow['itinerary_leg_index']
+            : 0;
+        $combinedStopIndex = $candidate->sourceRow['combined_itinerary_stop_index'] ?? null;
+        if (
+            is_int($combinedStopIndex)
+            && $combinedStopIndex > $sourceLegIndex
+            && $combinedStopIndex < max(1, count($this->itineraryLegs))
+        ) {
+            // A purchase combined with the end of one itinerary leg is the
+            // departure purchase for the following leg.
+            return $combinedStopIndex;
+        }
+
+        return $sourceLegIndex;
     }
 }
 
@@ -1544,8 +1709,6 @@ function fuelauOptimizerPolicyForRequest(
         mode: $preferences->mode,
         maximumFuelOnlyStops: $preferences->maximumFuelOnlyStops,
         minimumDiscretionaryPurchaseL: $preferences->minimumDiscretionaryPurchaseL,
-        minimumStopSpacingM: (int) round($preferences->minimumStopSpacingKm * 1_000),
-        minimumStopSpacingS: (int) round($preferences->minimumStopSpacingMinutes * 60),
         maximumDiscretionaryDetourM: (int) round(
             $preferences->maximumDiscretionaryDetourKm * 1_000,
         ),
@@ -1585,6 +1748,224 @@ function fuelauEligibleOptimizerCandidateRows(
     ));
 }
 
+final readonly class FuelauCapacityAdjustedOptimizerPlan
+{
+    public function __construct(
+        public FuelauOptimizerPlan $plan,
+        public float $effectiveFuelCapacityL,
+    ) {}
+}
+
+/**
+ * Falls back to the smallest auxiliary-fuel capacity that can bridge a gap.
+ * Ordinary plans always retain the configured physical tank capacity.
+ */
+final class FuelauAdditionalFuelOptimizer
+{
+    private const BUCKET_L = 0.5;
+    private const CAPACITY_FAILURE_MESSAGE =
+        'No station sequence can reach the destination while maintaining reserve.';
+
+    /**
+     * @param list<FuelauOptimizerNode> $nodes
+     */
+    public function optimizePractical(
+        array $nodes,
+        FuelauOptimizerVehicle $vehicle,
+        FuelauOptimizerPolicy $policy,
+    ): FuelauCapacityAdjustedOptimizerPlan {
+        $optimizer = new FuelauFuelStateOptimizer();
+        try {
+            return new FuelauCapacityAdjustedOptimizerPlan(
+                $optimizer->optimizePractical($nodes, $vehicle, $policy),
+                $vehicle->tankCapacityL,
+            );
+        } catch (FuelauRouteInfeasibleException $exception) {
+            if ($exception->getMessage() !== self::CAPACITY_FAILURE_MESSAGE) {
+                throw $exception;
+            }
+            $capacityFailure = $exception;
+        }
+
+        $nodes = array_values($nodes);
+        $fallback = $this->minimumCapacityStationPath(
+            $nodes,
+            $vehicle,
+            $policy,
+        );
+        if ($fallback === null) {
+            throw $capacityFailure;
+        }
+
+        try {
+            $plan = $optimizer->optimizePractical(
+                $fallback['nodes'],
+                new FuelauOptimizerVehicle(
+                    tankCapacityL: $fallback['capacity_buckets'] * self::BUCKET_L,
+                    startingFuelL: $vehicle->startingFuelL,
+                    reserveL: $vehicle->reserveL,
+                    economyLPer100km: $vehicle->economyLPer100km,
+                ),
+                $policy,
+            );
+
+            return new FuelauCapacityAdjustedOptimizerPlan(
+                $plan,
+                $fallback['capacity_buckets'] * self::BUCKET_L,
+            );
+        } catch (FuelauRouteInfeasibleException) {
+            throw $capacityFailure;
+        }
+    }
+
+    /**
+     * @param list<FuelauOptimizerNode> $nodes
+     * @return array{nodes: list<FuelauOptimizerNode>, capacity_buckets: int}|null
+     */
+    private function minimumCapacityStationPath(
+        array $nodes,
+        FuelauOptimizerVehicle $vehicle,
+        FuelauOptimizerPolicy $policy,
+    ): ?array {
+        if (count($nodes) < 2) {
+            return null;
+        }
+
+        $lastIndex = count($nodes) - 1;
+        $physicalCapacityBuckets = (int) floor(
+            $vehicle->tankCapacityL / self::BUCKET_L,
+        );
+        $startingBuckets = (int) floor($vehicle->startingFuelL / self::BUCKET_L);
+        $reserveBuckets = (int) ceil($vehicle->reserveL / self::BUCKET_L);
+        $maximumFuelOnlyStops = $policy->maximumFuelOnlyStops ?? count($nodes);
+
+        /** @var array<int, array<int, array<string, int>>> $states */
+        $states = array_fill(0, count($nodes), []);
+        $states[0][0] = [
+            'capacity_buckets' => $physicalCapacityBuckets,
+            'stop_count' => 0,
+            'previous_index' => -1,
+            'previous_fuel_only_stops' => 0,
+        ];
+
+        for ($fromIndex = 0; $fromIndex < $lastIndex; $fromIndex++) {
+            if ($fromIndex > 0 && $nodes[$fromIndex]->priceTenthsCentsPerL === null) {
+                continue;
+            }
+            foreach ($states[$fromIndex] as $fuelOnlyStops => $state) {
+                for ($toIndex = $fromIndex + 1; $toIndex <= $lastIndex; $toIndex++) {
+                    if (
+                        $toIndex < $lastIndex
+                        && $nodes[$toIndex]->priceTenthsCentsPerL === null
+                    ) {
+                        continue;
+                    }
+
+                    $fuelUsedBuckets = $this->fuelUsedBuckets(
+                        ($nodes[$toIndex]->progressM - $nodes[$fromIndex]->progressM)
+                            + $nodes[$fromIndex]->accessDistanceM
+                            + $nodes[$toIndex]->accessDistanceM,
+                        $vehicle->economyLPer100km,
+                    );
+                    if ($fromIndex === 0) {
+                        if ($startingBuckets - $fuelUsedBuckets < $reserveBuckets) {
+                            continue;
+                        }
+                        $capacityBuckets = $physicalCapacityBuckets;
+                    } else {
+                        $capacityBuckets = max(
+                            $state['capacity_buckets'],
+                            $fuelUsedBuckets + $reserveBuckets,
+                        );
+                    }
+
+                    $nextFuelOnlyStops = $fuelOnlyStops;
+                    $nextStopCount = $state['stop_count'];
+                    if ($toIndex < $lastIndex) {
+                        $nextStopCount++;
+                        if (!$nodes[$toIndex]->combinedStop) {
+                            $nextFuelOnlyStops++;
+                        }
+                    }
+                    if ($nextFuelOnlyStops > $maximumFuelOnlyStops) {
+                        continue;
+                    }
+
+                    $existing = $states[$toIndex][$nextFuelOnlyStops] ?? null;
+                    if (
+                        $existing !== null
+                        && (
+                            [
+                                $existing['capacity_buckets'],
+                                $existing['stop_count'],
+                            ] <=> [$capacityBuckets, $nextStopCount]
+                        ) <= 0
+                    ) {
+                        continue;
+                    }
+                    $states[$toIndex][$nextFuelOnlyStops] = [
+                        'capacity_buckets' => $capacityBuckets,
+                        'stop_count' => $nextStopCount,
+                        'previous_index' => $fromIndex,
+                        'previous_fuel_only_stops' => $fuelOnlyStops,
+                    ];
+                }
+            }
+        }
+
+        if ($states[$lastIndex] === []) {
+            return null;
+        }
+
+        $destinationFuelOnlyStops = array_key_first($states[$lastIndex]);
+        foreach ($states[$lastIndex] as $fuelOnlyStops => $state) {
+            $best = $states[$lastIndex][$destinationFuelOnlyStops];
+            if (
+                (
+                    [$state['capacity_buckets'], $fuelOnlyStops, $state['stop_count']]
+                    <=> [
+                        $best['capacity_buckets'],
+                        $destinationFuelOnlyStops,
+                        $best['stop_count'],
+                    ]
+                ) < 0
+            ) {
+                $destinationFuelOnlyStops = $fuelOnlyStops;
+            }
+        }
+
+        $pathIndexes = [];
+        $nodeIndex = $lastIndex;
+        $fuelOnlyStops = $destinationFuelOnlyStops;
+        while ($nodeIndex >= 0) {
+            $pathIndexes[] = $nodeIndex;
+            if ($nodeIndex === 0) {
+                break;
+            }
+            $state = $states[$nodeIndex][$fuelOnlyStops];
+            $nodeIndex = $state['previous_index'];
+            $fuelOnlyStops = $state['previous_fuel_only_stops'];
+        }
+        $pathIndexes = array_reverse($pathIndexes);
+
+        return [
+            'nodes' => array_values(array_map(
+                static fn (int $index): FuelauOptimizerNode => $nodes[$index],
+                $pathIndexes,
+            )),
+            'capacity_buckets' =>
+                $states[$lastIndex][$destinationFuelOnlyStops]['capacity_buckets'],
+        ];
+    }
+
+    private function fuelUsedBuckets(int $distanceM, float $economyLPer100km): int
+    {
+        return (int) ceil(
+            (($distanceM / 100_000) * $economyLPer100km) / self::BUCKET_L,
+        );
+    }
+}
+
 final class FuelauCompleteItineraryPlanner
 {
     /**
@@ -1600,7 +1981,7 @@ final class FuelauCompleteItineraryPlanner
             $legs,
             $policy,
         );
-        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        $adjustedPlan = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
             $itinerary->input->nodes,
             new FuelauOptimizerVehicle(
                 tankCapacityL: $request->fuel->tankCapacityL,
@@ -1610,6 +1991,7 @@ final class FuelauCompleteItineraryPlanner
             ),
             $policy,
         );
+        $plan = $adjustedPlan->plan;
         foreach ($plan->purchases as $purchase) {
             $candidate = $itinerary->input->candidatesByNodeId[$purchase->nodeId] ?? null;
             if ($candidate === null || $candidate->accessEstimated) {
@@ -1636,6 +2018,7 @@ final class FuelauCompleteItineraryPlanner
             policy: $policy,
             itineraryCoordinates: $itinerary->exactRouteCoordinates($plan),
             itineraryLegs: $legSummaries,
+            effectiveFuelCapacityL: $adjustedPlan->effectiveFuelCapacityL,
         );
     }
 }
@@ -1812,7 +2195,7 @@ final class FuelauSingleCorridorPlanner
             combineNearOrigin: true,
             combineNearDestination: $request->destinations[0]->physicalStop,
         );
-        $plan = (new FuelauFuelStateOptimizer())->optimizePractical(
+        $adjustedPlan = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
             $input->nodes,
             new FuelauOptimizerVehicle(
                 tankCapacityL: $request->fuel->tankCapacityL,
@@ -1822,6 +2205,7 @@ final class FuelauSingleCorridorPlanner
             ),
             $policy,
         );
+        $plan = $adjustedPlan->plan;
 
         foreach ($plan->purchases as $purchase) {
             $candidate = $input->candidatesByNodeId[$purchase->nodeId] ?? null;
@@ -1838,6 +2222,7 @@ final class FuelauSingleCorridorPlanner
             input: $input,
             plan: $plan,
             policy: $policy,
+            effectiveFuelCapacityL: $adjustedPlan->effectiveFuelCapacityL,
         );
     }
 }
@@ -1954,7 +2339,7 @@ final class FuelauLiveSingleCorridorPlanner
             static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
         ));
         $roadCandidateLimit = min(
-            80,
+            64,
             max(24, (int) ceil($corridor->distanceM / 50_000)),
         );
         $measuredRows = (new FuelauCandidateRoadAccessMeasurer())->measure(
@@ -1983,10 +2368,89 @@ final class FuelauLiveSingleCorridorPlanner
     }
 }
 
+final class FuelauItineraryRoadCandidateBudget
+{
+    /**
+     * @param list<FuelauPreparedItineraryLeg> $legs
+     * @return list<int>
+     */
+    public function allocate(
+        array $legs,
+        int $globalLimit = 64,
+        int $minimumPerLeg = 3,
+    ): array {
+        $legCount = count($legs);
+        $minimumTotal = $legCount * $minimumPerLeg;
+        if (
+            $legCount === 0
+            || $globalLimit < 1
+            || $globalLimit > 64
+            || $minimumPerLeg < 1
+            || $minimumTotal > $globalLimit
+        ) {
+            throw new InvalidArgumentException('Itinerary exceeds the road-candidate budget.');
+        }
+
+        $desired = array_map(
+            static fn (FuelauPreparedItineraryLeg $leg): int => min(
+                80,
+                max(
+                    $minimumPerLeg,
+                    (int) ceil($leg->corridor->distanceM / 50_000),
+                ),
+            ),
+            $legs,
+        );
+        if (array_sum($desired) <= $globalLimit) {
+            return array_values($desired);
+        }
+
+        $limits = array_fill(0, $legCount, $minimumPerLeg);
+        $remaining = $globalLimit - $minimumTotal;
+        $weights = array_map(
+            static fn (int $value): int => $value - $minimumPerLeg,
+            $desired,
+        );
+        $weightTotal = array_sum($weights);
+        $remainders = [];
+        foreach ($weights as $index => $weight) {
+            $share = $weightTotal > 0 ? ($remaining * $weight) / $weightTotal : 0.0;
+            $wholeShare = min($weight, (int) floor($share));
+            $limits[$index] += $wholeShare;
+            $remainders[$index] = $share - $wholeShare;
+        }
+
+        $unassigned = $globalLimit - array_sum($limits);
+        while ($unassigned > 0) {
+            $eligible = array_filter(
+                array_keys($limits),
+                static fn (int $index): bool => $limits[$index] < $desired[$index],
+            );
+            if ($eligible === []) {
+                break;
+            }
+            usort(
+                $eligible,
+                static fn (int $left, int $right): int =>
+                    ($remainders[$right] <=> $remainders[$left])
+                    ?: ($weights[$right] <=> $weights[$left])
+                    ?: ($left <=> $right),
+            );
+            foreach ($eligible as $index) {
+                $limits[$index]++;
+                $unassigned--;
+                if ($unassigned === 0) {
+                    break;
+                }
+            }
+        }
+
+        return array_values($limits);
+    }
+}
+
 final class FuelauLiveCompleteItineraryPlanner
 {
-    private const GLOBAL_ROAD_CANDIDATE_LIMIT = 160;
-
     private Closure $routeLoader;
     private Closure $candidateLoader;
     private Closure $tableLoader;
@@ -2094,11 +2558,9 @@ final class FuelauLiveCompleteItineraryPlanner
 
         $rawCandidateCount = 0;
         $freshCandidateCount = 0;
-        $candidateLimitPerLeg = max(
-            8,
-            intdiv(self::GLOBAL_ROAD_CANDIDATE_LIMIT, $legCount),
+        $roadCandidateLimits = (new FuelauItineraryRoadCandidateBudget())->allocate(
+            $preparedLegs,
         );
-        $candidateLimitPerLeg = min(80, $candidateLimitPerLeg);
         $measuredLegs = [];
         $asOf = ($this->clock)();
         foreach ($preparedLegs as $leg) {
@@ -2120,10 +2582,7 @@ final class FuelauLiveCompleteItineraryPlanner
                 static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
             ));
             $freshCandidateCount += count($freshRows);
-            $roadCandidateLimit = min(
-                $candidateLimitPerLeg,
-                max(12, (int) ceil($leg->corridor->distanceM / 50_000)),
-            );
+            $roadCandidateLimit = $roadCandidateLimits[$leg->index];
             $measuredRows = (new FuelauCandidateRoadAccessMeasurer())->measure(
                 $leg->corridor,
                 $freshRows,

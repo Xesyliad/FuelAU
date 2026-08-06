@@ -83,9 +83,7 @@ final class WebArchitectureTest extends TestCase
         );
         self::assertStringContainsString('starting_fuel_l: startingFuelL', $script);
         self::assertStringContainsString('reserve_l: reserveL', $script);
-        self::assertStringContainsString(
-            'Physical stop; fatigue spacing restarts here',
-            $script,
-        );
+        self::assertStringContainsString("'Planned stop'", $script);
+        self::assertStringNotContainsString('fatigue spacing', $script);
     }
 }

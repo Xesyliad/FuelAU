@@ -291,8 +291,12 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         'Starting fuel and terminal reserve must be server-owned optimizer inputs',
     );
     fuelauAssertTrue(
-        str_contains($source, 'Physical stop; fatigue spacing restarts here'),
-        'The optimized route breakdown must explain physical-stop fatigue resets',
+        str_contains($source, "details: leg?.target?.physical_stop === false ? 'Route waypoint' : 'Planned stop'"),
+        'The optimized route breakdown must label planned stops without fatigue messaging',
+    );
+    fuelauAssertTrue(
+        !str_contains($source, 'fatigue spacing'),
+        'The optimized route breakdown must not expose fatigue spacing behavior',
     );
     fuelauAssertTrue(
         str_contains($source, 'Alternative route selected for lower complete trip cost')
@@ -832,6 +836,29 @@ fuelauTest('practical optimizer prefers fewer stops within the similar-cost thre
     );
 });
 
+fuelauTest('combined-stop history does not multiply equivalent optimizer states', static function (): void {
+    $nodes = [new FuelauOptimizerNode('origin', 0)];
+    for ($progressKm = 50; $progressKm < 3_000; $progressKm += 50) {
+        $nodes[] = FuelauOptimizerNode::station(
+            "combined-{$progressKm}",
+            $progressKm * 1_000,
+            200,
+            combinedStop: true,
+            combinedStopReason: 'planned_stop_combination',
+        );
+    }
+    $nodes[] = new FuelauOptimizerNode('destination', 3_000_000);
+
+    $plan = (new FuelauFuelStateOptimizer())->optimize(
+        $nodes,
+        new FuelauOptimizerVehicle(80, 50, 10, 10),
+    );
+
+    fuelauAssertSame(4, $plan->fuelStopCount);
+    fuelauAssertSame(0, $plan->fuelOnlyStopCount);
+    fuelauAssertSame(10.0, $plan->endingFuelL);
+});
+
 fuelauTest('route corridor projects station progress using OSRM totals', static function (): void {
     $corridor = FuelauRouteCorridor::fromOsrmRoute([
         'distance' => 100_000,
@@ -934,6 +961,18 @@ fuelauTest('candidate price freshness is classified against an injected clock', 
         ['fresh', 'fresh', 'stale', 'stale', 'stale'],
         array_column($rows, 'price_status'),
     );
+});
+
+fuelauTest('WA calendar price dates are fresh from local midnight', static function (): void {
+    $rows = fuelauClassifyRouteCandidatePriceRows(
+        [
+            ['source' => 'wa', 'updated_at' => '2026-08-07'],
+            ['source' => 'nsw', 'updated_at' => '2026-08-07'],
+        ],
+        new DateTimeImmutable('2026-08-06T21:00:00Z'),
+    );
+
+    fuelauAssertSame(['fresh', 'stale'], array_column($rows, 'price_status'));
 });
 
 fuelauTest('candidate road access is measured in bounded OSRM table chunks', static function (): void {
@@ -1044,6 +1083,40 @@ fuelauTest('road access shortlist preserves bounded coverage on transcontinental
     );
 });
 
+fuelauTest('complete itinerary road candidates obey one distance-weighted global budget', static function (): void {
+    $leg = static fn (int $index, int $distanceM): FuelauPreparedItineraryLeg =>
+        new FuelauPreparedItineraryLeg(
+            $index,
+            new FuelauRouteCorridor(
+                $distanceM,
+                max(1, intdiv($distanceM, 25)),
+                [
+                    ['lat' => -30.0, 'lon' => 120.0 + $index],
+                    ['lat' => -30.0, 'lon' => 121.0 + $index],
+                ],
+            ),
+            new FuelauRouteOptimizationLocation(-30.0, 121.0 + $index, '', true),
+            [],
+        );
+    $budget = new FuelauItineraryRoadCandidateBudget();
+
+    fuelauAssertSame(
+        [32, 32],
+        $budget->allocate([$leg(0, 2_700_000), $leg(1, 2_700_000)]),
+    );
+    fuelauAssertSame(
+        [8, 56],
+        $budget->allocate([$leg(0, 500_000), $leg(1, 3_500_000)]),
+    );
+    fuelauAssertSame(
+        array_fill(0, 20, 3),
+        $budget->allocate(array_map(
+            static fn (int $index): FuelauPreparedItineraryLeg => $leg($index, 100_000),
+            range(0, 19),
+        )),
+    );
+});
+
 fuelauTest('projected corridor candidates feed the practical optimizer', static function (): void {
     $corridor = new FuelauRouteCorridor(
         distanceM: 600_000,
@@ -1071,6 +1144,155 @@ fuelauTest('projected corridor candidates feed the practical optimizer', static 
     fuelauAssertSame('Required', $plan->purchases[0]->label);
     fuelauAssertSame('Strategic', $plan->purchases[1]->label);
     fuelauAssertSame('strategic', $plan->purchases[1]->classification);
+});
+
+fuelauTest('capacity gaps are flagged and priced at the prior station', static function (): void {
+    $request = FuelauRouteOptimizationRequest::fromBody([
+        'version' => 1,
+        'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Edmonton'],
+        'destinations' => [['lat' => -30.0, 'lon' => 160.0, 'label' => 'Perth']],
+        'return_mode' => 'one_way',
+        'fuel' => [
+            'type' => 'Diesel',
+            'tank_capacity_l' => 60,
+            'starting_fuel_l' => 20,
+            'economy_l_per_100km' => 10,
+            'reserve_l' => 5,
+        ],
+        'preferences' => [
+            'maximum_fuel_only_stops' => 3,
+            'minimum_discretionary_purchase_l' => 0,
+            'minimum_net_saving_cents' => 0,
+        ],
+    ]);
+    $nodes = [
+        new FuelauOptimizerNode('origin', 0),
+        FuelauOptimizerNode::station('station:prior', 50_000, 200, 'Prior Fuel'),
+        FuelauOptimizerNode::station('station:next', 800_000, 250, 'Next Fuel'),
+        new FuelauOptimizerNode('destination', 1_000_000),
+    ];
+    $candidate = static fn (
+        string $nodeId,
+        string $name,
+        int $progressM,
+        float $price,
+    ): FuelauProjectedStationCandidate => new FuelauProjectedStationCandidate(
+        stableId: $nodeId,
+        nodeId: $nodeId,
+        label: $name,
+        progressM: $progressM,
+        progressS: 0,
+        offRouteM: 0,
+        accessDistanceM: 0,
+        accessDurationS: 0,
+        accessEstimated: false,
+        priceCentsPerL: $price,
+        sourceRow: [
+            'source' => 'qld',
+            'state' => 'QLD',
+            'station_id' => $nodeId,
+            'station_name' => $name,
+            'latitude' => -30.0,
+            'longitude' => $progressM / 100_000,
+            'itinerary_leg_index' => 0,
+        ],
+    );
+    $input = new FuelauFixedCorridorInput(
+        nodes: $nodes,
+        candidatesByNodeId: [
+            'station:prior' => $candidate('station:prior', 'Prior Fuel', 50_000, 200),
+            'station:next' => $candidate('station:next', 'Next Fuel', 800_000, 250),
+        ],
+        eligibleCandidateCount: 2,
+        selectedCandidateCount: 2,
+    );
+    $policy = fuelauOptimizerPolicyForRequest($request);
+    $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+        $nodes,
+        new FuelauOptimizerVehicle(60, 20, 5, 10),
+        $policy,
+    );
+    $response = (new FuelauSingleCorridorOptimizationResult(
+        request: $request,
+        corridor: new FuelauRouteCorridor(
+            1_000_000,
+            36_000,
+            [
+                ['lat' => -30.0, 'lon' => 150.0],
+                ['lat' => -30.0, 'lon' => 160.0],
+            ],
+        ),
+        input: $input,
+        plan: $adjusted->plan,
+        policy: $policy,
+        itineraryLegs: [[
+            'index' => 0,
+            'distance_m' => 1_000_000,
+            'duration_s' => 36_000,
+            'target' => $request->destinations[0]->toArray(),
+        ]],
+        effectiveFuelCapacityL: $adjusted->effectiveFuelCapacityL,
+    ))->toResponseArray();
+    $requirement = $response['additional_fuel_requirements'][0];
+
+    fuelauAssertSame(80.0, $adjusted->effectiveFuelCapacityL);
+    fuelauAssertSame(20.0, $requirement['additional_fuel_l']);
+    fuelauAssertSame(4_000, $requirement['additional_fuel_cost_cents']);
+    fuelauAssertSame('Prior Fuel', $requirement['station_name']);
+    fuelauAssertSame('Next Fuel', $requirement['next_stop_name']);
+    fuelauAssertSame(
+        'Leg 1 requires additional 20.0 litres of fuel to reach next stop',
+        $requirement['message'],
+    );
+    fuelauAssertSame(
+        'Purchase additional 20.0 litres of fuel at Prior Fuel in order to reach next stop at Next Fuel.',
+        $requirement['purchase_instruction'],
+    );
+    fuelauAssertSame(true, $response['itinerary']['legs'][0]['requires_additional_fuel']);
+    fuelauAssertSame(4_000, $response['summary']['additional_fuel_cost_cents']);
+});
+
+fuelauTest('capacity fallback bounds transcontinental station graphs', static function (): void {
+    $nodes = [new FuelauOptimizerNode('origin', 0)];
+    for ($index = 1; $index <= 30; $index++) {
+        $nodes[] = FuelauOptimizerNode::station(
+            "station:{$index}",
+            $index * 50_000,
+            180 + ($index % 10),
+            "Station {$index}",
+        );
+    }
+    $nodes[] = FuelauOptimizerNode::station(
+        'station:31',
+        2_200_000,
+        181,
+        'Station 31',
+    );
+    for ($index = 32; $index <= 62; $index++) {
+        $nodes[] = FuelauOptimizerNode::station(
+            "station:{$index}",
+            2_200_000 + (($index - 31) * 50_000),
+            180 + ($index % 10),
+            "Station {$index}",
+        );
+    }
+    $nodes[] = new FuelauOptimizerNode('destination', 3_800_000);
+
+    $startedAt = microtime(true);
+    $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+        $nodes,
+        new FuelauOptimizerVehicle(60, 60, 6, 10),
+        new FuelauOptimizerPolicy(
+            minimumDiscretionaryPurchaseL: 0,
+            minimumNetSavingCents: 0,
+        ),
+    );
+
+    fuelauAssertSame(76.0, $adjusted->effectiveFuelCapacityL);
+    fuelauAssertTrue(
+        (microtime(true) - $startedAt) < 5.0,
+        'The bounded capacity fallback must complete a 64-node graph within five seconds',
+    );
 });
 
 fuelauTest('complete itinerary optimizer buys outbound fuel with return-leg lookahead', static function (): void {
@@ -1520,7 +1742,7 @@ fuelauTest('single-corridor planner maps request policy and builds response acco
     fuelauAssertSame(false, $validated->validation->requiresReoptimization);
 });
 
-fuelauTest('single-corridor response explains required short-stop overrides', static function (): void {
+fuelauTest('single-corridor response explains required small-purchase overrides', static function (): void {
     $request = FuelauRouteOptimizationRequest::fromBody([
         'version' => 1,
         'origin' => ['lat' => -30.0, 'lon' => 150.0],
@@ -1563,13 +1785,6 @@ fuelauTest('single-corridor response explains required short-stop overrides', st
     );
     $response = $result->toResponseArray();
 
-    fuelauAssertTrue(
-        count(array_filter(
-            $response['warnings'],
-            static fn (string $warning): bool => str_contains($warning, 'sooner than preferred'),
-        )) === 1,
-        'Required short spacing must be visible in response warnings',
-    );
     fuelauAssertTrue(
         count(array_filter(
             $response['warnings'],

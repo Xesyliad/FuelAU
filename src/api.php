@@ -356,6 +356,14 @@ function fuelauRouteController(FuelauHttpRequest $request): never
 
 function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $config): never
 {
+    // Long multi-leg itineraries can require several optimizer passes over a
+    // large fuel-state graph. Keep the normal PHP request limit from turning
+    // a valid route into an HTML fatal-error response.
+    // Route planning is normally bounded well below this ceiling. Keep a
+    // five-minute guard for unusually large interstate corridors and slow
+    // upstream routing responses so PHP can still return structured JSON.
+    set_time_limit(300);
+
     if (strlen($request->rawBody) > 65_536) {
         fuelauJsonResponse([
             'error' => 'request_too_large',
@@ -415,6 +423,15 @@ function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $co
             'error' => 'upstream_unavailable',
             'message' => 'A required routing or fuel-price service is unavailable.',
         ], 503);
+    } catch (Throwable $exception) {
+        // Keep unexpected optimizer failures machine-readable. PHP warnings
+        // are converted to exceptions by the web entrypoint before they can
+        // leak an HTML error page into fetch().
+        error_log('FuelAU route optimization failed: ' . $exception);
+        fuelauJsonResponse([
+            'error' => 'server_error',
+            'message' => 'Route optimization failed unexpectedly. Please try again.',
+        ], 500);
     }
 }
 

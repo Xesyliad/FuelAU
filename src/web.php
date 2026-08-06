@@ -53,6 +53,15 @@ function fuelauRunWebApplication(): void
     $cspNonce = base64_encode(random_bytes(18));
     fuelauApplyBrowserSecurityHeaders($cspNonce);
 
+    // PHP emits warnings as HTML by default. Convert them to exceptions while
+    // handling API requests so the JSON contract is preserved on failures.
+    set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
+        throw new ErrorException($message, 0, $severity, $file, $line);
+    });
+
     try {
         if ($request->path === '/') {
             fuelauRenderAppPage(
@@ -75,5 +84,7 @@ function fuelauRunWebApplication(): void
             'error' => 'server_error',
             'message' => 'An internal error occurred.',
         ], 500);
+    } finally {
+        restore_error_handler();
     }
 }

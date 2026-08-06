@@ -371,4 +371,28 @@ final class RouteOptimizerTest extends TestCase
             $similarCostPlan->generalizedCostCents - $strictCostPlan->generalizedCostCents,
         );
     }
+
+    public function testCombinedStopHistoryDoesNotMultiplyEquivalentFuelStates(): void
+    {
+        $nodes = [new FuelauOptimizerNode('origin', 0)];
+        for ($progressKm = 50; $progressKm < 3_000; $progressKm += 50) {
+            $nodes[] = FuelauOptimizerNode::station(
+                "combined-{$progressKm}",
+                $progressKm * 1_000,
+                200,
+                combinedStop: true,
+                combinedStopReason: 'planned_stop_combination',
+            );
+        }
+        $nodes[] = new FuelauOptimizerNode('destination', 3_000_000);
+
+        $plan = (new FuelauFuelStateOptimizer())->optimize(
+            $nodes,
+            new FuelauOptimizerVehicle(80, 50, 10, 10),
+        );
+
+        self::assertSame(4, $plan->fuelStopCount);
+        self::assertSame(0, $plan->fuelOnlyStopCount);
+        self::assertSame(10.0, $plan->endingFuelL);
+    }
 }

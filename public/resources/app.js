@@ -477,7 +477,27 @@ async function apiRequest(url, options = {}, retryOnContainerAuthFailure = true)
         ...options,
         headers,
     });
-    const payload = await response.json();
+    const responseText = await response.text();
+    let payload = null;
+    try {
+        payload = responseText === '' ? null : JSON.parse(responseText);
+    } catch (error) {
+        console.error('FuelAU API returned a non-JSON response', {
+            url,
+            status: response.status,
+            contentType: response.headers.get('content-type') || '',
+            body: responseText.slice(0, 500),
+            error,
+        });
+        const responsePreview = responseText
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 300);
+        throw new Error(
+            `${response.ok ? 'The server returned an invalid response' : `The server returned an invalid error response (${response.status})`}. `
+            + (responsePreview !== '' ? `Response: ${responsePreview}` : 'The response was empty.'),
+        );
+    }
     if (!response.ok) {
         if (
             retryOnContainerAuthFailure
@@ -490,7 +510,7 @@ async function apiRequest(url, options = {}, retryOnContainerAuthFailure = true)
             }
         }
 
-        throw new Error(payload.message || payload.error || 'Request failed');
+        throw new Error(payload?.message || payload?.error || 'Request failed');
     }
     return payload;
 }
@@ -1339,6 +1359,14 @@ function routeFuelQueryLabel() {
 
 function renderRouteEmpty(message) {
     return `<div class="route-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderRouteError(message) {
+    const safeMessage = String(message || 'An unexpected error occurred.');
+    return `<div class="route-error" role="alert">
+        <strong>Route planning failed</strong>
+        <span>${escapeHtml(safeMessage)}</span>
+    </div>`;
 }
 
 function routeFuelQuery() {
@@ -2956,10 +2984,15 @@ function routeOptimizerPlanFromResponse(
         departureFuelL: Number(stop?.departure_fuel_l || 0),
         classification: String(stop?.classification || ''),
         reasonCodes: Array.isArray(stop?.reason_codes) ? stop.reason_codes : [],
-        distanceSincePhysicalStopKm: Number(stop?.distance_since_physical_stop_km || 0),
-        minutesSincePhysicalStop: Number(stop?.minutes_since_physical_stop || 0),
         marginalNetSavingCents: Number(stop?.marginal_net_saving_cents || 0),
+        additionalFuelL: Number(stop?.additional_fuel_l || 0),
+        additionalFuelCostCents: Number(stop?.additional_fuel_cost_cents || 0),
+        additionalFuelNextStop: String(stop?.additional_fuel_next_stop || ''),
+        additionalFuelLegIndex: Number(stop?.additional_fuel_leg_index || 0),
     }));
+    const additionalFuelRequirements = Array.isArray(payload?.additional_fuel_requirements)
+        ? payload.additional_fuel_requirements
+        : [];
     const routePieces = [
         { type: 'route', route },
         ...stops.map((stop) => ({
@@ -2969,8 +3002,6 @@ function routeOptimizerPlanFromResponse(
             purchaseCents: stop.purchaseCents,
             classification: stop.classification,
             reasonCodes: stop.reasonCodes,
-            distanceSincePhysicalStopKm: stop.distanceSincePhysicalStopKm,
-            minutesSincePhysicalStop: stop.minutesSincePhysicalStop,
             marginalNetSavingCents: stop.marginalNetSavingCents,
         })),
     ];
@@ -2993,6 +3024,7 @@ function routeOptimizerPlanFromResponse(
         itineraryLegs,
         itineraryTargets: itineraryLegs.map((leg) => leg.target).filter(Boolean),
         itineraryLegCount: Number(payload?.itinerary?.leg_count || itineraryLegs.length || 1),
+        additionalFuelRequirements,
         totalDistanceM: Number(summary.route_distance_m || 0),
         totalDurationS: Number(summary.route_duration_s || 0),
         totalFuelUsedL: Number(summary.fuel_used_l || 0),
@@ -3091,6 +3123,12 @@ function renderRouteSummary(plan) {
             ['Combined Stops', String(Number(summary.combined_stop_count || 0))],
             ['Ending Fuel', `${Number(summary.ending_fuel_l || 0).toFixed(1)} L`]
         );
+        if (Number(summary.additional_required_fuel_l || 0) > 0) {
+            cards.push(
+                ['Additional Fuel', `${Number(summary.additional_required_fuel_l).toFixed(1)} L`],
+                ['Additional Fuel Cost', `$${(Number(summary.additional_fuel_cost_cents || 0) / 100).toFixed(2)}`]
+            );
+        }
     }
     routeSummary.innerHTML = cards.map(([label, value]) => `
         <article class="route-summary-card">
@@ -3662,15 +3700,34 @@ function renderRouteBreakdownInto(targetElement, plan) {
         });
     }
     (Array.isArray(plan.itineraryLegs) ? plan.itineraryLegs : []).forEach((leg) => {
-        rows.push({
+        const legFuelCostCents = Number(leg.fuel_purchase_cost_cents || 0);
+        const additionalFuelCostCents = Number(leg.additional_fuel_cost_cents || 0);
+        const fuelDetails = legFuelCostCents > 0
+            ? `; fuel purchased: ${Number(leg.fuel_purchased_l || 0).toFixed(1)} L, leg fuel cost: $${(legFuelCostCents / 100).toFixed(2)}${additionalFuelCostCents > 0 ? ` including $${(additionalFuelCostCents / 100).toFixed(2)} for additional fuel` : ''}`
+            : '';
+        const legRow = {
             leg: Number(leg.index || 0) + 1,
             type: 'Planned stop',
             instruction: String(leg?.target?.label || `Itinerary stop ${Number(leg.index || 0) + 1}`),
             distance: formatRouteDistance(Number(leg.distance_m || 0)),
             duration: formatRouteDuration(Number(leg.duration_s || 0)),
-            details: leg?.target?.physical_stop === false
-                ? 'Route waypoint'
-                : 'Physical stop; fatigue spacing restarts here',
+            details: leg?.target?.physical_stop === false ? 'Route waypoint' : 'Planned stop',
+        };
+        legRow.details += fuelDetails;
+        rows.push(legRow);
+    });
+    (Array.isArray(plan.additionalFuelRequirements) ? plan.additionalFuelRequirements : []).forEach((requirement) => {
+        const additionalFuelL = Number(requirement.additional_fuel_l || 0);
+        const additionalFuelCostCents = Number(requirement.additional_fuel_cost_cents || 0);
+        const legFuelCostCents = Number(requirement.leg_fuel_purchase_cost_cents || 0);
+        rows.push({
+            leg: Number(requirement.leg_number || Number(requirement.leg_index || 0) + 1),
+            type: 'Additional fuel required',
+            instruction: String(requirement.message || `Leg ${Number(requirement.leg_index || 0) + 1} requires additional ${additionalFuelL.toFixed(1)} litres of fuel to reach next stop`),
+            distance: '-',
+            duration: '-',
+            details: `${String(requirement.purchase_instruction || '')} Additional fuel cost: $${(additionalFuelCostCents / 100).toFixed(2)} at ${routeFuelPriceText(requirement.price_cents_per_l)}/L. Leg fuel cost including the additional fuel: $${(legFuelCostCents / 100).toFixed(2)}.`,
+            additionalFuelRequired: true,
         });
     });
     plan.segments.forEach((segment, segmentIndex) => {
@@ -3706,9 +3763,7 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         : (piece.contingencyFallback ? ' contingency stop' : (piece.relaxedFallback ? ' relaxed stop' : (piece.safetyFallback ? ' safety stop' : '')));
                     const optimizerDetails = departureTopUp
                         ? ', combined with departure'
-                        : (piece.classification
-                            ? `, ${piece.classification} stop after ${Number(piece.distanceSincePhysicalStopKm || 0).toFixed(1)} km / ${Number(piece.minutesSincePhysicalStop || 0).toFixed(0)} min`
-                            : '');
+                        : (piece.classification ? `, ${piece.classification} stop` : '');
                     const savingDetails = Number(piece.marginalNetSavingCents || 0) > 0
                         ? `, saves $${(Number(piece.marginalNetSavingCents) / 100).toFixed(2)}`
                         : '';
@@ -3751,7 +3806,7 @@ function renderRouteBreakdownInto(targetElement, plan) {
             </thead>
             <tbody>
                 ${rows.map((row) => `
-                    <tr class="${row.type === 'Fuel stop' ? 'route-breakdown-row route-breakdown-stop' : 'route-breakdown-row'}">
+                    <tr class="${row.additionalFuelRequired ? 'route-breakdown-row route-breakdown-additional' : (row.type === 'Fuel stop' ? 'route-breakdown-row route-breakdown-stop' : 'route-breakdown-row')}">
                         <td>${escapeHtml(String(row.leg))}</td>
                         <td>${escapeHtml(row.type)}</td>
                         <td>
@@ -3873,6 +3928,7 @@ async function planRoute() {
     routePlan.disabled = true;
     routeStatus.textContent = 'Resolving locations and building route legs...';
     routeStatus.classList.remove('route-status-warning');
+    routeStatus.classList.remove('route-status-error');
     routeSummary.innerHTML = renderRouteEmpty('Planning route...');
     routeMap.innerHTML = renderRouteEmpty('Resolving locations...');
     routeMapLegend.innerHTML = '';
@@ -3931,11 +3987,13 @@ async function planRoute() {
             : `Planned ${plannedLegCount} legs using ${returnMode}.${contingencyMessage}${warningMessage}`;
     } catch (error) {
         routeStatus.classList.remove('route-status-warning');
-        routeStatus.textContent = error.message;
-        routeSummary.innerHTML = renderRouteEmpty(error.message);
-        routeMap.innerHTML = renderRouteEmpty(error.message);
+        routeStatus.classList.add('route-status-error');
+        const message = String(error?.message || error || 'An unexpected error occurred.');
+        routeStatus.textContent = `Route planning failed: ${message}`;
+        routeSummary.innerHTML = renderRouteError(message);
+        routeMap.innerHTML = renderRouteError(message);
         routeMapLegend.innerHTML = '';
-        routeLegs.innerHTML = renderRouteEmpty(error.message);
+        routeLegs.innerHTML = renderRouteError(message);
         routeExcludedStatus.textContent = '';
     } finally {
         routePlan.disabled = false;
@@ -3961,6 +4019,7 @@ function resetRoutePlanner(options = {}) {
     routeReturnOneWay.checked = false;
     syncRouteReturnModeControls();
     routeStatus.classList.remove('route-status-warning');
+    routeStatus.classList.remove('route-status-error');
     routeExcludedStatus.textContent = '';
     routeDestinationList.innerHTML = '';
     routeDestinationCounter = 0;

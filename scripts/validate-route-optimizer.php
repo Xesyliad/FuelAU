@@ -236,10 +236,6 @@ foreach ($routes as $name => $route) {
                     'price_cents_per_l' => $stop['price_cents_per_l'],
                     'arrival_fuel_l' => $stop['arrival_fuel_l'],
                     'departure_fuel_l' => $stop['departure_fuel_l'],
-                    'distance_since_physical_stop_km' =>
-                        $stop['distance_since_physical_stop_km'],
-                    'minutes_since_physical_stop' =>
-                        $stop['minutes_since_physical_stop'],
                     'marginal_net_saving_dollars' => round(
                         ((int) $stop['marginal_net_saving_cents']) / 100,
                         2,

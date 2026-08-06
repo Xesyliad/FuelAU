@@ -117,6 +117,19 @@ final class RoutePlanningTest extends TestCase
         );
     }
 
+    public function testWaCalendarPriceDateUsesPerthTime(): void
+    {
+        $rows = fuelauClassifyRouteCandidatePriceRows(
+            [
+                ['source' => 'wa', 'updated_at' => '2026-08-07'],
+                ['source' => 'nsw', 'updated_at' => '2026-08-07'],
+            ],
+            new DateTimeImmutable('2026-08-06T21:00:00Z'),
+        );
+
+        self::assertSame(['fresh', 'stale'], array_column($rows, 'price_status'));
+    }
+
     public function testCompleteItineraryUsesOutboundPurchaseForReturnLeg(): void
     {
         $request = FuelauRouteOptimizationRequest::fromBody([
@@ -367,6 +380,41 @@ final class RoutePlanningTest extends TestCase
         self::assertGreaterThan(148.0, (float) $rows[count($rows) - 1]['longitude']);
     }
 
+    public function testCompleteItineraryCandidateBudgetIsGlobalAndDistanceWeighted(): void
+    {
+        $leg = static fn (int $index, int $distanceM): FuelauPreparedItineraryLeg =>
+            new FuelauPreparedItineraryLeg(
+                $index,
+                new FuelauRouteCorridor(
+                    $distanceM,
+                    max(1, intdiv($distanceM, 25)),
+                    [
+                        ['lat' => -30.0, 'lon' => 120.0 + $index],
+                        ['lat' => -30.0, 'lon' => 121.0 + $index],
+                    ],
+                ),
+                new FuelauRouteOptimizationLocation(-30.0, 121.0 + $index, '', true),
+                [],
+            );
+        $budget = new FuelauItineraryRoadCandidateBudget();
+
+        self::assertSame(
+            [32, 32],
+            $budget->allocate([$leg(0, 2_700_000), $leg(1, 2_700_000)]),
+        );
+        self::assertSame(
+            [8, 56],
+            $budget->allocate([$leg(0, 500_000), $leg(1, 3_500_000)]),
+        );
+        self::assertSame(
+            array_fill(0, 20, 3),
+            $budget->allocate(array_map(
+                static fn (int $index): FuelauPreparedItineraryLeg => $leg($index, 100_000),
+                range(0, 19),
+            )),
+        );
+    }
+
     public function testProjectedCandidatesCanBeOptimizedWithoutShapeConversion(): void
     {
         $corridor = new FuelauRouteCorridor(
@@ -396,6 +444,125 @@ final class RoutePlanningTest extends TestCase
         self::assertSame('Required', $plan->purchases[0]->label);
         self::assertSame('Strategic', $plan->purchases[1]->label);
         self::assertSame('strategic', $plan->purchases[1]->classification);
+    }
+
+    public function testCapacityGapIsFlaggedAndAdditionalFuelUsesPriorStationPrice(): void
+    {
+        $request = FuelauRouteOptimizationRequest::fromBody([
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Edmonton'],
+            'destinations' => [
+                ['lat' => -30.0, 'lon' => 160.0, 'label' => 'Perth'],
+            ],
+            'return_mode' => 'one_way',
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 60,
+                'starting_fuel_l' => 20,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 5,
+            ],
+            'preferences' => [
+                'maximum_fuel_only_stops' => 3,
+                'minimum_discretionary_purchase_l' => 0,
+                'minimum_net_saving_cents' => 0,
+            ],
+        ]);
+        $nodes = [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('station:prior', 50_000, 200, 'Prior Fuel'),
+            FuelauOptimizerNode::station('station:next', 800_000, 250, 'Next Fuel'),
+            new FuelauOptimizerNode('destination', 1_000_000),
+        ];
+        $candidate = static fn (
+            string $nodeId,
+            string $name,
+            int $progressM,
+            float $price,
+        ): FuelauProjectedStationCandidate => new FuelauProjectedStationCandidate(
+            stableId: $nodeId,
+            nodeId: $nodeId,
+            label: $name,
+            progressM: $progressM,
+            progressS: 0,
+            offRouteM: 0,
+            accessDistanceM: 0,
+            accessDurationS: 0,
+            accessEstimated: false,
+            priceCentsPerL: $price,
+            sourceRow: [
+                'source' => 'qld',
+                'state' => 'QLD',
+                'station_id' => $nodeId,
+                'station_name' => $name,
+                'latitude' => -30.0,
+                'longitude' => $progressM / 100_000,
+                'itinerary_leg_index' => 0,
+            ],
+        );
+        $input = new FuelauFixedCorridorInput(
+            nodes: $nodes,
+            candidatesByNodeId: [
+                'station:prior' => $candidate('station:prior', 'Prior Fuel', 50_000, 200),
+                'station:next' => $candidate('station:next', 'Next Fuel', 800_000, 250),
+            ],
+            eligibleCandidateCount: 2,
+            selectedCandidateCount: 2,
+        );
+        $policy = fuelauOptimizerPolicyForRequest($request);
+        $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            $nodes,
+            new FuelauOptimizerVehicle(60, 20, 5, 10),
+            $policy,
+        );
+        $result = new FuelauSingleCorridorOptimizationResult(
+            request: $request,
+            corridor: new FuelauRouteCorridor(
+                1_000_000,
+                36_000,
+                [
+                    ['lat' => -30.0, 'lon' => 150.0],
+                    ['lat' => -30.0, 'lon' => 160.0],
+                ],
+            ),
+            input: $input,
+            plan: $adjusted->plan,
+            policy: $policy,
+            itineraryLegs: [[
+                'index' => 0,
+                'distance_m' => 1_000_000,
+                'duration_s' => 36_000,
+                'target' => $request->destinations[0]->toArray(),
+            ]],
+            effectiveFuelCapacityL: $adjusted->effectiveFuelCapacityL,
+        );
+
+        $response = $result->toResponseArray();
+        $requirement = $response['additional_fuel_requirements'][0];
+
+        self::assertSame(80.0, $adjusted->effectiveFuelCapacityL);
+        self::assertSame(20.0, $requirement['additional_fuel_l']);
+        self::assertSame(4_000, $requirement['additional_fuel_cost_cents']);
+        self::assertSame('Prior Fuel', $requirement['station_name']);
+        self::assertSame('Next Fuel', $requirement['next_stop_name']);
+        self::assertSame(
+            'Leg 1 requires additional 20.0 litres of fuel to reach next stop',
+            $requirement['message'],
+        );
+        self::assertSame(
+            'Purchase additional 20.0 litres of fuel at Prior Fuel in order to reach next stop at Next Fuel.',
+            $requirement['purchase_instruction'],
+        );
+        self::assertSame(
+            $adjusted->plan->fuelPurchaseCostCents,
+            $requirement['leg_fuel_purchase_cost_cents'],
+        );
+        self::assertTrue($response['itinerary']['legs'][0]['requires_additional_fuel']);
+        self::assertSame(4_000, $response['summary']['additional_fuel_cost_cents']);
+        self::assertContains(
+            'additional_fuel_required',
+            $response['stops'][0]['reason_codes'],
+        );
     }
 
     public function testSingleCorridorPlannerBuildsResponseAndMapsPreferences(): void
@@ -477,7 +644,7 @@ final class RoutePlanningTest extends TestCase
         self::assertFalse($validated->validation->requiresReoptimization);
     }
 
-    public function testResponseExplainsRequiredShortStopOverrides(): void
+    public function testResponseExplainsRequiredSmallPurchaseOverrides(): void
     {
         $request = FuelauRouteOptimizationRequest::fromBody([
             'version' => 1,
@@ -526,10 +693,6 @@ final class RoutePlanningTest extends TestCase
         );
         $warnings = $result->toResponseArray()['warnings'];
 
-        self::assertCount(1, array_filter(
-            $warnings,
-            static fn (string $warning): bool => str_contains($warning, 'sooner than preferred'),
-        ));
         self::assertCount(1, array_filter(
             $warnings,
             static fn (string $warning): bool => str_contains($warning, 'preferred minimum'),

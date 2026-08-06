@@ -260,7 +260,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                             <button class="button" type="button" id="route-reset">Reset</button>
                         </div>
 
-                        <div class="status-line" id="route-status">Enter a trip to build a route.</div>
+                        <div class="status-line" id="route-status" role="status" aria-live="polite">Enter a trip to build a route.</div>
                         <div class="status-line route-status-muted" id="route-excluded-status"></div>
                     </section>
 
