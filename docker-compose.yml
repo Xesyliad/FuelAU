@@ -298,7 +298,7 @@ services:
     restart: unless-stopped
 
   map-scheduler:
-    image: docker:27-cli
+    image: docker:29-cli
     profiles:
       - map
     depends_on:
