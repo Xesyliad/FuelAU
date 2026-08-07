@@ -65,8 +65,4 @@ updates:
       day: monday
       time: "06:00"
       timezone: Australia/Brisbane
-    open-pull-requests-limit: 5
-    groups:
-      compose-images:
-        patterns:
-          - "*"
+    open-pull-requests-limit: 2
