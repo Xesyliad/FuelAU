@@ -461,6 +461,8 @@ final readonly class FuelauRouteOptimizationPreferences
 
 final readonly class FuelauRouteOptimizationRequest
 {
+    public const MAX_ITINERARY_LEGS = 20;
+
     /**
      * @param list<FuelauRouteOptimizationLocation> $destinations
      */
@@ -494,8 +496,26 @@ final readonly class FuelauRouteOptimizationRequest
         );
 
         $destinationBodies = $body['destinations'] ?? null;
-        if (!is_array($destinationBodies) || count($destinationBodies) < 1 || count($destinationBodies) > 10) {
-            throw new FuelauValidationException('destinations must contain between 1 and 10 locations.');
+        if (!is_array($destinationBodies) || count($destinationBodies) < 1) {
+            throw new FuelauValidationException('destinations must contain at least 1 location.');
+        }
+
+        $returnMode = trim(FuelauRequestValue::string($body['return_mode'] ?? ''));
+        if (!in_array($returnMode, ['one_way', 'direct', 'reverse'], true)) {
+            throw new FuelauValidationException(
+                'return_mode must be one_way, direct, or reverse.',
+            );
+        }
+        $expandedLegCount = match ($returnMode) {
+            'one_way' => count($destinationBodies),
+            'direct' => count($destinationBodies) + 1,
+            'reverse' => count($destinationBodies) * 2,
+        };
+        if ($expandedLegCount > self::MAX_ITINERARY_LEGS) {
+            throw new FuelauValidationException(sprintf(
+                'Expanded itinerary must contain at most %d route legs.',
+                self::MAX_ITINERARY_LEGS,
+            ));
         }
         $destinations = [];
         foreach (array_values($destinationBodies) as $index => $destinationBody) {
@@ -506,13 +526,6 @@ final readonly class FuelauRouteOptimizationRequest
                 FuelauRequestValue::stringKeyMap($destinationBody),
                 "destinations[{$index}]",
                 true,
-            );
-        }
-
-        $returnMode = trim(FuelauRequestValue::string($body['return_mode'] ?? ''));
-        if (!in_array($returnMode, ['one_way', 'direct', 'reverse'], true)) {
-            throw new FuelauValidationException(
-                'return_mode must be one_way, direct, or reverse.',
             );
         }
 

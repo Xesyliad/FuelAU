@@ -2751,9 +2751,15 @@ final class FuelauLiveCompleteItineraryPlanner
     {
         $locations = $request->itineraryLocations();
         $legCount = count($locations) - 1;
-        if ($legCount < 1 || $legCount > 20) {
+        if (
+            $legCount < 1
+            || $legCount > FuelauRouteOptimizationRequest::MAX_ITINERARY_LEGS
+        ) {
             throw new FuelauRoutePlanningUnsupportedException(
-                'Expanded itineraries must contain between 1 and 20 route legs.',
+                sprintf(
+                    'Expanded itineraries must contain between 1 and %d route legs.',
+                    FuelauRouteOptimizationRequest::MAX_ITINERARY_LEGS,
+                ),
             );
         }
 

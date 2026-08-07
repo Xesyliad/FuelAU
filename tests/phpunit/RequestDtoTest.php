@@ -139,6 +139,46 @@ final class RequestDtoTest extends TestCase
         );
     }
 
+    public function testRouteOptimizationRequestAllowsTwentyExpandedLegsForEveryReturnMode(): void
+    {
+        foreach ([
+            'one_way' => 20,
+            'direct' => 19,
+            'reverse' => 10,
+        ] as $returnMode => $destinationCount) {
+            $request = FuelauRouteOptimizationRequest::fromBody(
+                $this->routeOptimizationBody($destinationCount, $returnMode),
+            );
+
+            self::assertCount(
+                FuelauRouteOptimizationRequest::MAX_ITINERARY_LEGS + 1,
+                $request->itineraryLocations(),
+                "{$returnMode} should allow exactly 20 expanded route legs.",
+            );
+        }
+    }
+
+    public function testRouteOptimizationRequestRejectsMoreThanTwentyExpandedLegsForEveryReturnMode(): void
+    {
+        foreach ([
+            'one_way' => 21,
+            'direct' => 20,
+            'reverse' => 11,
+        ] as $returnMode => $destinationCount) {
+            try {
+                FuelauRouteOptimizationRequest::fromBody(
+                    $this->routeOptimizationBody($destinationCount, $returnMode),
+                );
+                self::fail("{$returnMode} should reject more than 20 expanded route legs.");
+            } catch (FuelauValidationException $exception) {
+                self::assertStringContainsString(
+                    'at most 20 route legs',
+                    $exception->getMessage(),
+                );
+            }
+        }
+    }
+
     public function testRouteOptimizationRequestRejectsStartingFuelAboveCapacity(): void
     {
         $this->expectException(FuelauValidationException::class);
@@ -157,6 +197,33 @@ final class RequestDtoTest extends TestCase
                 'reserve_l' => 6,
             ],
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function routeOptimizationBody(int $destinationCount, string $returnMode): array
+    {
+        return [
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+            'destinations' => array_map(
+                static fn (int $index): array => [
+                    'lat' => -30.0,
+                    'lon' => 150.0 + ($index / 100),
+                    'label' => "Destination {$index}",
+                ],
+                range(1, $destinationCount),
+            ),
+            'return_mode' => $returnMode,
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 80,
+                'starting_fuel_l' => 80,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 10,
+            ],
+        ];
     }
 
     public function testRouteOptimizationRequestRejectsInvalidMeaningfulStopPreference(): void

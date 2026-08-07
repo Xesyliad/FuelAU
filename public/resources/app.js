@@ -201,6 +201,7 @@ function fuelauAddTopographicEnhancements(map) {
 
 }
 const routePlannerStateKey = 'fuelau_route_planner_state_v1';
+const routePlannerLegLimit = 20;
 const routePlannerRouteBudgetLimit = 80;
 const routePlannerFuelBudgetLimit = 50;
 const routePlannerDefaultTankCapacityL = 60;
@@ -910,6 +911,7 @@ function createRouteDestinationRow(value = '') {
 
 function syncRouteDestinationControls() {
     const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
+    const destinationLimit = routeDestinationLimit();
     rows.forEach((row, index) => {
         const drag = row.querySelector('[data-action="drag"]');
         const remove = row.querySelector('[data-action="remove"]');
@@ -920,6 +922,10 @@ function syncRouteDestinationControls() {
             remove.disabled = rows.length === 1;
         }
     });
+    routeAddDestination.disabled = rows.length >= destinationLimit;
+    routeAddDestination.title = routeAddDestination.disabled
+        ? `This return mode supports at most ${destinationLimit} destinations (${routePlannerLegLimit} route legs).`
+        : 'Add destination';
 }
 
 function addRouteDestination(value = '') {
@@ -1172,12 +1178,32 @@ function routeReturnMode() {
     return routeReturnReverses.checked ? 'reverses' : 'direct';
 }
 
+function routeItineraryLegCount(destinationCount) {
+    const count = Math.max(0, Number(destinationCount) || 0);
+    if (routeReturnMode() === 'one-way') {
+        return count;
+    }
+
+    return routeReturnMode() === 'reverses' ? count * 2 : count + 1;
+}
+
+function routeDestinationLimit() {
+    if (routeReturnMode() === 'one-way') {
+        return routePlannerLegLimit;
+    }
+
+    return routeReturnMode() === 'reverses'
+        ? Math.floor(routePlannerLegLimit / 2)
+        : routePlannerLegLimit - 1;
+}
+
 function syncRouteReturnModeControls() {
     const oneWayEnabled = routeReturnOneWay.checked;
     routeReturnDirect.disabled = oneWayEnabled;
     routeReturnReverses.disabled = oneWayEnabled;
     routeReturnDirect.closest('.switch-control')?.classList.toggle('is-disabled', oneWayEnabled);
     routeReturnReverses.closest('.switch-control')?.classList.toggle('is-disabled', oneWayEnabled);
+    syncRouteDestinationControls();
 }
 
 function routeTankCapacityValue() {
@@ -2793,6 +2819,13 @@ async function planRoute() {
     }
     if (destinationValues.length === 0) {
         setRouteStatusText('At least one destination is required.');
+        return;
+    }
+    const itineraryLegCount = routeItineraryLegCount(destinationValues.length);
+    if (itineraryLegCount > routePlannerLegLimit) {
+        setRouteStatusText(
+            `This trip expands to ${itineraryLegCount} route legs. Route plans are limited to ${routePlannerLegLimit} legs.`,
+        );
         return;
     }
     if (tankCapacity <= 0 || fuelEconomy <= 0) {

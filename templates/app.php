@@ -219,7 +219,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                             <div class="route-destinations">
                                 <div class="route-destination-header">
                                     <div>
-                                        <p class="route-muted">Add one or more stops, then reorder them before planning.</p>
+                                        <p class="route-muted">Add one or more stops, then reorder them before planning. Plans support up to 20 route legs.</p>
                                     </div>
                                     <button class="button primary" type="button" id="route-add-destination">+</button>
                                 </div>

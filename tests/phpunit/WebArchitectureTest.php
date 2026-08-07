@@ -92,6 +92,12 @@ final class WebArchitectureTest extends TestCase
         );
         self::assertStringContainsString('starting_fuel_l: startingFuelL', $script);
         self::assertStringContainsString('reserve_l: reserveL', $script);
+        self::assertStringContainsString('const routePlannerLegLimit = 20;', $script);
+        self::assertStringContainsString('Plans support up to 20 route legs.', $template);
+        self::assertStringContainsString(
+            'const itineraryLegCount = routeItineraryLegCount(destinationValues.length);',
+            $script,
+        );
         self::assertStringContainsString("type: 'Leg Destination'", $script);
         self::assertStringContainsString("'Planned stop'", $script);
         self::assertStringNotContainsString('fatigue spacing', $script);

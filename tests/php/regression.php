@@ -285,6 +285,14 @@ fuelauTest('route planner always delegates complete itinerary planning to the ba
         'The browser must send original destinations for server-side itinerary expansion',
     );
     fuelauAssertTrue(
+        str_contains($source, 'const routePlannerLegLimit = 20;')
+            && str_contains(
+                $source,
+                'const itineraryLegCount = routeItineraryLegCount(destinationValues.length);',
+            ),
+        'The browser must enforce the shared twenty-leg itinerary limit before geocoding',
+    );
+    fuelauAssertTrue(
         str_contains($source, 'starting_fuel_l: startingFuelL')
             && str_contains($source, 'reserve_l: reserveL'),
         'Starting fuel and terminal reserve must be server-owned optimizer inputs',
@@ -446,6 +454,48 @@ fuelauTest('route optimizer expands direct and reverse itinerary semantics deter
             $reverse->itineraryLocations(),
         ),
     );
+});
+
+fuelauTest('route optimizer applies a twenty-leg limit to every return mode', static function (): void {
+    $body = static function (int $destinationCount, string $returnMode): array {
+        return [
+            'version' => 1,
+            'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
+            'destinations' => array_map(
+                static fn (int $index): array => [
+                    'lat' => -30.0,
+                    'lon' => 150.0 + ($index / 100),
+                    'label' => "Destination {$index}",
+                ],
+                range(1, $destinationCount),
+            ),
+            'return_mode' => $returnMode,
+            'fuel' => [
+                'type' => 'Diesel',
+                'tank_capacity_l' => 80,
+                'starting_fuel_l' => 80,
+                'economy_l_per_100km' => 10,
+                'reserve_l' => 10,
+            ],
+        ];
+    };
+
+    foreach (['one_way' => 20, 'direct' => 19, 'reverse' => 10] as $mode => $count) {
+        $request = FuelauRouteOptimizationRequest::fromBody($body($count, $mode));
+        fuelauAssertSame(
+            FuelauRouteOptimizationRequest::MAX_ITINERARY_LEGS + 1,
+            count($request->itineraryLocations()),
+        );
+    }
+
+    foreach (['one_way' => 21, 'direct' => 20, 'reverse' => 11] as $mode => $count) {
+        fuelauAssertThrows(
+            FuelauValidationException::class,
+            static fn (): FuelauRouteOptimizationRequest =>
+                FuelauRouteOptimizationRequest::fromBody($body($count, $mode)),
+            "{$mode} must reject more than 20 expanded route legs",
+        );
+    }
 });
 
 fuelauTest('route optimizer rejects impossible starting fuel and stop counts', static function (): void {
