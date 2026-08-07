@@ -38,18 +38,30 @@ jobs:
       - name: Install quality tools
         run: |
           composer install --no-interaction --prefer-dist
-          python -m pip install mypy ruff
+          python -m pip install -r requirements-ci.txt
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
       - name: Run PHP tests and analysis
         run: |
+          composer audit --locked --no-interaction
           composer test
           composer analyse
           composer analyse:new
           composer format:check
           find src migrations tests/php tests/phpunit -name '*.php' -print0 |
             xargs -0 -n1 php -l
+
+      - name: Scan PHP for security issues
+        run: |
+          semgrep scan \
+            --config p/php \
+            --config p/phpcs-security-audit \
+            --error \
+            --metrics=off \
+            --exclude vendor \
+            --exclude var \
+            src public migrations templates tests/php tests/phpunit setup.php
 
       - name: Run Python tests and analysis
         run: |
