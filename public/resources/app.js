@@ -81,7 +81,11 @@ const topoStyleId = 'topo-3d';
 const topoContourSourceId = 'fuelau-terrain-contours';
 const topoContourLayerId = 'fuelau-terrain-contour-lines';
 const topoContourLabelLayerId = 'fuelau-terrain-contour-labels';
-const topoDemUrl = `${String(window.fuelauMapConfig?.base_url || '/tiles').replace(/\/$/, '')}/data/terrain/{z}/{x}/{y}.png`;
+const topoTileBaseUrl = new URL(
+    `${String(window.fuelauMapConfig?.base_url || '/tiles').replace(/\/$/, '')}/`,
+    window.location.origin,
+).href;
+const topoDemUrl = `${topoTileBaseUrl}data/terrain/{z}/{x}/{y}.png`;
 const topoContourThresholds = {
     10: [200, 1000],
     11: [100, 500],

@@ -32,9 +32,8 @@ function fuelauApplyBrowserSecurityHeaders(string $cspNonce): void
 
 function fuelauRenderAppPage(
     bool $containerManagementEnabled,
-    string $cspNonce
-): void
-{
+    string $cspNonce,
+): void {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');

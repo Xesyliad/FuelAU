@@ -50,7 +50,7 @@ final class RoutePlanningTest extends TestCase
             maximumCandidates: 3,
         );
         $coverageBins = array_map(
-            static fn (FuelauOptimizerNode $node): int => intdiv($node->progressM, 50_000),
+            static fn(FuelauOptimizerNode $node): int => intdiv($node->progressM, 50_000),
             array_slice($input->nodes, 1, -1),
         );
 
@@ -397,7 +397,7 @@ final class RoutePlanningTest extends TestCase
                 ['lat' => -20.0, 'lon' => 140.0],
             ],
         );
-        $station = static fn (
+        $station = static fn(
             string $id,
             string $name,
             float $longitude,
@@ -462,7 +462,7 @@ final class RoutePlanningTest extends TestCase
 
     public function testCompleteItineraryCandidateBudgetIsGlobalAndDistanceWeighted(): void
     {
-        $leg = static fn (int $index, int $distanceM): FuelauPreparedItineraryLeg =>
+        $leg = static fn(int $index, int $distanceM): FuelauPreparedItineraryLeg =>
             new FuelauPreparedItineraryLeg(
                 $index,
                 new FuelauRouteCorridor(
@@ -489,7 +489,7 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(
             array_fill(0, 20, 3),
             $budget->allocate(array_map(
-                static fn (int $index): FuelauPreparedItineraryLeg => $leg($index, 100_000),
+                static fn(int $index): FuelauPreparedItineraryLeg => $leg($index, 100_000),
                 range(0, 19),
             )),
         );
@@ -554,7 +554,7 @@ final class RoutePlanningTest extends TestCase
             FuelauOptimizerNode::station('station:next', 800_000, 250, 'Next Fuel'),
             new FuelauOptimizerNode('destination', 1_000_000),
         ];
-        $candidate = static fn (
+        $candidate = static fn(
             string $nodeId,
             string $name,
             int $progressM,
@@ -744,7 +744,7 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(
             ['expensive-1', 'expensive-2'],
             array_map(
-                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                static fn(FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
                 $adjusted->plan->purchases,
             ),
         );
@@ -773,17 +773,17 @@ final class RoutePlanningTest extends TestCase
         self::assertContains(
             'expensive-reachable',
             array_map(
-                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                static fn(FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
                 $adjusted->plan->purchases,
             ),
         );
         self::assertSame(
             ['before-gap'],
             array_values(array_map(
-                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                static fn(FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
                 array_filter(
                     $adjusted->plan->purchases,
-                    static fn (FuelauOptimizerPurchase $purchase): bool =>
+                    static fn(FuelauOptimizerPurchase $purchase): bool =>
                         $purchase->departureFuelL > $vehicle->tankCapacityL,
                 ),
             )),
@@ -841,13 +841,13 @@ final class RoutePlanningTest extends TestCase
                     'fuel_code' => 'DL',
                 ],
                 [
-                ...$this->validatedStationRow(
-                    'late-safety',
-                    155.5,
-                    200,
-                    '2026-07-30T00:00:00Z',
-                ),
-                'fuel_code' => 'DL',
+                    ...$this->validatedStationRow(
+                        'late-safety',
+                        155.5,
+                        200,
+                        '2026-07-30T00:00:00Z',
+                    ),
+                    'fuel_code' => 'DL',
                 ],
             ],
         );
@@ -855,7 +855,7 @@ final class RoutePlanningTest extends TestCase
 
         self::assertCount(1, array_filter(
             $warnings,
-            static fn (string $warning): bool => str_contains($warning, 'preferred minimum'),
+            static fn(string $warning): bool => str_contains($warning, 'preferred minimum'),
         ));
     }
 
@@ -1001,7 +1001,7 @@ final class RoutePlanningTest extends TestCase
 
                 return ['distances' => $distances, 'durations' => $durations];
             },
-            clock: static fn (): DateTimeImmutable =>
+            clock: static fn(): DateTimeImmutable =>
                 new DateTimeImmutable('2026-07-30T00:00:00Z'),
         );
 
@@ -1034,7 +1034,7 @@ final class RoutePlanningTest extends TestCase
         $candidateCalls = 0;
         $tableCalls = 0;
         $planner = new FuelauLiveSingleCorridorPlanner(
-            routeLoader: static fn (array $coordinates): array => [
+            routeLoader: static fn(array $coordinates): array => [
                 'distance' => 40_000,
                 'duration' => 2_400,
                 'geometry' => [
@@ -1093,7 +1093,7 @@ final class RoutePlanningTest extends TestCase
                     'geometry' => [
                         'type' => 'LineString',
                         'coordinates' => array_map(
-                            static fn (array $coordinate): array => [
+                            static fn(array $coordinate): array => [
                                 $coordinate['lon'],
                                 $coordinate['lat'],
                             ],
@@ -1126,7 +1126,7 @@ final class RoutePlanningTest extends TestCase
                     'durations' => array_fill(0, $count, array_fill(0, $count, 0)),
                 ];
             },
-            clock: static fn (): DateTimeImmutable =>
+            clock: static fn(): DateTimeImmutable =>
                 new DateTimeImmutable('2026-07-30T00:00:00Z'),
         );
 

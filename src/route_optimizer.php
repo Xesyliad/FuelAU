@@ -420,8 +420,7 @@ final class FuelauFuelStateOptimizer
         string $objective,
         int $similarCostCents,
         int $accessTimeValueCentsPerHour,
-    ): FuelauOptimizerPlan
-    {
+    ): FuelauOptimizerPlan {
         $nodes = array_values($nodes);
         $this->validateNodes($nodes);
 
@@ -676,8 +675,7 @@ final class FuelauFuelStateOptimizer
     private function stateKey(
         int $fuelBuckets,
         int $fuelOnlyStopCount,
-    ): string
-    {
+    ): string {
         // Historical purchases at already-completed planned stops do not
         // change the feasible future from the same node and fuel state. Keep
         // total stop count as a tie-break value, not a graph dimension.
@@ -724,24 +722,23 @@ final class FuelauFuelStateOptimizer
         array $destinationStates,
         string $objective,
         int $similarCostCents,
-    ): string
-    {
+    ): string {
         $keys = array_keys($destinationStates);
         if ($objective === 'generalized_cost' && $similarCostCents > 0) {
             $minimumCostUnits = min(array_map(
-                static fn (array $state): int => (int) $state['generalized_cost_units'],
+                static fn(array $state): int => (int) $state['generalized_cost_units'],
                 $destinationStates,
             ));
             $maximumSimilarCostUnits = $minimumCostUnits + ($similarCostCents * 20);
             $keys = array_values(array_filter(
                 $keys,
-                static fn (string $key): bool =>
+                static fn(string $key): bool =>
                     (int) $destinationStates[$key]['generalized_cost_units']
                     <= $maximumSimilarCostUnits,
             ));
             usort(
                 $keys,
-                static fn (string $leftKey, string $rightKey): int =>
+                static fn(string $leftKey, string $rightKey): int =>
                     ((int) $destinationStates[$leftKey]['fuel_only_stop_count']
                         <=> (int) $destinationStates[$rightKey]['fuel_only_stop_count'])
                     ?: ((int) $destinationStates[$leftKey]['stop_count']
@@ -833,7 +830,7 @@ final class FuelauFuelStateOptimizer
         $destinationState = $states[$destinationIndex][$destinationKey];
         $totalPurchasedL = array_reduce(
             $purchases,
-            static fn (float $total, FuelauOptimizerPurchase $purchase): float => $total + $purchase->purchaseL,
+            static fn(float $total, FuelauOptimizerPurchase $purchase): float => $total + $purchase->purchaseL,
             0.0,
         );
 
@@ -932,7 +929,7 @@ final class FuelauFuelStateOptimizer
         );
         $requiredStopCount = count(array_filter(
             $purchases,
-            static fn (FuelauOptimizerPurchase $purchase): bool => $purchase->classification === 'required',
+            static fn(FuelauOptimizerPurchase $purchase): bool => $purchase->classification === 'required',
         ));
 
         return new FuelauOptimizerPlan(

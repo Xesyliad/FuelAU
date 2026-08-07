@@ -126,14 +126,14 @@ final class RequestDtoTest extends TestCase
         self::assertSame(
             ['origin', 'first', 'second', 'third', 'origin'],
             array_map(
-                static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+                static fn(FuelauRouteOptimizationLocation $location): string => $location->label,
                 $direct->itineraryLocations(),
             ),
         );
         self::assertSame(
             ['origin', 'first', 'second', 'third', 'second', 'first', 'origin'],
             array_map(
-                static fn (FuelauRouteOptimizationLocation $location): string => $location->label,
+                static fn(FuelauRouteOptimizationLocation $location): string => $location->label,
                 $reverse->itineraryLocations(),
             ),
         );
@@ -208,7 +208,7 @@ final class RequestDtoTest extends TestCase
             'version' => 1,
             'origin' => ['lat' => -30.0, 'lon' => 150.0, 'label' => 'Origin'],
             'destinations' => array_map(
-                static fn (int $index): array => [
+                static fn(int $index): array => [
                     'lat' => -30.0,
                     'lon' => 150.0 + ($index / 100),
                     'label' => "Destination {$index}",

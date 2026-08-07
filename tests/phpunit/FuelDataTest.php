@@ -52,7 +52,7 @@ final class FuelDataTest extends TestCase
 
     public function testCoverageWindowsAreMergedRoundRobinWithStableDeduplication(): void
     {
-        $row = static fn (string $source, string $state, string $stationId): array => [
+        $row = static fn(string $source, string $state, string $stationId): array => [
             'source' => $source,
             'state' => $state,
             'station_id' => $stationId,

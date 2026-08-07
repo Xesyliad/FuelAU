@@ -51,6 +51,20 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('routeFuelPriceIsFresh(row?.updated_at)', $source);
     }
 
+    public function testTopographicContourWorkerUsesAnAbsoluteDemUrl(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($source);
+        self::assertStringContainsString('const topoTileBaseUrl = new URL(', $source);
+        self::assertStringContainsString('window.location.origin,', $source);
+        self::assertStringContainsString(
+            'const topoDemUrl = `${topoTileBaseUrl}data/terrain/{z}/{x}/{y}.png`;',
+            $source,
+        );
+        self::assertStringContainsString('worker: true,', $source);
+    }
+
     public function testRoutePlannerExposesPermanentVehicleConfiguration(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');

@@ -514,7 +514,7 @@ final class FuelauCompleteItineraryAssembler
 
         usort(
             $nodes,
-            static fn (FuelauOptimizerNode $left, FuelauOptimizerNode $right): int =>
+            static fn(FuelauOptimizerNode $left, FuelauOptimizerNode $right): int =>
                 ($left->progressM <=> $right->progressM)
                 ?: strcmp($left->id, $right->id),
         );
@@ -637,7 +637,7 @@ final class FuelauFixedCorridorCandidateAdapter
 
         $remaining = array_values(array_filter(
             $eligible,
-            static fn (FuelauProjectedStationCandidate $candidate): bool =>
+            static fn(FuelauProjectedStationCandidate $candidate): bool =>
                 !isset($selected[$candidate->stableId]),
         ));
         usort($remaining, [$this, 'compareCandidates']);
@@ -651,7 +651,7 @@ final class FuelauFixedCorridorCandidateAdapter
         $selected = $this->removeProgressCollisions(array_values($selected));
         usort(
             $selected,
-            static fn (
+            static fn(
                 FuelauProjectedStationCandidate $left,
                 FuelauProjectedStationCandidate $right,
             ): int => ($left->progressM <=> $right->progressM)
@@ -792,7 +792,7 @@ final class FuelauFixedCorridorCandidateAdapter
             : 0;
         $label = implode(' - ', array_filter(
             [$stationName, $address],
-            static fn (string $part): bool => $part !== '',
+            static fn(string $part): bool => $part !== '',
         ));
 
         return new FuelauProjectedStationCandidate(
@@ -967,7 +967,7 @@ final class FuelauCandidateRoadAccessMeasurer
             $candidates = array_values($selected);
             usort(
                 $candidates,
-                static fn (
+                static fn(
                     FuelauProjectedStationCandidate $left,
                     FuelauProjectedStationCandidate $right,
                 ): int => ($left->progressM <=> $right->progressM)
@@ -1085,7 +1085,7 @@ final class FuelauCandidateRoadAccessMeasurer
     ): array {
         usort(
             $candidates,
-            static fn (
+            static fn(
                 FuelauProjectedStationCandidate $left,
                 FuelauProjectedStationCandidate $right,
             ): int => ($left->progressM <=> $right->progressM)
@@ -1290,13 +1290,13 @@ final class FuelauExactRouteValidator
 
         $modeledDetourDistanceM = array_reduce(
             $result->plan->purchases,
-            static fn (int $total, FuelauOptimizerPurchase $purchase): int =>
+            static fn(int $total, FuelauOptimizerPurchase $purchase): int =>
                 $total + $purchase->detourDistanceM,
             0,
         );
         $modeledDetourDurationS = array_reduce(
             $result->plan->purchases,
-            static fn (int $total, FuelauOptimizerPurchase $purchase): int =>
+            static fn(int $total, FuelauOptimizerPurchase $purchase): int =>
                 $total + $purchase->detourDurationS,
             0,
         );
@@ -1745,7 +1745,7 @@ final readonly class FuelauSingleCorridorOptimizationResult
                     $legIndex = (int) ($leg['index'] ?? 0);
                     $requirements = array_values(array_filter(
                         $additionalFuelRequirements,
-                        static fn (array $requirement): bool =>
+                        static fn(array $requirement): bool =>
                             $requirement['leg_index'] === $legIndex,
                     ));
                     $totals = $legFuelTotals[$legIndex] ?? [
@@ -2165,7 +2165,7 @@ final class FuelauAdditionalFuelOptimizer
         }
         $pathIndexes = array_reverse($pathIndexes);
         $pathNodes = array_values(array_map(
-            static fn (int $index): FuelauOptimizerNode => $nodes[$index],
+            static fn(int $index): FuelauOptimizerNode => $nodes[$index],
             $pathIndexes,
         ));
         $constrainedPathNodes = [];
@@ -2249,7 +2249,7 @@ final class FuelauCompleteItineraryPlanner
             }
         }
         $legSummaries = array_map(
-            static fn (array $leg): array => [
+            static fn(array $leg): array => [
                 'index' => $leg['index'],
                 'distance_m' => $leg['end_m'] - $leg['start_m'],
                 'duration_s' => $leg['end_s'] - $leg['start_s'],
@@ -2510,9 +2510,9 @@ final class FuelauLiveSingleCorridorPlanner
                 fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
             );
         };
-        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+        $this->tableLoader = $tableLoader ?? static fn(array $coordinates): array =>
             fuelauOsrmTable($coordinates);
-        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+        $this->clock = $clock ?? static fn(): DateTimeImmutable =>
             new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 
@@ -2584,7 +2584,7 @@ final class FuelauLiveSingleCorridorPlanner
         );
         $freshRows = array_values(array_filter(
             $classifiedRows,
-            static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
+            static fn(array $row): bool => ($row['price_status'] ?? null) === 'fresh',
         ));
         $roadCandidateLimit = min(
             64,
@@ -2646,7 +2646,7 @@ final class FuelauItineraryRoadCandidateBudget
         }
 
         $desired = array_map(
-            static fn (FuelauPreparedItineraryLeg $leg): int => min(
+            static fn(FuelauPreparedItineraryLeg $leg): int => min(
                 80,
                 max(
                     $minimumPerLeg,
@@ -2662,7 +2662,7 @@ final class FuelauItineraryRoadCandidateBudget
         $limits = array_fill(0, $legCount, $minimumPerLeg);
         $remaining = $globalLimit - $minimumTotal;
         $weights = array_map(
-            static fn (int $value): int => $value - $minimumPerLeg,
+            static fn(int $value): int => $value - $minimumPerLeg,
             $desired,
         );
         $weightTotal = array_sum($weights);
@@ -2678,14 +2678,14 @@ final class FuelauItineraryRoadCandidateBudget
         while ($unassigned > 0) {
             $eligible = array_filter(
                 array_keys($limits),
-                static fn (int $index): bool => $limits[$index] < $desired[$index],
+                static fn(int $index): bool => $limits[$index] < $desired[$index],
             );
             if ($eligible === []) {
                 break;
             }
             usort(
                 $eligible,
-                static fn (int $left, int $right): int =>
+                static fn(int $left, int $right): int =>
                     ($remainders[$right] <=> $remainders[$left])
                     ?: ($weights[$right] <=> $weights[$left])
                     ?: ($left <=> $right),
@@ -2738,9 +2738,9 @@ final class FuelauLiveCompleteItineraryPlanner
                 fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
             );
         };
-        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+        $this->tableLoader = $tableLoader ?? static fn(array $coordinates): array =>
             fuelauOsrmTable($coordinates);
-        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+        $this->clock = $clock ?? static fn(): DateTimeImmutable =>
             new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 
@@ -2839,7 +2839,7 @@ final class FuelauLiveCompleteItineraryPlanner
             );
             $freshRows = array_values(array_filter(
                 $classifiedRows,
-                static fn (array $row): bool => ($row['price_status'] ?? null) === 'fresh',
+                static fn(array $row): bool => ($row['price_status'] ?? null) === 'fresh',
             ));
             $freshCandidateCount += count($freshRows);
             $roadCandidateLimit = $roadCandidateLimits[$leg->index];
@@ -2918,8 +2918,9 @@ final class FuelauLiveCompleteItineraryPlanner
 final class FuelauAlternativeCorridorSelector
 {
     /**
-     * @param list<array{rank: int, response: array<string, mixed>}> $candidates
-     * @return array{rank: int, response: array<string, mixed>}
+     * @template T of array{rank: int, response: array<string, mixed>}
+     * @param list<T> $candidates
+     * @return T
      */
     public function select(array $candidates): array
     {
@@ -2992,7 +2993,7 @@ final class FuelauLiveAlternativeCorridorPlanner
         if ($alternativeRouteLoader !== null) {
             $this->alternativeRouteLoader = $alternativeRouteLoader;
         } elseif ($routeLoader !== null) {
-            $this->alternativeRouteLoader = static fn (array $coordinates): array =>
+            $this->alternativeRouteLoader = static fn(array $coordinates): array =>
                 [$routeLoader($coordinates)];
         } else {
             $this->alternativeRouteLoader = static function (array $coordinates): array {
@@ -3040,9 +3041,9 @@ final class FuelauLiveAlternativeCorridorPlanner
                 fuelauProjectRoot() . '/var/docker/app-state/route-candidate-cache',
             );
         };
-        $this->tableLoader = $tableLoader ?? static fn (array $coordinates): array =>
+        $this->tableLoader = $tableLoader ?? static fn(array $coordinates): array =>
             fuelauOsrmTable($coordinates);
-        $this->clock = $clock ?? static fn (): DateTimeImmutable =>
+        $this->clock = $clock ?? static fn(): DateTimeImmutable =>
             new DateTimeImmutable('now', new DateTimeZone('UTC'));
     }
 
@@ -3065,7 +3066,7 @@ final class FuelauLiveAlternativeCorridorPlanner
             }
             $routeSets[] = array_values(array_filter(
                 array_slice($routes, 0, 3),
-                static fn (mixed $route): bool => is_array($route),
+                static fn(mixed $route): bool => is_array($route),
             ));
             if ($routeSets[$index] === []) {
                 throw new FuelauUpstreamException('OSRM returned no usable corridor routes.');
@@ -3084,7 +3085,7 @@ final class FuelauLiveAlternativeCorridorPlanner
             $rank = $corridor['rank'];
             $routes = $corridor['routes'];
             $displayCoordinates = array_map(
-                static fn (FuelauRouteOptimizationLocation $location): array => [
+                static fn(FuelauRouteOptimizationLocation $location): array => [
                     'lat' => $location->latitude,
                     'lon' => $location->longitude,
                 ],
@@ -3137,7 +3138,7 @@ final class FuelauLiveAlternativeCorridorPlanner
 
                 return ($this->routeLoader)($coordinates);
             };
-            $fixedClock = static fn (): DateTimeImmutable => $asOf;
+            $fixedClock = static fn(): DateTimeImmutable => $asOf;
             try {
                 $planner = $request->returnMode === 'one_way'
                     && count($request->destinations) === 1
@@ -3248,7 +3249,7 @@ final class FuelauLiveAlternativeCorridorPlanner
         }
         usort(
             $response['alternatives'],
-            static fn (array $left, array $right): int =>
+            static fn(array $left, array $right): int =>
                 strcmp((string) $left['id'], (string) $right['id']),
         );
         $response['diagnostics']['corridor_count'] = count($corridors);
@@ -3279,7 +3280,7 @@ final class FuelauLiveAlternativeCorridorPlanner
                 $routes[] = $routeSet[$rank] ?? $routeSet[0];
             }
             $fingerprint = hash('sha256', json_encode(array_map(
-                static fn (array $route): array => [
+                static fn(array $route): array => [
                     (int) round((float) ($route['distance'] ?? 0)),
                     (int) round((float) ($route['duration'] ?? 0)),
                     $route['geometry']['coordinates'] ?? [],
@@ -3308,12 +3309,12 @@ final class FuelauLiveAlternativeCorridorPlanner
         array $routes,
     ): array {
         $corridors = array_map(
-            static fn (array $route): FuelauRouteCorridor =>
+            static fn(array $route): FuelauRouteCorridor =>
                 FuelauRouteCorridor::fromOsrmRoute($route),
             $routes,
         );
         $totalDistanceM = array_sum(array_map(
-            static fn (FuelauRouteCorridor $corridor): int => $corridor->distanceM,
+            static fn(FuelauRouteCorridor $corridor): int => $corridor->distanceM,
             $corridors,
         ));
         $anchorSpacingM = max(200_000, (int) ceil($totalDistanceM / 40));
@@ -3350,7 +3351,7 @@ final class FuelauLiveAlternativeCorridorPlanner
             }
             usort(
                 $visits,
-                static fn (array $left, array $right): int =>
+                static fn(array $left, array $right): int =>
                     ($left['progress_m'] <=> $right['progress_m'])
                     ?: ($left['kind'] <=> $right['kind']),
             );
@@ -3437,7 +3438,7 @@ final class FuelauLiveAlternativeCorridorPlanner
             $selected['response']['summary']['generalized_cost_cents'] ?? PHP_INT_MAX
         );
         $lowestCost = min(array_map(
-            static fn (array $candidate): int => (int) (
+            static fn(array $candidate): int => (int) (
                 $candidate['response']['summary']['generalized_cost_cents']
                 ?? PHP_INT_MAX
             ),
