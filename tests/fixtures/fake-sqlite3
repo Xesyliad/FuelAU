@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+query="${2:-}"
+case "$query" in
+    *integrity_check*)
+        printf '%s\n' "${FAKE_SQLITE_INTEGRITY:-ok}"
+        ;;
+    *'COUNT(*) FROM tiles'*)
+        printf '%s\n' "${FAKE_SQLITE_TILE_COUNT:-1001}"
+        ;;
+    *'COUNT(*) FROM metadata'*)
+        printf '%s\n' "${FAKE_SQLITE_METADATA_COUNT:-4}"
+        ;;
+    *)
+        printf '%s\n' "Unexpected sqlite query: $query" >&2
+        exit 2
+        ;;
+esac

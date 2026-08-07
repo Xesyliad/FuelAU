@@ -20,8 +20,12 @@ RUN chmod +x /usr/local/bin/fuelau-entrypoint \
 
 WORKDIR /var/www/html
 
-COPY . /var/www/html
-RUN chown -R www-data:www-data /var/www/html
+COPY --chown=www-data:www-data bin ./bin
+COPY --chown=www-data:www-data migrations ./migrations
+COPY --chown=www-data:www-data public ./public
+COPY --chown=www-data:www-data src ./src
+COPY --chown=www-data:www-data templates ./templates
+COPY --chown=www-data:www-data setup.php ./setup.php
 
 ENTRYPOINT ["fuelau-entrypoint"]
 CMD ["apache2-foreground"]

@@ -1,10 +1,6 @@
 #!/bin/sh
 set -eu
 
-if [ "${FAKE_PLANETILER_FAIL:-0}" = "1" ]; then
-    exit 42
-fi
-
 output=""
 for argument in "$@"; do
     case "$argument" in
@@ -19,19 +15,21 @@ if [ "$output" = "" ]; then
     exit 2
 fi
 
-sqlite3 "$output" <<'SQL'
-CREATE TABLE metadata (name TEXT, value TEXT);
-INSERT INTO metadata (name, value) VALUES
-    ('bounds', '110,-45.5,156,-8'),
-    ('format', 'pbf'),
-    ('maxzoom', '13'),
-    ('minzoom', '0');
-CREATE TABLE tiles (
-    zoom_level INTEGER,
-    tile_column INTEGER,
-    tile_row INTEGER,
-    tile_data BLOB
-);
-INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data)
-VALUES (0, 0, 0, X'00');
-SQL
+case "$output" in
+    *.mbtiles) ;;
+    *)
+        printf '%s\n' "Planetiler output must end in .mbtiles: $output" >&2
+        exit 3
+        ;;
+esac
+
+if [ "${FAKE_PLANETILER_OUTPUT_LOG:-}" != "" ]; then
+    printf '%s\n' "$output" > "$FAKE_PLANETILER_OUTPUT_LOG"
+fi
+
+printf '%s\n' "generated-map" > "$output"
+touch "$output-wal" "$output-shm"
+
+if [ "${FAKE_PLANETILER_FAIL:-0}" = "1" ]; then
+    exit 42
+fi

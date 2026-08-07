@@ -3,7 +3,14 @@ set -eu
 
 output="${MAP_OUTPUT:-/data/australia.mbtiles}"
 minimum_tiles="${MAP_MINIMUM_TILES:-1000}"
-temporary="${output}.building-$$"
+case "$output" in
+    *.mbtiles)
+        temporary="${output%.mbtiles}.building-$$.mbtiles"
+        ;;
+    *)
+        temporary="${output}.building-$$.mbtiles"
+        ;;
+esac
 lock_file="${output}.lock"
 
 cleanup() {
@@ -50,6 +57,7 @@ if [ "$metadata_count" -lt 4 ]; then
     exit 1
 fi
 
+rm -f "$temporary-wal" "$temporary-shm"
 sync -f "$temporary"
 mv -f "$temporary" "$output"
 sync -f "$(dirname "$output")"

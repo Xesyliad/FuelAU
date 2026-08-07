@@ -1,13 +1,59 @@
-.git
-\#recycle/
-.codex
+# Source-control and local tooling metadata
+.git/
+.github/
+.agents/
+.codex/
+.playwright-cli/
+.ignore
+.gitignore
+
+# Local configuration and secrets
+.env*
+config/*.env
+
+# Development dependencies and tool output
 node_modules/
-.env
-config/app.env
-config/mysql.env
+vendor/
+tests/
+.phpunit.cache/
+.phpunit.result.cache
+.php-cs-fixer.cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+.coverage
+coverage.xml
+htmlcov/
+
+# Development-only configuration and documentation
+composer.json
+composer.lock
+phpunit.xml.dist
+phpstan.neon.dist
+.php-cs-fixer.dist.php
+pyproject.toml
+*.md
+
+# Runtime state and files supplied through Compose mounts
 var/
-__pycache__/
-*.py[cod]
-*.swp
+docker-compose.yml
+.dockerignore
+
+# Local database exports and editor/OS files
+*.log
 *.sql
 *.sql.gz
+*.sqlite
+*.sqlite3
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+\#recycle/
