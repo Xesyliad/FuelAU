@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
 
   osrm-download:
-    image: curlimages/curl:8.10.1
+    image: curlimages/curl:8.21.0
     profiles:
       - routing-setup
     user: "0:0"
