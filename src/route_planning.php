@@ -920,12 +920,14 @@ final class FuelauCandidateRoadAccessMeasurer
         callable $tableLoader,
         int $maximumCandidates = 80,
         int $chunkSize = 13,
+        ?FuelauOptimizerVehicle $vehicle = null,
     ): array {
         if ($maximumCandidates < 1 || $maximumCandidates > 80 || $chunkSize < 1 || $chunkSize > 13) {
             throw new InvalidArgumentException('Invalid road-access measurement limits.');
         }
 
-        $input = (new FuelauFixedCorridorCandidateAdapter())->build(
+        $adapter = new FuelauFixedCorridorCandidateAdapter();
+        $input = $adapter->build(
             $corridor,
             $candidateRows,
             maximumCandidates: $maximumCandidates,
@@ -935,6 +937,43 @@ final class FuelauCandidateRoadAccessMeasurer
             ),
         );
         $candidates = array_values($input->candidatesByNodeId);
+        if ($vehicle !== null && $candidateRows !== []) {
+            $fullInput = $adapter->build(
+                $corridor,
+                $candidateRows,
+                maximumCandidates: 320,
+                coverageBinM: max(
+                    50_000,
+                    (int) ceil($corridor->distanceM / 320),
+                ),
+            );
+            $backbone = $this->rangeSafetyBackbone(
+                $corridor,
+                array_values($fullInput->candidatesByNodeId),
+                $vehicle,
+            );
+            if (count($backbone) > $maximumCandidates) {
+                throw new FuelauRoutePlanningUnsupportedException(
+                    'Road-candidate budget is too small to preserve the physical-range station chain.',
+                );
+            }
+            $selected = [];
+            foreach ([...$backbone, ...$candidates] as $candidate) {
+                $selected[$candidate->stableId] ??= $candidate;
+                if (count($selected) >= $maximumCandidates) {
+                    break;
+                }
+            }
+            $candidates = array_values($selected);
+            usort(
+                $candidates,
+                static fn (
+                    FuelauProjectedStationCandidate $left,
+                    FuelauProjectedStationCandidate $right,
+                ): int => ($left->progressM <=> $right->progressM)
+                    ?: strcmp($left->stableId, $right->stableId),
+            );
+        }
         $measuredRows = [];
         foreach (array_chunk($candidates, $chunkSize) as $chunk) {
             $coordinates = [];
@@ -1029,6 +1068,160 @@ final class FuelauCandidateRoadAccessMeasurer
         }
 
         return $measuredRows;
+    }
+
+    /**
+     * Preserve a price-independent path that minimizes required capacity and
+     * then the total auxiliary fuel across its hops. This prevents coverage
+     * and price ranking from manufacturing a stationless range gap.
+     *
+     * @param list<FuelauProjectedStationCandidate> $candidates
+     * @return list<FuelauProjectedStationCandidate>
+     */
+    private function rangeSafetyBackbone(
+        FuelauRouteCorridor $corridor,
+        array $candidates,
+        FuelauOptimizerVehicle $vehicle,
+    ): array {
+        usort(
+            $candidates,
+            static fn (
+                FuelauProjectedStationCandidate $left,
+                FuelauProjectedStationCandidate $right,
+            ): int => ($left->progressM <=> $right->progressM)
+                ?: strcmp($left->stableId, $right->stableId),
+        );
+        $physicalCapacityBuckets = (int) floor($vehicle->tankCapacityL / 0.5);
+        $startingBuckets = (int) floor($vehicle->startingFuelL / 0.5);
+        $reserveBuckets = (int) ceil($vehicle->reserveL / 0.5);
+        $destinationIndex = count($candidates);
+        $edgeFuelUsedBuckets = static function (
+            ?FuelauProjectedStationCandidate $fromCandidate,
+            ?FuelauProjectedStationCandidate $toCandidate,
+        ) use ($corridor, $vehicle): int {
+            $fromProgressM = $fromCandidate?->progressM ?? 0;
+            $toProgressM = $toCandidate?->progressM ?? $corridor->distanceM;
+            $fromAccessDistanceM = $fromCandidate?->accessDistanceM ?? 0;
+            $toAccessDistanceM = $toCandidate?->accessDistanceM ?? 0;
+
+            return (int) ceil(
+                (
+                    (
+                        ($toProgressM - $fromProgressM)
+                        + $fromAccessDistanceM
+                        + $toAccessDistanceM
+                    ) / 100_000
+                ) * $vehicle->economyLPer100km / 0.5,
+            );
+        };
+
+        // First find the smallest capacity that can traverse the candidate
+        // graph. Price never participates in this pass.
+        $minimumCapacity = array_fill(0, $destinationIndex + 1, null);
+        for ($toIndex = 0; $toIndex <= $destinationIndex; $toIndex++) {
+            $toCandidate = $candidates[$toIndex] ?? null;
+            for ($fromIndex = -1; $fromIndex < $toIndex; $fromIndex++) {
+                $fromCandidate = $fromIndex >= 0 ? $candidates[$fromIndex] : null;
+                $fromCapacity = $fromIndex >= 0
+                    ? $minimumCapacity[$fromIndex]
+                    : $physicalCapacityBuckets;
+                if ($fromCapacity === null) {
+                    continue;
+                }
+                $fuelUsedBuckets = $edgeFuelUsedBuckets($fromCandidate, $toCandidate);
+                if ($fromIndex < 0) {
+                    if ($startingBuckets - $fuelUsedBuckets < $reserveBuckets) {
+                        continue;
+                    }
+                    $candidateCapacity = $physicalCapacityBuckets;
+                } else {
+                    $candidateCapacity = max(
+                        $fromCapacity,
+                        $fuelUsedBuckets + $reserveBuckets,
+                    );
+                }
+                if (
+                    $minimumCapacity[$toIndex] === null
+                    || $candidateCapacity < $minimumCapacity[$toIndex]
+                ) {
+                    $minimumCapacity[$toIndex] = $candidateCapacity;
+                }
+            }
+        }
+
+        $effectiveCapacityBuckets = $minimumCapacity[$destinationIndex];
+        if ($effectiveCapacityBuckets === null) {
+            return [];
+        }
+
+        // Under that minimum capacity, prefer the path that loads the least
+        // auxiliary fuel, then the one requiring the fewest safety stations.
+        $best = array_fill(0, $destinationIndex + 1, null);
+        for ($toIndex = 0; $toIndex <= $destinationIndex; $toIndex++) {
+            $toCandidate = $candidates[$toIndex] ?? null;
+            for ($fromIndex = -1; $fromIndex < $toIndex; $fromIndex++) {
+                $fromCandidate = $fromIndex >= 0 ? $candidates[$fromIndex] : null;
+                $fromState = $fromIndex >= 0 ? $best[$fromIndex] : [
+                    'additional_buckets' => 0,
+                    'stop_count' => 0,
+                    'previous_index' => -1,
+                ];
+                if ($fromState === null) {
+                    continue;
+                }
+                $fuelUsedBuckets = $edgeFuelUsedBuckets($fromCandidate, $toCandidate);
+                if ($fromIndex < 0) {
+                    if ($startingBuckets - $fuelUsedBuckets < $reserveBuckets) {
+                        continue;
+                    }
+                    $requiredCapacityBuckets = $physicalCapacityBuckets;
+                    $additionalBuckets = 0;
+                } else {
+                    $requiredCapacityBuckets = $fuelUsedBuckets + $reserveBuckets;
+                    if ($requiredCapacityBuckets > $effectiveCapacityBuckets) {
+                        continue;
+                    }
+                    $additionalBuckets = $fromState['additional_buckets'] + max(
+                        0,
+                        $requiredCapacityBuckets - $physicalCapacityBuckets,
+                    );
+                }
+                $candidateState = [
+                    'additional_buckets' => $additionalBuckets,
+                    'stop_count' => $fromState['stop_count']
+                        + ($toIndex < $destinationIndex ? 1 : 0),
+                    'previous_index' => $fromIndex,
+                ];
+                $existing = $best[$toIndex];
+                if (
+                    $existing !== null
+                    && (
+                        [
+                            $existing['additional_buckets'],
+                            $existing['stop_count'],
+                        ] <=> [
+                            $candidateState['additional_buckets'],
+                            $candidateState['stop_count'],
+                        ]
+                    ) <= 0
+                ) {
+                    continue;
+                }
+                $best[$toIndex] = $candidateState;
+            }
+        }
+
+        if ($best[$destinationIndex] === null) {
+            return [];
+        }
+        $path = [];
+        $cursor = $best[$destinationIndex]['previous_index'];
+        while ($cursor >= 0) {
+            $path[] = $candidates[$cursor];
+            $cursor = $best[$cursor]['previous_index'];
+        }
+
+        return array_reverse($path);
     }
 
     /**
@@ -1424,9 +1617,13 @@ final readonly class FuelauSingleCorridorOptimizationResult
                     "Stop {$sequence} buys less than the preferred minimum because it is required for route safety.";
             }
             $additionalFuel = $additionalFuelByNodeId[$purchase->nodeId] ?? null;
+            $itineraryLegIndex = $this->purchaseLegIndex($candidate);
 
             $stops[] = [
                 'sequence' => $index + 1,
+                'node_id' => $purchase->nodeId,
+                'itinerary_leg_index' => $itineraryLegIndex,
+                'itinerary_leg_number' => $itineraryLegIndex + 1,
                 'classification' => $purchase->classification,
                 'reason_codes' => $additionalFuel === null
                     ? $purchase->reasonCodes
@@ -1765,6 +1962,8 @@ final class FuelauAdditionalFuelOptimizer
     private const BUCKET_L = 0.5;
     private const CAPACITY_FAILURE_MESSAGE =
         'No station sequence can reach the destination while maintaining reserve.';
+    private const STOP_LIMIT_FAILURE_MESSAGE =
+        'The configured stop limit is below the minimum feasible stop count.';
 
     /**
      * @param list<FuelauOptimizerNode> $nodes
@@ -1791,7 +1990,6 @@ final class FuelauAdditionalFuelOptimizer
         $fallback = $this->minimumCapacityStationPath(
             $nodes,
             $vehicle,
-            $policy,
         );
         if ($fallback === null) {
             throw $capacityFailure;
@@ -1813,7 +2011,10 @@ final class FuelauAdditionalFuelOptimizer
                 $plan,
                 $fallback['capacity_buckets'] * self::BUCKET_L,
             );
-        } catch (FuelauRouteInfeasibleException) {
+        } catch (FuelauRouteInfeasibleException $exception) {
+            if ($exception->getMessage() === self::STOP_LIMIT_FAILURE_MESSAGE) {
+                throw $exception;
+            }
             throw $capacityFailure;
         }
     }
@@ -1825,7 +2026,6 @@ final class FuelauAdditionalFuelOptimizer
     private function minimumCapacityStationPath(
         array $nodes,
         FuelauOptimizerVehicle $vehicle,
-        FuelauOptimizerPolicy $policy,
     ): ?array {
         if (count($nodes) < 2) {
             return null;
@@ -1837,12 +2037,15 @@ final class FuelauAdditionalFuelOptimizer
         );
         $startingBuckets = (int) floor($vehicle->startingFuelL / self::BUCKET_L);
         $reserveBuckets = (int) ceil($vehicle->reserveL / self::BUCKET_L);
-        $maximumFuelOnlyStops = $policy->maximumFuelOnlyStops ?? count($nodes);
 
+        // Auxiliary capacity is a physical reachability fallback. Consider
+        // every eligible station regardless of price and do not manufacture a
+        // larger fuel requirement merely to satisfy a preferred stop limit.
         /** @var array<int, array<int, array<string, int>>> $states */
         $states = array_fill(0, count($nodes), []);
         $states[0][0] = [
             'capacity_buckets' => $physicalCapacityBuckets,
+            'additional_buckets' => 0,
             'stop_count' => 0,
             'previous_index' => -1,
             'previous_fuel_only_stops' => 0,
@@ -1872,10 +2075,16 @@ final class FuelauAdditionalFuelOptimizer
                             continue;
                         }
                         $capacityBuckets = $physicalCapacityBuckets;
+                        $additionalBuckets = 0;
                     } else {
+                        $requiredCapacityBuckets = $fuelUsedBuckets + $reserveBuckets;
                         $capacityBuckets = max(
                             $state['capacity_buckets'],
-                            $fuelUsedBuckets + $reserveBuckets,
+                            $requiredCapacityBuckets,
+                        );
+                        $additionalBuckets = $state['additional_buckets'] + max(
+                            0,
+                            $requiredCapacityBuckets - $physicalCapacityBuckets,
                         );
                     }
 
@@ -1887,24 +2096,26 @@ final class FuelauAdditionalFuelOptimizer
                             $nextFuelOnlyStops++;
                         }
                     }
-                    if ($nextFuelOnlyStops > $maximumFuelOnlyStops) {
-                        continue;
-                    }
-
                     $existing = $states[$toIndex][$nextFuelOnlyStops] ?? null;
                     if (
                         $existing !== null
                         && (
                             [
                                 $existing['capacity_buckets'],
+                                $existing['additional_buckets'],
                                 $existing['stop_count'],
-                            ] <=> [$capacityBuckets, $nextStopCount]
+                            ] <=> [
+                                $capacityBuckets,
+                                $additionalBuckets,
+                                $nextStopCount,
+                            ]
                         ) <= 0
                     ) {
                         continue;
                     }
                     $states[$toIndex][$nextFuelOnlyStops] = [
                         'capacity_buckets' => $capacityBuckets,
+                        'additional_buckets' => $additionalBuckets,
                         'stop_count' => $nextStopCount,
                         'previous_index' => $fromIndex,
                         'previous_fuel_only_stops' => $fuelOnlyStops,
@@ -1922,9 +2133,15 @@ final class FuelauAdditionalFuelOptimizer
             $best = $states[$lastIndex][$destinationFuelOnlyStops];
             if (
                 (
-                    [$state['capacity_buckets'], $fuelOnlyStops, $state['stop_count']]
+                    [
+                        $state['capacity_buckets'],
+                        $state['additional_buckets'],
+                        $fuelOnlyStops,
+                        $state['stop_count'],
+                    ]
                     <=> [
                         $best['capacity_buckets'],
+                        $best['additional_buckets'],
                         $destinationFuelOnlyStops,
                         $best['stop_count'],
                     ]
@@ -1947,12 +2164,43 @@ final class FuelauAdditionalFuelOptimizer
             $fuelOnlyStops = $state['previous_fuel_only_stops'];
         }
         $pathIndexes = array_reverse($pathIndexes);
+        $pathNodes = array_values(array_map(
+            static fn (int $index): FuelauOptimizerNode => $nodes[$index],
+            $pathIndexes,
+        ));
+        $constrainedPathNodes = [];
+        foreach ($pathNodes as $pathIndex => $node) {
+            $nextNode = $pathNodes[$pathIndex + 1] ?? null;
+            $maximumDepartureFuelL = null;
+            if ($nextNode !== null && $pathIndex > 0) {
+                $fuelUsedBuckets = $this->fuelUsedBuckets(
+                    ($nextNode->progressM - $node->progressM)
+                        + $node->accessDistanceM
+                        + $nextNode->accessDistanceM,
+                    $vehicle->economyLPer100km,
+                );
+                $maximumDepartureFuelL = max(
+                    $physicalCapacityBuckets,
+                    $fuelUsedBuckets + $reserveBuckets,
+                ) * self::BUCKET_L;
+            }
+            $constrainedPathNodes[] = new FuelauOptimizerNode(
+                id: $node->id,
+                progressM: $node->progressM,
+                priceTenthsCentsPerL: $node->priceTenthsCentsPerL,
+                label: $node->label,
+                progressS: $node->progressS,
+                accessDistanceM: $node->accessDistanceM,
+                accessDurationS: $node->accessDurationS,
+                physicalStop: $node->physicalStop,
+                combinedStop: $node->combinedStop,
+                combinedStopReason: $node->combinedStopReason,
+                maximumDepartureFuelL: $maximumDepartureFuelL,
+            );
+        }
 
         return [
-            'nodes' => array_values(array_map(
-                static fn (int $index): FuelauOptimizerNode => $nodes[$index],
-                $pathIndexes,
-            )),
+            'nodes' => $constrainedPathNodes,
             'capacity_buckets' =>
                 $states[$lastIndex][$destinationFuelOnlyStops]['capacity_buckets'],
         ];
@@ -2351,6 +2599,12 @@ final class FuelauLiveSingleCorridorPlanner
                 return ($this->tableLoader)($coordinates);
             },
             maximumCandidates: $roadCandidateLimit,
+            vehicle: new FuelauOptimizerVehicle(
+                tankCapacityL: $request->fuel->tankCapacityL,
+                startingFuelL: $request->fuel->startingFuelL,
+                reserveL: $request->fuel->reserveL,
+                economyLPer100km: $request->fuel->economyLPer100km,
+            ),
         );
         $validated = (new FuelauSingleCorridorValidationCoordinator())->planAndValidate(
             $request,
@@ -2592,6 +2846,14 @@ final class FuelauLiveCompleteItineraryPlanner
                     return ($this->tableLoader)($coordinates);
                 },
                 maximumCandidates: $roadCandidateLimit,
+                vehicle: new FuelauOptimizerVehicle(
+                    tankCapacityL: $request->fuel->tankCapacityL,
+                    startingFuelL: $leg->index === 0
+                        ? $request->fuel->startingFuelL
+                        : $request->fuel->tankCapacityL,
+                    reserveL: $request->fuel->reserveL,
+                    economyLPer100km: $request->fuel->economyLPer100km,
+                ),
             );
             $measuredLegs[] = new FuelauPreparedItineraryLeg(
                 index: $leg->index,
@@ -2699,6 +2961,7 @@ final class FuelauLiveAlternativeCorridorPlanner
 {
     private Closure $routeLoader;
     private Closure $alternativeRouteLoader;
+    private ?Closure $displayRouteLoader;
     private Closure $candidateLoader;
     private Closure $tableLoader;
     private Closure $clock;
@@ -2709,6 +2972,7 @@ final class FuelauLiveAlternativeCorridorPlanner
         ?Closure $tableLoader = null,
         ?Closure $clock = null,
         ?Closure $alternativeRouteLoader = null,
+        ?Closure $displayRouteLoader = null,
     ) {
         $this->routeLoader = $routeLoader ?? static function (array $coordinates): array {
             $payload = fuelauRoutePlan($coordinates, false);
@@ -2737,6 +3001,25 @@ final class FuelauLiveAlternativeCorridorPlanner
                     ? array_slice($payload['routes'], 0, 3)
                     : [];
             };
+        }
+        if ($displayRouteLoader !== null) {
+            $this->displayRouteLoader = $displayRouteLoader;
+        } elseif ($routeLoader === null) {
+            $this->displayRouteLoader = static function (array $coordinates): array {
+                $payload = fuelauRoutePlan($coordinates, false, 'full');
+                $route = $payload['routes'][0] ?? null;
+                if (($payload['code'] ?? null) !== 'Ok' || !is_array($route)) {
+                    throw new FuelauUpstreamException(
+                        'OSRM did not return usable full display geometry.',
+                    );
+                }
+
+                return $route;
+            };
+        } else {
+            // Dependency-injected planners retain their supplied geometry unless
+            // a distinct display loader is explicitly provided.
+            $this->displayRouteLoader = null;
         }
         $this->candidateLoader = $candidateLoader ?? static function (
             array $points,
@@ -2794,6 +3077,20 @@ final class FuelauLiveAlternativeCorridorPlanner
             $baselineCallIndex = 0;
             $rank = $corridor['rank'];
             $routes = $corridor['routes'];
+            $displayCoordinates = array_map(
+                static fn (FuelauRouteOptimizationLocation $location): array => [
+                    'lat' => $location->latitude,
+                    'lon' => $location->longitude,
+                ],
+                $locations,
+            );
+            if ($rank > 0) {
+                $displayCoordinates = $this->shapeExactCoordinates(
+                    $displayCoordinates,
+                    $locations,
+                    $routes,
+                );
+            }
             $countedCandidateLoader = function (
                 array $points,
                 string $fuel,
@@ -2817,6 +3114,7 @@ final class FuelauLiveAlternativeCorridorPlanner
                 $rank,
                 $routes,
                 $locations,
+                &$displayCoordinates,
             ): array {
                 if ($baselineCallIndex < $legCount) {
                     return $routes[$baselineCallIndex++];
@@ -2829,6 +3127,7 @@ final class FuelauLiveAlternativeCorridorPlanner
                         $routes,
                     );
                 }
+                $displayCoordinates = $coordinates;
 
                 return ($this->routeLoader)($coordinates);
             };
@@ -2849,7 +3148,11 @@ final class FuelauLiveAlternativeCorridorPlanner
                         $fixedClock,
                     );
                 $response = $planner->plan($request);
-                $successful[] = ['rank' => $rank, 'response' => $response];
+                $successful[] = [
+                    'rank' => $rank,
+                    'response' => $response,
+                    'display_coordinates' => $displayCoordinates,
+                ];
             } catch (
                 FuelauRouteInfeasibleException
                 | FuelauRoutePlanValidationException
@@ -2871,6 +3174,44 @@ final class FuelauLiveAlternativeCorridorPlanner
         $selected = (new FuelauAlternativeCorridorSelector())->select($successful);
         $response = $selected['response'];
         $selectedRank = $selected['rank'];
+        $displayGeometryRequestCount = 0;
+        $displayGeometryStatus = 'simplified';
+        if ($this->displayRouteLoader !== null) {
+            $displayGeometryRequestCount++;
+            try {
+                $displayRoute = ($this->displayRouteLoader)(
+                    $selected['display_coordinates'],
+                );
+                $displayGeometry = $displayRoute['geometry'] ?? null;
+                $displayGeometryCoordinates = is_array($displayGeometry)
+                    ? ($displayGeometry['coordinates'] ?? null)
+                    : null;
+                if (
+                    !is_array($displayGeometry)
+                    || !is_array($displayGeometryCoordinates)
+                    || count($displayGeometryCoordinates) < 2
+                ) {
+                    throw new FuelauUpstreamException(
+                        'OSRM full display geometry is missing route coordinates.',
+                    );
+                }
+                foreach ($response['route_pieces'] as &$routePiece) {
+                    if (($routePiece['kind'] ?? null) !== 'selected_route') {
+                        continue;
+                    }
+                    $routePiece['geometry'] = $displayGeometry;
+                    $displayGeometryStatus = 'full';
+                    break;
+                }
+                unset($routePiece);
+            } catch (Throwable $exception) {
+                error_log(
+                    'FuelAU full display geometry lookup failed; using simplified geometry: '
+                        . $exception->getMessage(),
+                );
+                $displayGeometryStatus = 'simplified_fallback';
+            }
+        }
         $response['corridor']['id'] = 'corridor-' . ($selectedRank + 1);
         $response['corridor']['kind'] = $selectedRank === 0 ? 'fastest' : 'alternative';
         $response['corridor']['selection_reason'] = $this->selectionReason(
@@ -2907,7 +3248,8 @@ final class FuelauLiveAlternativeCorridorPlanner
         $response['diagnostics']['corridor_count'] = count($corridors);
         $response['diagnostics']['feasible_corridor_count'] = count($successful);
         $response['diagnostics']['osrm_route_request_count'] =
-            $legCount + $exactRouteRequestCount;
+            $legCount + $exactRouteRequestCount + $displayGeometryRequestCount;
+        $response['diagnostics']['display_geometry'] = $displayGeometryStatus;
         $response['diagnostics']['osrm_table_request_count'] =
             $evaluatedTableRequestCount;
         $response['diagnostics']['evaluated_raw_candidate_count'] =
@@ -3115,6 +3457,7 @@ final class FuelauLiveRoutePlanner
         ?Closure $tableLoader = null,
         ?Closure $clock = null,
         ?Closure $alternativeRouteLoader = null,
+        ?Closure $displayRouteLoader = null,
     ) {
         $this->planner = new FuelauLiveAlternativeCorridorPlanner(
             $routeLoader,
@@ -3122,6 +3465,7 @@ final class FuelauLiveRoutePlanner
             $tableLoader,
             $clock,
             $alternativeRouteLoader,
+            $displayRouteLoader,
         );
     }
 

@@ -51,7 +51,7 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('routeFuelPriceIsFresh(row?.updated_at)', $source);
     }
 
-    public function testRoutePlannerExposesVersionOneVehicleInputsBehindFeatureFlag(): void
+    public function testRoutePlannerExposesPermanentVehicleConfiguration(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
         $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
@@ -62,27 +62,37 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('id="route-starting-fuel"', $template);
         self::assertStringContainsString('id="route-fuel-reserve"', $template);
         self::assertStringContainsString('id="route-optimization-mode"', $template);
+        self::assertStringContainsString('<h3>Vehicle Configuration</h3>', $template);
+        self::assertStringContainsString('class="route-vehicle-grid"', $template);
         self::assertStringNotContainsString('>Fuel Fill (L)<', $template);
-        self::assertStringContainsString("'routeOptimizerV2Enabled' =>", $template);
+        self::assertStringNotContainsString('id="route-use-optimizer"', $template);
+        self::assertStringNotContainsString('data-route-optimizer-field', $template);
         self::assertStringContainsString('startingFuel: routeStartingFuel.value.trim()', $script);
         self::assertStringContainsString('fuelReserve: routeFuelReserve.value.trim()', $script);
         self::assertStringContainsString('Starting fuel must be between zero and tank capacity.', $script);
     }
 
-    public function testVersionOneDefaultUsesBackendCompleteItineraryPlanner(): void
+    public function testRoutePlannerAlwaysUsesBackendCompleteItineraryPlanner(): void
     {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
         $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
 
+        self::assertIsString($template);
         self::assertIsString($script);
         self::assertStringContainsString("apiRequest('/api/route/optimize'", $script);
-        self::assertStringContainsString('const plan = routeOptimizerSelected()', $script);
-        self::assertStringContainsString('id="route-use-optimizer"', $template);
+        self::assertStringContainsString('const plan = await buildOptimizedRoutePlan(', $script);
+        self::assertStringNotContainsString('routeOptimizerSelected', $script);
+        self::assertStringNotContainsString('routeUseOptimizer', $script);
+        self::assertStringNotContainsString('async function buildRoutePlan(', $script);
+        self::assertStringNotContainsString('function buildRouteSequence(', $script);
+        self::assertStringNotContainsString('id="route-use-optimizer"', $template);
         self::assertStringContainsString(
             'destinations: destinations.map(routeOptimizerLocation)',
             $script,
         );
         self::assertStringContainsString('starting_fuel_l: startingFuelL', $script);
         self::assertStringContainsString('reserve_l: reserveL', $script);
+        self::assertStringContainsString("type: 'Leg Destination'", $script);
         self::assertStringContainsString("'Planned stop'", $script);
         self::assertStringNotContainsString('fatigue spacing', $script);
     }

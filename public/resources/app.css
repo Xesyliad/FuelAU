@@ -138,6 +138,31 @@ p {
     font-weight: 700;
 }
 
+#route-status.route-plan-status {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+    line-height: 1.45;
+}
+
+#route-status.route-plan-status p {
+    margin: 0;
+}
+
+#route-status.route-plan-status .route-status-summary {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+#route-status.route-plan-status.route-status-warning {
+    color: #8a3b12;
+    font-weight: 400;
+}
+
+#route-status.route-plan-status.route-status-warning strong {
+    font-weight: 700;
+}
+
 .status-line.route-status-error {
     color: #b42318;
     font-weight: 700;
@@ -462,6 +487,45 @@ p {
     gap: 12px;
 }
 
+.route-vehicle-configuration {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fbfcfd;
+}
+
+.route-section-heading {
+    display: grid;
+    gap: 4px;
+}
+
+.route-section-heading h3,
+.route-section-heading p {
+    margin: 0;
+}
+
+.route-section-heading h3 {
+    font-size: 16px;
+}
+
+.route-vehicle-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: end;
+}
+
+.route-vehicle-grid .field {
+    min-width: 0;
+}
+
+.route-itinerary-inputs {
+    display: grid;
+    gap: 12px;
+}
+
 .route-destinations {
     display: grid;
     gap: 10px;
@@ -705,11 +769,6 @@ p {
     height: 10px;
     border-radius: 50%;
     display: inline-block;
-}
-
-.route-map-line {
-    stroke-linecap: round;
-    stroke-linejoin: round;
 }
 
 .route-fuel-marker {
@@ -1020,6 +1079,10 @@ p {
         grid-template-columns: 1fr;
     }
 
+    .route-vehicle-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .route-stop-row {
         grid-template-columns: 1fr;
     }
@@ -1027,5 +1090,11 @@ p {
     .route-stop-actions {
         grid-auto-flow: row;
         justify-content: start;
+    }
+}
+
+@media (max-width: 640px) {
+    .route-vehicle-grid {
+        grid-template-columns: 1fr;
     }
 }

@@ -3,8 +3,6 @@
 declare(strict_types=1);
 
 /** @var bool $containerManagementEnabled */
-/** @var bool $routeOptimizerV2Enabled */
-/** @var bool $routeOptimizerV2Default */
 /** @var string $cspNonce */
 /** @var array<string, mixed> $mapConfig */
 $appCssHash = hash_file('sha256', fuelauProjectRoot() . '/public/resources/app.css');
@@ -33,8 +31,6 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
         ) ?>;
         window.fuelauAppConfig = <?= json_encode([
             'containerManagementEnabled' => $containerManagementEnabled,
-            'routeOptimizerV2Enabled' => $routeOptimizerV2Enabled,
-            'routeOptimizerV2Default' => $routeOptimizerV2Enabled && $routeOptimizerV2Default,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
     <main class="app-shell">
@@ -119,14 +115,14 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                                 <label for="fuel-stop-finder-origin">Origin</label>
                                 <div class="route-autocomplete">
                                     <input type="text" id="fuel-stop-finder-origin" class="route-autocomplete-input" placeholder="Enter an origin" autocomplete="off">
-                                    <div class="route-autocomplete-panel" id="fuel-stop-finder-origin-results" hidden></div>
+                                    <div class="route-autocomplete-panel" hidden></div>
                                 </div>
                             </div>
                             <div class="field">
                                 <label for="fuel-stop-finder-destination">Destination</label>
                                 <div class="route-autocomplete">
                                     <input type="text" id="fuel-stop-finder-destination" class="route-autocomplete-input" placeholder="Enter a destination" autocomplete="off">
-                                    <div class="route-autocomplete-panel" id="fuel-stop-finder-destination-results" hidden></div>
+                                    <div class="route-autocomplete-panel" hidden></div>
                                 </div>
                             </div>
                             <div class="field">
@@ -173,67 +169,62 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 <div class="route-layout">
                     <section class="surface-block route-top">
                         <h2>Trip Inputs</h2>
-                        <p>Origin, destinations, fuel inputs, and return mode live here.</p>
+                        <p>Configure the vehicle, then add the trip origin and destinations.</p>
 
-                        <div class="route-input-grid">
+                        <div class="route-vehicle-configuration">
+                            <div class="route-section-heading">
+                                <h3>Vehicle Configuration</h3>
+                                <p>Fuel, capacity, consumption, and refill preferences.</p>
+                            </div>
+                            <div class="route-vehicle-grid">
+                                <div class="field">
+                                    <label for="route-fuel-type">Fuel</label>
+                                    <select id="route-fuel-type"></select>
+                                </div>
+                                <div class="field">
+                                    <label for="route-tank-capacity">Tank Capacity (L)</label>
+                                    <input type="number" id="route-tank-capacity" min="5" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
+                                </div>
+                                <div class="field">
+                                    <label for="route-starting-fuel">Starting Fuel (L)</label>
+                                    <input type="number" id="route-starting-fuel" min="0" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
+                                </div>
+                                <div class="field">
+                                    <label for="route-fuel-reserve">Fuel Reserve Before Refill (L)</label>
+                                    <input type="number" id="route-fuel-reserve" min="0" max="1499.5" step="0.5" inputmode="decimal" placeholder="6.0">
+                                </div>
+                                <div class="field">
+                                    <label for="route-fuel-economy">Fuel Economy (L/100km)</label>
+                                    <input type="number" id="route-fuel-economy" min="0.1" step="0.1" inputmode="decimal" placeholder="0.0">
+                                </div>
+                                <div class="field">
+                                    <label for="route-optimization-mode">Optimisation</label>
+                                    <select id="route-optimization-mode">
+                                        <option value="practical_least_cost">Practical least cost</option>
+                                        <option value="fewer_stops">Fewer fuel stops</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="route-itinerary-inputs">
                             <div class="field">
                                 <label for="route-origin">Origin</label>
                                 <div class="route-autocomplete">
                                     <input type="text" id="route-origin" class="route-autocomplete-input" placeholder="Enter an origin" autocomplete="off">
-                                    <div class="route-autocomplete-panel" id="route-origin-results" hidden></div>
+                                    <div class="route-autocomplete-panel" hidden></div>
                                 </div>
                             </div>
-                            <div class="field">
-                                <label for="route-fuel-type">Fuel</label>
-                                <select id="route-fuel-type"></select>
-                            </div>
-                            <div class="field">
-                                <label for="route-tank-capacity">Tank Capacity (L)</label>
-                                <input type="number" id="route-tank-capacity" min="5" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
-                            </div>
-                            <?php if ($routeOptimizerV2Enabled): ?>
-                            <div class="field">
-                                <label for="route-use-optimizer">Route engine</label>
-                                <label class="switch-control">
-                                    <input
-                                        type="checkbox"
-                                        id="route-use-optimizer"
-                                        <?= $routeOptimizerV2Default ? 'checked' : '' ?>
-                                    >
-                                    <span class="switch-track" aria-hidden="true"></span>
-                                    <span>Use new route optimiser (preview)</span>
-                                </label>
-                            </div>
-                            <?php endif; ?>
-                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
-                                <label for="route-starting-fuel">Starting Fuel (L)</label>
-                                <input type="number" id="route-starting-fuel" min="0" max="1500" step="0.5" inputmode="decimal" placeholder="60.0">
-                            </div>
-                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
-                                <label for="route-fuel-reserve">Required Reserve (L)</label>
-                                <input type="number" id="route-fuel-reserve" min="0" max="1499.5" step="0.5" inputmode="decimal" placeholder="6.0">
-                            </div>
-                            <div class="field">
-                                <label for="route-fuel-economy">Fuel Economy (L/100km)</label>
-                                <input type="number" id="route-fuel-economy" min="0.1" step="0.1" inputmode="decimal" placeholder="0.0">
-                            </div>
-                            <div class="field" data-route-optimizer-field<?= $routeOptimizerV2Enabled && $routeOptimizerV2Default ? '' : ' hidden' ?>>
-                                <label for="route-optimization-mode">Optimisation</label>
-                                <select id="route-optimization-mode">
-                                    <option value="practical_least_cost">Practical least cost</option>
-                                    <option value="fewer_stops">Fewer fuel stops</option>
-                                </select>
-                            </div>
-                        </div>
 
-                        <div class="route-destinations">
-                            <div class="route-destination-header">
-                                <div>
-                                    <p class="route-muted">Add one or more stops, then reorder them before planning.</p>
+                            <div class="route-destinations">
+                                <div class="route-destination-header">
+                                    <div>
+                                        <p class="route-muted">Add one or more stops, then reorder them before planning.</p>
+                                    </div>
+                                    <button class="button primary" type="button" id="route-add-destination">+</button>
                                 </div>
-                                <button class="button primary" type="button" id="route-add-destination">+</button>
+                                <div class="route-destination-list" id="route-destination-list"></div>
                             </div>
-                            <div class="route-destination-list" id="route-destination-list"></div>
                         </div>
 
                         <div class="route-switches" role="group" aria-label="Return mode">
@@ -261,7 +252,6 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                         </div>
 
                         <div class="status-line" id="route-status" role="status" aria-live="polite">Enter a trip to build a route.</div>
-                        <div class="status-line route-status-muted" id="route-excluded-status"></div>
                     </section>
 
                     <section class="surface-block route-results">

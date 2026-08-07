@@ -42,7 +42,7 @@ function fuelauDispatchApi(FuelauHttpRequest $request, array $config): never
     }
 
     if ($request->path === '/api/route/optimize') {
-        fuelauRouteOptimizationController($request, $config);
+        fuelauRouteOptimizationController($request);
     }
 
     if ($request->path === '/api/map/config') {
@@ -354,7 +354,7 @@ function fuelauRouteController(FuelauHttpRequest $request): never
     }
 }
 
-function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $config): never
+function fuelauRouteOptimizationController(FuelauHttpRequest $request): never
 {
     // Long multi-leg itineraries can require several optimizer passes over a
     // large fuel-state graph. Keep the normal PHP request limit from turning
@@ -369,13 +369,6 @@ function fuelauRouteOptimizationController(FuelauHttpRequest $request, array $co
             'error' => 'request_too_large',
             'message' => 'Route optimization requests must not exceed 64 KiB.',
         ], 413);
-    }
-
-    if (!fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_ENABLED', false)) {
-        fuelauJsonResponse([
-            'error' => 'optimizer_disabled',
-            'message' => 'The version 1 route optimizer is not enabled.',
-        ], 503);
     }
 
     try {

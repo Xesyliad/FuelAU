@@ -40,6 +40,7 @@ final readonly class FuelauOptimizerNode
         public bool $physicalStop = false,
         public bool $combinedStop = false,
         public ?string $combinedStopReason = null,
+        public ?float $maximumDepartureFuelL = null,
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('Optimizer node ID must not be empty.');
@@ -61,6 +62,9 @@ final readonly class FuelauOptimizerNode
         if ($progressS < 0 || $accessDistanceM < 0 || $accessDurationS < 0) {
             throw new InvalidArgumentException('Optimizer node distance and duration values must be non-negative.');
         }
+        if ($maximumDepartureFuelL !== null && $maximumDepartureFuelL <= 0) {
+            throw new InvalidArgumentException('Maximum departure fuel must be positive.');
+        }
     }
 
     public static function station(
@@ -73,6 +77,7 @@ final readonly class FuelauOptimizerNode
         int $accessDurationS = 0,
         bool $combinedStop = false,
         ?string $combinedStopReason = null,
+        ?float $maximumDepartureFuelL = null,
     ): self {
         return new self(
             id: $id,
@@ -85,6 +90,7 @@ final readonly class FuelauOptimizerNode
             physicalStop: false,
             combinedStop: $combinedStop,
             combinedStopReason: $combinedStopReason,
+            maximumDepartureFuelL: $maximumDepartureFuelL,
         );
     }
 }
@@ -447,12 +453,20 @@ final class FuelauFuelStateOptimizer
         for ($fromIndex = 0; $fromIndex < $lastIndex; $fromIndex++) {
             foreach ($states[$fromIndex] as $fromKey => $state) {
                 $arrivalBuckets = (int) $state['fuel_buckets'];
+                $departureCapacityBuckets = $nodes[$fromIndex]->maximumDepartureFuelL === null
+                    ? $capacityBuckets
+                    : min(
+                        $capacityBuckets,
+                        (int) floor(
+                            $nodes[$fromIndex]->maximumDepartureFuelL / self::BUCKET_L,
+                        ),
+                    );
                 $departureOptions = $departureOptionsCache[$fromIndex][$arrivalBuckets]
                     ??= $this->departureOptions(
                         $nodes,
                         $fromIndex,
                         $arrivalBuckets,
-                        $capacityBuckets,
+                        $departureCapacityBuckets,
                         $reserveBuckets,
                         $vehicle->economyLPer100km,
                     );

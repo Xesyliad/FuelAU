@@ -277,6 +277,13 @@ final class RoutePlanningTest extends TestCase
             ['planned_stop_combination'],
             $result->plan->purchases[0]->reasonCodes,
         );
+        $stop = $result->toResponseArray()['stops'][0];
+        self::assertSame(1, $stop['itinerary_leg_index']);
+        self::assertSame(2, $stop['itinerary_leg_number']);
+        self::assertSame(
+            'station:nsw:NSW:meal-stop-fuel:E10:visit:0',
+            $stop['node_id'],
+        );
     }
 
     public function testRoadAccessMeasurementUsesOneBoundedTableChunk(): void
@@ -378,6 +385,79 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(7, $tableCalls);
         self::assertLessThan(112.0, (float) $rows[0]['longitude']);
         self::assertGreaterThan(148.0, (float) $rows[count($rows) - 1]['longitude']);
+    }
+
+    public function testRoadAccessShortlistPreservesPhysicalRangeBackbone(): void
+    {
+        $corridor = new FuelauRouteCorridor(
+            distanceM: 1_000_000,
+            durationS: 36_000,
+            geometry: [
+                ['lat' => -20.0, 'lon' => 130.0],
+                ['lat' => -20.0, 'lon' => 140.0],
+            ],
+        );
+        $station = static fn (
+            string $id,
+            string $name,
+            float $longitude,
+            float $price,
+        ): array => [
+            'source' => 'qld',
+            'state' => 'QLD',
+            'station_id' => $id,
+            'station_name' => $name,
+            'fuel_code' => 'DL',
+            'latitude' => -20.0,
+            'longitude' => $longitude,
+            'price' => $price,
+            'price_status' => 'fresh',
+        ];
+        $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+            $corridor,
+            [
+                $station('mount-isa', 'Mount Isa', 132.0, 200),
+                $station('camooweal', 'Camooweal', 134.0, 300),
+                $station('barkly', 'Barkly Homestead', 136.5, 300),
+                $station('threeways', 'Threeways', 138.5, 200),
+            ],
+            static function (array $coordinates): array {
+                $count = count($coordinates);
+                $distances = array_fill(0, $count, array_fill(0, $count, null));
+                $durations = array_fill(0, $count, array_fill(0, $count, null));
+                for ($index = 0; $index < $count; $index++) {
+                    $distances[$index][$index] = 0;
+                    $durations[$index][$index] = 0;
+                }
+                for ($index = 0; $index < $count; $index += 3) {
+                    $distances[$index][$index + 1] = 0;
+                    $distances[$index + 1][$index + 2] = 0;
+                    $distances[$index][$index + 2] = 0;
+                    $durations[$index][$index + 1] = 0;
+                    $durations[$index + 1][$index + 2] = 0;
+                    $durations[$index][$index + 2] = 0;
+                }
+
+                return ['distances' => $distances, 'durations' => $durations];
+            },
+            maximumCandidates: 2,
+            vehicle: new FuelauOptimizerVehicle(60, 60, 5, 12),
+        );
+
+        self::assertSame(
+            ['Mount Isa', 'Barkly Homestead'],
+            array_column($rows, 'station_name'),
+        );
+        $input = (new FuelauFixedCorridorCandidateAdapter())->build($corridor, $rows);
+        $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            $input->nodes,
+            new FuelauOptimizerVehicle(60, 60, 5, 12),
+            new FuelauOptimizerPolicy(
+                minimumDiscretionaryPurchaseL: 0,
+                minimumNetSavingCents: 0,
+            ),
+        );
+        self::assertSame(60.0, $adjusted->effectiveFuelCapacityL);
     }
 
     public function testCompleteItineraryCandidateBudgetIsGlobalAndDistanceWeighted(): void
@@ -642,6 +722,86 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(2, $exactRouteCalls);
         self::assertSame(2, $validated->validationPassCount);
         self::assertFalse($validated->validation->requiresReoptimization);
+    }
+
+    public function testExpensiveReachableStationsDoNotTriggerAuxiliaryFuel(): void
+    {
+        $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            [
+                new FuelauOptimizerNode('origin', 0),
+                FuelauOptimizerNode::station('expensive-1', 500_000, 999.9),
+                FuelauOptimizerNode::station('expensive-2', 1_000_000, 999.9),
+                new FuelauOptimizerNode('destination', 1_500_000),
+            ],
+            new FuelauOptimizerVehicle(60, 60, 5, 10),
+            new FuelauOptimizerPolicy(
+                minimumDiscretionaryPurchaseL: 0,
+                minimumNetSavingCents: 0,
+            ),
+        );
+
+        self::assertSame(60.0, $adjusted->effectiveFuelCapacityL);
+        self::assertSame(
+            ['expensive-1', 'expensive-2'],
+            array_map(
+                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                $adjusted->plan->purchases,
+            ),
+        );
+    }
+
+    public function testAuxiliaryFuelBridgesOnlyStationlessGap(): void
+    {
+        $nodes = [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('before-gap', 500_000, 200),
+            FuelauOptimizerNode::station('after-gap', 1_300_000, 200),
+            FuelauOptimizerNode::station('expensive-reachable', 1_800_000, 999.9),
+            new FuelauOptimizerNode('destination', 2_300_000),
+        ];
+        $vehicle = new FuelauOptimizerVehicle(60, 60, 5, 10);
+        $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            $nodes,
+            $vehicle,
+            new FuelauOptimizerPolicy(
+                minimumDiscretionaryPurchaseL: 0,
+                minimumNetSavingCents: 0,
+            ),
+        );
+
+        self::assertSame(85.0, $adjusted->effectiveFuelCapacityL);
+        self::assertContains(
+            'expensive-reachable',
+            array_map(
+                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                $adjusted->plan->purchases,
+            ),
+        );
+        self::assertSame(
+            ['before-gap'],
+            array_values(array_map(
+                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                array_filter(
+                    $adjusted->plan->purchases,
+                    static fn (FuelauOptimizerPurchase $purchase): bool =>
+                        $purchase->departureFuelL > $vehicle->tankCapacityL,
+                ),
+            )),
+        );
+
+        $this->expectException(FuelauRouteInfeasibleException::class);
+        $this->expectExceptionMessage(
+            'The configured stop limit is below the minimum feasible stop count.',
+        );
+        (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            $nodes,
+            $vehicle,
+            new FuelauOptimizerPolicy(
+                maximumFuelOnlyStops: 2,
+                minimumDiscretionaryPurchaseL: 0,
+                minimumNetSavingCents: 0,
+            ),
+        );
     }
 
     public function testResponseExplainsRequiredSmallPurchaseOverrides(): void

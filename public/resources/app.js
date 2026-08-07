@@ -21,9 +21,7 @@ const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
 const fuelMap = document.getElementById('fuel-map');
 const fuelMapLegend = document.getElementById('fuel-map-legend');
 const fuelStopFinderOrigin = document.getElementById('fuel-stop-finder-origin');
-const fuelStopFinderOriginResults = document.getElementById('fuel-stop-finder-origin-results');
 const fuelStopFinderDestination = document.getElementById('fuel-stop-finder-destination');
-const fuelStopFinderDestinationResults = document.getElementById('fuel-stop-finder-destination-results');
 const fuelStopFinderFuelType = document.getElementById('fuel-stop-finder-fuel-type');
 const fuelStopFinderEconomy = document.getElementById('fuel-stop-finder-economy');
 const fuelStopFinderPlan = document.getElementById('fuel-stop-finder-plan');
@@ -36,15 +34,12 @@ const fuelStopFinderMap = document.getElementById('fuel-stop-finder-map');
 const fuelStopFinderMapLegend = document.getElementById('fuel-stop-finder-map-legend');
 const fuelStopFinderLegs = document.getElementById('fuel-stop-finder-legs');
 const routeOrigin = document.getElementById('route-origin');
-const routeOriginResults = document.getElementById('route-origin-results');
 const routeFuelType = document.getElementById('route-fuel-type');
 const routeTankCapacity = document.getElementById('route-tank-capacity');
 const routeStartingFuel = document.getElementById('route-starting-fuel');
 const routeFuelReserve = document.getElementById('route-fuel-reserve');
 const routeFuelEconomy = document.getElementById('route-fuel-economy');
 const routeOptimizationMode = document.getElementById('route-optimization-mode');
-const routeUseOptimizer = document.getElementById('route-use-optimizer');
-const routeOptimizerFields = document.querySelectorAll('[data-route-optimizer-field]');
 const routeDestinationList = document.getElementById('route-destination-list');
 const routeAddDestination = document.getElementById('route-add-destination');
 const routeReturnReverses = document.getElementById('route-return-reverses');
@@ -54,15 +49,11 @@ const routePlan = document.getElementById('route-plan');
 const routeTest = document.getElementById('route-test');
 const routeReset = document.getElementById('route-reset');
 const routeStatus = document.getElementById('route-status');
-const routeExcludedStatus = document.getElementById('route-excluded-status');
 const routeSummary = document.getElementById('route-summary');
 const routeMap = document.getElementById('route-map');
 const routeMapLegend = document.getElementById('route-map-legend');
 const routeLegs = document.getElementById('route-legs');
 const containerManagementEnabled = Boolean(window.fuelauAppConfig?.containerManagementEnabled);
-const routeOptimizerV2Enabled = Boolean(window.fuelauAppConfig?.routeOptimizerV2Enabled);
-const routeOptimizerV2Default = routeOptimizerV2Enabled
-    && Boolean(window.fuelauAppConfig?.routeOptimizerV2Default);
 let selectedContainerId = null;
 let selectedContainerRestartable = false;
 let fuelOptions = null;
@@ -216,7 +207,6 @@ const routePlannerDefaultTankCapacityL = 60;
 const routePlannerDefaultStartingFuelL = 60;
 const routePlannerDefaultReserveL = 6;
 const routePlannerDefaultFuelEconomyLPer100km = 12;
-const routePlannerFallbackFuelPriceCentsPerL = 250;
 const activeTabKey = 'fuelau_active_tab_v1';
 let containerManagementCsrfToken = '';
 
@@ -608,7 +598,6 @@ function saveRoutePlannerState(planned = false) {
             fuelEconomy: routeFuelEconomy.value.trim(),
             fuelValue: routeFuelSelectedValue(),
             optimizationMode: routeOptimizationMode.value,
-            useOptimizer: routeOptimizerSelected(),
             returnMode: routeReturnMode(),
             planned: Boolean(planned),
         }));
@@ -753,23 +742,14 @@ async function collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, bud
         { sampleLimit: Math.min(42, sampleLimit + 6), radiusKm: Number(routeKm || 0) > 1600 ? 75 : 45 },
         { sampleLimit: Math.min(42, sampleLimit + 12), radiusKm: Number(routeKm || 0) > 1600 ? 100 : 60 },
     ];
-    const excludedStations = [];
-
     for (const attempt of attempts) {
         const bundle = await collectRouteFuelCandidates(progress, fuelQuery, attempt.sampleLimit, attempt.radiusKm, budget);
-        excludedStations.push(...bundle.excludedStations);
         if (bundle.candidates.length > 0) {
-            return {
-                candidates: bundle.candidates,
-                excludedStations: dedupeRouteExcludedStations(excludedStations),
-            };
+            return bundle.candidates;
         }
     }
 
-    return {
-        candidates: [],
-        excludedStations: dedupeRouteExcludedStations(excludedStations),
-    };
+    return [];
 }
 
 async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLPer100km) {
@@ -777,9 +757,7 @@ async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLP
     const route = await fetchRouteDetails(origin, destination, true, budget);
     const routeKm = route.distanceM / 1000;
     const progress = buildRouteProgress(route.geometry);
-    const candidateBundle = await collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget);
-    const candidates = candidateBundle.candidates;
-    const excludedStations = candidateBundle.excludedStations;
+    const candidates = await collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget);
 
     if (candidates.length === 0) {
         throw new Error('No fuel stations were found along this route.');
@@ -818,7 +796,6 @@ async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLP
             {
                 routePieces,
                 stops: [selectedStop],
-                excludedStations,
                 remainingFuelL: 0,
             },
         ],
@@ -827,7 +804,6 @@ async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLP
         totalFuelUsedL: routeKm * routeFuelRateLPerKm(economyLPer100km),
         totalFillCostCents: 0,
         fuelRemainingL: 0,
-        excludedStations,
         selectedStop,
     };
 }
@@ -932,13 +908,6 @@ function createRouteDestinationRow(value = '') {
     return row;
 }
 
-function ensureRouteDestinationRow() {
-    if (routeDestinationList.children.length === 0) {
-        routeDestinationList.appendChild(createRouteDestinationRow());
-    }
-    syncRouteDestinationControls();
-}
-
 function syncRouteDestinationControls() {
     const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
     rows.forEach((row, index) => {
@@ -1001,19 +970,6 @@ function attachRouteDestinationDrag(row) {
         event.preventDefault();
         syncRouteDestinationControls();
     });
-}
-
-function moveRouteDestination(row, offset) {
-    const rows = Array.from(routeDestinationList.querySelectorAll('.route-stop-row'));
-    const currentIndex = rows.indexOf(row);
-    const targetIndex = currentIndex + offset;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= rows.length) {
-        return;
-    }
-
-    const reference = offset > 0 ? rows[targetIndex].nextSibling : rows[targetIndex];
-    routeDestinationList.insertBefore(row, reference);
-    syncRouteDestinationControls();
 }
 
 function removeRouteDestination(row) {
@@ -1224,18 +1180,6 @@ function syncRouteReturnModeControls() {
     routeReturnReverses.closest('.switch-control')?.classList.toggle('is-disabled', oneWayEnabled);
 }
 
-function routeOptimizerSelected() {
-    return routeOptimizerV2Enabled
-        && (routeUseOptimizer ? routeUseOptimizer.checked : routeOptimizerV2Default);
-}
-
-function syncRouteOptimizerControls() {
-    const selected = routeOptimizerSelected();
-    routeOptimizerFields.forEach((field) => {
-        field.hidden = !selected;
-    });
-}
-
 function routeTankCapacityValue() {
     const rawValue = String(routeTankCapacity.value || '').trim();
     if (rawValue === '') {
@@ -1285,16 +1229,6 @@ function routeFuelDefaultEconomyValue() {
 function fuelOptionLabelForValue(value) {
     const option = Array.from(fuelType.options).find((item) => item.value === value);
     return option ? option.textContent.trim() : '';
-}
-
-function fuelOptionValueForLabel(label) {
-    const normalized = String(label || '').trim().toLowerCase();
-    if (normalized === '') {
-        return '';
-    }
-
-    const option = Array.from(fuelType.options).find((item) => item.textContent.trim().toLowerCase() === normalized);
-    return option ? option.value : '';
 }
 
 function fuelTypeSelectedLabel() {
@@ -1369,13 +1303,32 @@ function renderRouteError(message) {
     </div>`;
 }
 
-function routeFuelQuery() {
-    return routeFuelSelectedValue();
-}
-
 function routeFuelPriceText(priceCents) {
     const cents = Number(priceCents || 0);
-    return `$${(cents / 100).toFixed(2)}`;
+    const fractionDigits = Math.abs(cents - Math.round(cents)) > 0.0001 ? 3 : 2;
+    return `$${(cents / 100).toFixed(fractionDigits)}`;
+}
+
+function routeFuelStationRegionText(station) {
+    const labels = [
+        String(station?.state || '').trim().toUpperCase(),
+        String(station?.source || '').trim().toUpperCase(),
+    ].filter((label) => label !== '');
+
+    return labels.filter(
+        (label, index) => labels.findIndex((candidate) => candidate === label) === index
+    ).join(' ');
+}
+
+function routeFuelStopLegNumber(stop, fallbackLegNumber) {
+    const rawLegIndex = stop?.itineraryLegIndex;
+    if (rawLegIndex === null || rawLegIndex === undefined || rawLegIndex === '') {
+        return fallbackLegNumber;
+    }
+    const legIndex = Number(rawLegIndex);
+    return Number.isInteger(legIndex) && legIndex >= 0
+        ? legIndex + 1
+        : fallbackLegNumber;
 }
 
 function routeFuelPriceIsReasonable(price) {
@@ -1408,167 +1361,18 @@ function routeFuelCandidateIsEligible(candidate) {
         && routeFuelPriceIsFresh(candidate?.updated_at);
 }
 
-function routeFuelCandidateExclusionReasons(candidate) {
-    const reasons = [];
-    if (!routeFuelSourceIsOfficial(candidate?.source)) {
-        reasons.push('no government pricing');
-    }
-    const price = Number(candidate?.price);
-    if (!Number.isFinite(price) || price <= 0) {
-        reasons.push('pricing does not exist');
-    } else if (!routeFuelPriceIsReasonable(price)) {
-        reasons.push('pricing is outside the supported range');
-    }
-    if (!routeFuelPriceIsFresh(candidate?.updated_at)) {
-        reasons.push('pricing is older than 14 days');
-    }
-    return reasons;
-}
-
 function routeFuelStationDisplay(candidate) {
     const station = String(candidate?.station_name || '').trim();
     const address = String(candidate?.address || '').trim();
     return [station, address].filter((part) => part !== '').join(' - ');
 }
 
-function routeFuelMinimumPurchaseL(tankCapacityL) {
-    return Math.max(15, Number(tankCapacityL || 0) * 0.5);
-}
-
-function routeFuelRelaxedPurchaseL(tankCapacityL) {
-    return Math.max(10, Number(tankCapacityL || 0) * 0.15);
-}
-
-function routeFuelContingencyPurchaseL(tankCapacityL) {
-    return Math.max(5, Number(tankCapacityL || 0) * 0.05);
-}
-
-function routeFuelReserveL(tankCapacityL) {
-    return Math.max(0, Number(tankCapacityL || 0) * 0.1);
-}
-
-function routeFuelExternalReserveL(routeKm, currentFuelL, tankCapacityL, economyLPer100km) {
-    const reserveL = routeFuelReserveL(tankCapacityL);
-    const fuelNeededL = Math.max(0, Number(routeKm || 0)) * routeFuelRateLPerKm(economyLPer100km);
-    const requiredStartFuelL = fuelNeededL + reserveL;
-    return Math.max(0, requiredStartFuelL - Number(currentFuelL || 0));
-}
-
-function routeFuelReserveNote(destination, routeKm, currentFuelL, tankCapacityL, economyLPer100km, fuelLabel = routeFuelSelectedLabel()) {
-    const destinationLabel = destination?.display_name || destination?.query || routeFuelStationDisplay(destination) || 'destination';
-    const normalizedFuelLabel = String(fuelLabel || 'selected fuel').trim() || 'selected fuel';
-    const reserveL = routeFuelReserveL(tankCapacityL);
-    const requiredExternalReserveL = routeFuelExternalReserveL(routeKm, currentFuelL, tankCapacityL, economyLPer100km);
-    return {
-        destinationLabel,
-        fuelLabel: normalizedFuelLabel,
-        routeKm: Number(routeKm || 0),
-        currentFuelL: Number(currentFuelL || 0),
-        reserveL,
-        requiredExternalReserveL,
-        message: requiredExternalReserveL > 0
-            ? `No usable corridor coverage was found for ${normalizedFuelLabel} on the way to ${destinationLabel}. Choose a different route or start with an additional ${requiredExternalReserveL.toFixed(1)} L external reserve to reach ${destinationLabel} safely.`
-            : `No usable corridor coverage was found for ${normalizedFuelLabel} on the way to ${destinationLabel}.`,
-    };
-}
-
-function mergeRouteFuelReserveNotes(existingNote, nextNote) {
-    if (!existingNote) {
-        return nextNote;
-    }
-    if (!nextNote) {
-        return existingNote;
-    }
-
-    const requiredExternalReserveL = Number(existingNote.requiredExternalReserveL || 0)
-        + Number(nextNote.requiredExternalReserveL || 0);
-    return {
-        ...nextNote,
-        requiredExternalReserveL,
-        message: requiredExternalReserveL > 0
-            ? `Fuel coverage gaps for ${nextNote.fuelLabel} require a total of ${requiredExternalReserveL.toFixed(1)} L external reserve. The final bridged gap is on the way to ${nextNote.destinationLabel}.`
-            : nextNote.message,
-    };
-}
-
 function routeFuelRateLPerKm(economyLPer100km) {
     return Number(economyLPer100km || 0) / 100;
 }
 
-function routeFuelSafeRangeKm(fuelL, reserveL, economyLPer100km) {
-    const rate = routeFuelRateLPerKm(economyLPer100km);
-    if (rate <= 0) {
-        return 0;
-    }
-    return Math.max(0, (Number(fuelL || 0) - Number(reserveL || 0)) / rate);
-}
-
-function routeFuelCandidateProgressKm(candidate, cursor) {
-    return Math.max(0, Number(candidate?.progressKm || 0) - Number(cursor?.progressKm || 0));
-}
-
 function routeFuelCandidateOffRouteKm(candidate) {
     return Math.max(0, Number(candidate?.offRouteDistanceKm ?? candidate?.routeDistanceFromCursorKm ?? 0));
-}
-
-function routeFuelEstimateApproachDistanceKm(candidate, cursor) {
-    const routeProgressKm = routeFuelCandidateProgressKm(candidate, cursor);
-    const routeDistanceFromCursorKm = Number(candidate?.routeDistanceFromCursorKm || 0);
-    if (routeDistanceFromCursorKm > 0) {
-        return Math.max(0, routeProgressKm + routeDistanceFromCursorKm);
-    }
-
-    return Math.max(0, routeProgressKm + (routeFuelCandidateOffRouteKm(candidate) * 1.15));
-}
-
-function routeFuelDetourLimitKm(routeKm, safeRangeKm) {
-    const routeDistance = Number(routeKm || 0);
-    const rangeDistance = Number(safeRangeKm || 0);
-    if (routeDistance <= 30) {
-        return 6;
-    }
-    if (routeDistance <= 250) {
-        return 12;
-    }
-    if (routeDistance <= 800) {
-        return Math.min(30, Math.max(15, rangeDistance * 0.08));
-    }
-    return Math.min(75, Math.max(25, rangeDistance * 0.12));
-}
-
-function routeFuelDetourCostCents(detourKm, priceCentsPerL, economyLPer100km) {
-    const detourFuelL = Number(detourKm || 0) * routeFuelRateLPerKm(economyLPer100km);
-    const fuelCost = detourFuelL * Number(priceCentsPerL || 0);
-    const distanceTimeCost = Number(detourKm || 0) * 45;
-    return fuelCost + distanceTimeCost;
-}
-
-function routeFuelStopPenaltyCents(routeKm) {
-    return Number(routeKm || 0) > 30 ? 1800 : 600;
-}
-
-function routeFuelMedianPrice(candidates) {
-    const prices = candidates
-        .map((candidate) => Number(candidate.price || 0))
-        .filter((price) => Number.isFinite(price) && price > 0)
-        .sort((left, right) => left - right);
-    if (prices.length === 0) {
-        return 0;
-    }
-    return prices[Math.floor(prices.length / 2)];
-}
-
-function routeFuelEarlyStopSavingCents(candidate, refillL, candidatePool) {
-    const medianPrice = routeFuelMedianPrice(candidatePool);
-    const price = Number(candidate?.price || 0);
-    if (medianPrice <= 0 || price <= 0 || price > medianPrice - 10) {
-        return 0;
-    }
-    return (medianPrice - price) * Number(refillL || 0);
-}
-
-function routeFuelEarlyStopIsWorthwhile(candidate, refillL, candidatePool) {
-    return routeFuelEarlyStopSavingCents(candidate, refillL, candidatePool) >= 1000;
 }
 
 function routeFuelStopLabel(stop) {
@@ -1809,25 +1613,6 @@ function routeStepInstruction(step) {
     return type.replace(/_/g, ' ');
 }
 
-async function fetchRouteStations(point, fuelQuery) {
-    const payload = await apiRequest(`/api/fuel/current?source=all&fuel=${encodeURIComponent(fuelQuery)}&lat=${encodeURIComponent(point.lat)}&lon=${encodeURIComponent(point.lon)}&radius_km=25&limit=20`);
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    return rows.map((row) => ({
-        source: row.source,
-        state: row.state,
-        station_id: row.station_id,
-        station_name: row.station_name,
-        address: row.address,
-        brand_name: row.brand_name,
-        latitude: Number(row.latitude),
-        longitude: Number(row.longitude),
-        fuel_name: row.fuel_name,
-        price: Number(row.price),
-        updated_at: row.updated_at,
-        distance_km: Number(row.distance_km || 0),
-    })).filter((row) => routeFuelCandidateIsEligible(row));
-}
-
 async function collectRouteFuelCandidates(progress, fuelQuery, sampleLimit = 7, radiusKm = 25, budget = null) {
     const samplePoints = sampleRoutePoints(progress, sampleLimit);
     if (budget && Number(budget.fuelRequestsRemaining || 0) <= 0) {
@@ -1851,27 +1636,8 @@ async function collectRouteFuelCandidates(progress, fuelQuery, sampleLimit = 7, 
     });
 
     const deduped = dedupeRouteStations(Array.isArray(payload.rows) ? payload.rows : []);
-    const excludedStations = [];
-    const excludedKeys = new Set();
     const candidates = deduped
-        .filter((candidate) => {
-            if (routeFuelCandidateIsEligible(candidate)) {
-                return true;
-            }
-            const reasons = routeFuelCandidateExclusionReasons(candidate);
-            if (reasons.length === 0) {
-                return false;
-            }
-            const key = stationKey(candidate);
-            if (!excludedKeys.has(key)) {
-                excludedKeys.add(key);
-                excludedStations.push({
-                    ...candidate,
-                    exclusionReasons: reasons,
-                });
-            }
-            return false;
-        })
+        .filter(routeFuelCandidateIsEligible)
         .map((candidate) => {
         let nearestProgress = progress[0] || routePoint(0, 0, 0);
         let bestDistance = Number.POSITIVE_INFINITY;
@@ -1891,10 +1657,7 @@ async function collectRouteFuelCandidates(progress, fuelQuery, sampleLimit = 7, 
         };
     }).filter((candidate) => candidate.routeDistanceFromCursorKm <= radiusKm);
 
-    return {
-        candidates,
-        excludedStations,
-    };
+    return { candidates };
 }
 
 function dedupeRouteStations(rows) {
@@ -1908,33 +1671,6 @@ function dedupeRouteStations(rows) {
     return Array.from(unique.values());
 }
 
-function dedupeRouteExcludedStations(rows) {
-    const unique = new Map();
-    rows.forEach((row) => {
-        const reasons = Array.isArray(row?.exclusionReasons) ? row.exclusionReasons.slice().sort().join('|') : '';
-        const key = `${String(row?.source || '')}:${String(row?.state || '')}:${String(row?.station_id || '')}:${String(row?.station_name || '')}:${String(row?.address || '')}:${reasons}`;
-        if (!unique.has(key)) {
-            unique.set(key, row);
-        }
-    });
-    return Array.from(unique.values());
-}
-
-function formatRouteExcludedStations(excludedStations) {
-    const rows = Array.isArray(excludedStations) ? excludedStations : [];
-    if (rows.length === 0) {
-        return '';
-    }
-
-    const preview = rows.slice(0, 5).map((station) => {
-        const label = routeFuelStationDisplay(station) || 'Unknown station';
-        const reasons = Array.isArray(station.exclusionReasons) ? station.exclusionReasons.join(', ') : 'excluded';
-        return `${label} (${reasons})`;
-    });
-    const suffix = rows.length > preview.length ? ` and ${rows.length - preview.length} more` : '';
-    return `Excluded route stations: ${preview.join('; ')}${suffix}.`;
-}
-
 function stationKey(candidate) {
     const name = String(candidate.station_name || '').trim().toLowerCase();
     const address = String(candidate.address || '').trim().toLowerCase();
@@ -1945,975 +1681,6 @@ function stationKey(candidate) {
         name,
         address,
     ].join(':');
-}
-
-function stationNameKey(candidate) {
-    return String(candidate.station_name || '').trim().toLowerCase();
-}
-
-function routeFuelCandidateHasForwardOption(candidate, candidates, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    const remainingRouteKm = Math.max(0, Number(routeKm || 0) - Number(candidate.progressKm || 0));
-    const fullTankSafeRangeKm = routeFuelSafeRangeKm(tankCapacityL, reserveL, economyLPer100km);
-    if (remainingRouteKm <= fullTankSafeRangeKm) {
-        return true;
-    }
-
-    const detourLimitKm = routeFuelDetourLimitKm(remainingRouteKm, fullTankSafeRangeKm);
-    const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
-    return candidates.some((nextCandidate) => {
-        if (stationKey(nextCandidate) === stationKey(candidate)) {
-            return false;
-        }
-        if (visitedKeys.has(stationKey(nextCandidate)) || visitedNames.has(stationNameKey(nextCandidate))) {
-            return false;
-        }
-
-        const progressDeltaKm = Number(nextCandidate.progressKm || 0) - Number(candidate.progressKm || 0);
-        if (progressDeltaKm <= 0 || progressDeltaKm > fullTankSafeRangeKm) {
-            return false;
-        }
-        if (routeFuelCandidateOffRouteKm(nextCandidate) > detourLimitKm) {
-            return false;
-        }
-
-        const arrivalFuelL = Math.max(0, tankCapacityL - (progressDeltaKm * routeFuelRateLPerKm(economyLPer100km)));
-        const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
-        return refillL >= minimumPurchaseL;
-    });
-}
-
-function selectRouteFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set(), mode = 'standard') {
-    const safeRangeKm = routeFuelSafeRangeKm(currentFuelL, reserveL, economyLPer100km);
-    const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
-    const detourLimitKm = routeFuelDetourLimitKm(routeKm, safeRangeKm);
-    const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
-    const candidatePool = candidates
-        .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
-        .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
-        .filter((candidate) => Number(candidate.progressKm || 0) >= Number(cursor.progressKm || 0) - 0.001);
-    const reachable = candidatePool
-        .map((candidate) => {
-            const routeProgressKm = routeFuelCandidateProgressKm(candidate, cursor);
-            const offRouteKm = routeFuelCandidateOffRouteKm(candidate);
-            const routeFuelL = routeProgressKm * rateLPerKm;
-            const arrivalFuelL = Math.max(0, currentFuelL - routeFuelL);
-            const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
-            const safeStop = arrivalFuelL >= reserveL;
-            const meaningfulRefill = refillL >= minimumPurchaseL;
-            const cheapEarlyStop = routeFuelEarlyStopIsWorthwhile(candidate, refillL, candidatePool);
-            const forwardFeasible = routeFuelCandidateHasForwardOption(
-                candidate,
-                candidatePool,
-                tankCapacityL,
-                economyLPer100km,
-                reserveL,
-                routeKm,
-                visitedKeys,
-                visitedNames
-            );
-            const purchaseCost = refillL * Number(candidate.price || 0);
-            const detourCost = routeFuelDetourCostCents(offRouteKm, candidate.price, economyLPer100km);
-            const stopPenalty = routeFuelStopPenaltyCents(routeKm);
-            const reservePenalty = Math.max(0, (reserveL * 1.5) - arrivalFuelL) * 500;
-            const weakProgressPenalty = mode === 'initial'
-                ? 0
-                : Math.max(0, minimumPurchaseL - refillL) * 1500;
-            const deadEndPenalty = forwardFeasible ? 0 : 500000;
-            const earlyStopCredit = cheapEarlyStop ? routeFuelEarlyStopSavingCents(candidate, refillL, candidatePool) : 0;
-            const progressCredit = mode === 'initial' ? 0 : routeProgressKm * 1.25;
-
-            return {
-                ...candidate,
-                routeProgressKm,
-                offRouteKm,
-                arrivalFuelL,
-                refillL,
-                safeStop,
-                meaningfulRefill,
-                cheapEarlyStop,
-                forwardFeasible,
-                effectiveCost: purchaseCost + detourCost + stopPenalty + reservePenalty + weakProgressPenalty + deadEndPenalty - earlyStopCredit - progressCredit,
-            };
-        })
-        .filter((candidate) => candidate.routeProgressKm > 0.01)
-        .filter((candidate) => candidate.routeProgressKm <= safeRangeKm)
-        .filter((candidate) => candidate.offRouteKm <= detourLimitKm)
-        .filter((candidate) => candidate.safeStop);
-
-    if (reachable.length === 0) {
-        return null;
-    }
-
-    const practical = reachable.filter((candidate) => candidate.forwardFeasible && (candidate.meaningfulRefill || mode === 'initial'));
-    const fallback = reachable.filter((candidate) => candidate.forwardFeasible);
-    const pool = practical.length > 0 ? practical : (fallback.length > 0 ? fallback : reachable);
-
-    pool.sort((left, right) => {
-        if (left.forwardFeasible !== right.forwardFeasible) {
-            return Number(right.forwardFeasible) - Number(left.forwardFeasible);
-        }
-        if (left.meaningfulRefill !== right.meaningfulRefill) {
-            return Number(right.meaningfulRefill) - Number(left.meaningfulRefill);
-        }
-        if (left.effectiveCost !== right.effectiveCost) {
-            return left.effectiveCost - right.effectiveCost;
-        }
-        if (left.price !== right.price) {
-            return left.price - right.price;
-        }
-        if (left.offRouteKm !== right.offRouteKm) {
-            return left.offRouteKm - right.offRouteKm;
-        }
-        return right.routeProgressKm - left.routeProgressKm;
-    });
-
-    return pool[0];
-}
-
-function selectStationCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    return selectRouteFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, 'standard');
-}
-
-function selectInitialFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    return selectRouteFuelCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, 'initial');
-}
-
-function selectRouteFuelDestinationFallbackCandidate(candidates, cursor, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    const safeRangeKm = routeFuelSafeRangeKm(currentFuelL, reserveL, economyLPer100km);
-    const routeWindowKm = Math.max(25, Math.min(140, Math.max(routeKm * 0.12, safeRangeKm * 0.25)));
-    const minProgressKm = Math.max(0, routeKm - routeWindowKm);
-    const detourLimitKm = routeFuelDetourLimitKm(routeKm, Math.max(safeRangeKm, routeKm));
-    const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
-    const minimumPurchaseL = routeFuelMinimumPurchaseL(tankCapacityL);
-    const candidatePool = candidates
-        .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
-        .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
-        .filter((candidate) => Number(candidate.progressKm || 0) >= Number(cursor.progressKm || 0) - 0.001);
-
-    const reachable = candidatePool
-        .map((candidate) => {
-            const routeProgressKm = routeFuelCandidateProgressKm(candidate, cursor);
-            const offRouteKm = routeFuelCandidateOffRouteKm(candidate);
-            const routeFuelL = routeProgressKm * rateLPerKm;
-            const arrivalFuelL = Math.max(0, currentFuelL - routeFuelL);
-            const refillL = Math.max(0, tankCapacityL - arrivalFuelL);
-            const forwardFeasible = routeFuelCandidateHasForwardOption(
-                candidate,
-                candidatePool,
-                tankCapacityL,
-                economyLPer100km,
-                reserveL,
-                routeKm,
-                visitedKeys,
-                visitedNames
-            );
-            const purchaseCost = refillL * Number(candidate.price || 0);
-            const detourCost = routeFuelDetourCostCents(offRouteKm, candidate.price, economyLPer100km);
-            const stopPenalty = routeFuelStopPenaltyCents(routeKm);
-            const reservePenalty = Math.max(0, (reserveL * 1.5) - arrivalFuelL) * 500;
-            const progressCredit = routeProgressKm * 1.5;
-
-            return {
-                ...candidate,
-                routeProgressKm,
-                offRouteKm,
-                arrivalFuelL,
-                refillL,
-                meaningfulRefill: refillL >= minimumPurchaseL,
-                forwardFeasible,
-                effectiveCost: purchaseCost + detourCost + stopPenalty + reservePenalty - progressCredit,
-            };
-        })
-        .filter((candidate) => candidate.routeProgressKm > 0.01)
-        .filter((candidate) => candidate.routeProgressKm >= minProgressKm)
-        .filter((candidate) => candidate.arrivalFuelL >= 0)
-        .filter((candidate) => candidate.offRouteKm <= detourLimitKm);
-
-    if (reachable.length === 0) {
-        return null;
-    }
-
-    reachable.sort((left, right) => {
-        if (left.routeProgressKm !== right.routeProgressKm) {
-            return right.routeProgressKm - left.routeProgressKm;
-        }
-        if (left.forwardFeasible !== right.forwardFeasible) {
-            return Number(right.forwardFeasible) - Number(left.forwardFeasible);
-        }
-        if (left.meaningfulRefill !== right.meaningfulRefill) {
-            return Number(right.meaningfulRefill) - Number(left.meaningfulRefill);
-        }
-        if (left.effectiveCost !== right.effectiveCost) {
-            return left.effectiveCost - right.effectiveCost;
-        }
-        if (left.offRouteKm !== right.offRouteKm) {
-            return left.offRouteKm - right.offRouteKm;
-        }
-        return left.price - right.price;
-    });
-
-    return reachable[0];
-}
-
-function routeFuelGraphEdgeKm(fromNode, toNode) {
-    const progressKm = Math.max(0, Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0));
-    const fromOffRouteKm = fromNode.kind === 'station' ? routeFuelCandidateOffRouteKm(fromNode.station) : 0;
-    const toOffRouteKm = toNode.kind === 'station' ? routeFuelCandidateOffRouteKm(toNode.station) : 0;
-    return progressKm + (fromOffRouteKm * 0.8) + (toOffRouteKm * 1.15);
-}
-
-function routeFuelGraphStationNodes(candidates, routeKm, detourLimitKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    const unique = new Map();
-    candidates
-        .filter((candidate) => !visitedKeys.has(stationKey(candidate)))
-        .filter((candidate) => !visitedNames.has(stationNameKey(candidate)))
-        .filter((candidate) => Number(candidate.progressKm || 0) > 0.01)
-        .filter((candidate) => Number(candidate.progressKm || 0) < Number(routeKm || 0) - 0.01)
-        .filter((candidate) => routeFuelCandidateOffRouteKm(candidate) <= detourLimitKm)
-        .forEach((candidate) => {
-            const key = stationKey(candidate);
-            const existing = unique.get(key);
-            if (!existing || Number(candidate.price || 0) < Number(existing.price || 0)) {
-                unique.set(key, candidate);
-            }
-        });
-
-    return Array.from(unique.values())
-        .sort((left, right) => {
-            if (Number(left.progressKm || 0) !== Number(right.progressKm || 0)) {
-                return Number(left.progressKm || 0) - Number(right.progressKm || 0);
-            }
-            return Number(left.price || 0) - Number(right.price || 0);
-        })
-        .slice(0, 240)
-        .map((candidate, index) => ({
-            kind: 'station',
-            index: index + 1,
-            progressKm: Number(candidate.progressKm || 0),
-            station: candidate,
-        }));
-}
-
-function buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set(), allowSafetyStops = false, allowRelaxedStops = false) {
-    const rateLPerKm = routeFuelRateLPerKm(economyLPer100km);
-    if (rateLPerKm <= 0) {
-        return null;
-    }
-
-    const fullTankSafeRangeKm = routeFuelSafeRangeKm(tankCapacityL, reserveL, economyLPer100km);
-    const currentSafeRangeKm = routeFuelSafeRangeKm(currentFuelL, reserveL, economyLPer100km);
-    const detourLimitKm = routeFuelDetourLimitKm(routeKm, Math.max(fullTankSafeRangeKm, currentSafeRangeKm));
-    const strictMinimumRefillL = routeFuelMinimumPurchaseL(tankCapacityL);
-    const safetyMinimumRefillL = Math.max(15, tankCapacityL * 0.25);
-    const relaxedMinimumRefillL = routeFuelRelaxedPurchaseL(tankCapacityL);
-    const launchFuelExemption = currentFuelL <= (tankCapacityL * 0.25);
-    const stationNodes = routeFuelGraphStationNodes(candidates, routeKm, detourLimitKm, visitedKeys, visitedNames);
-    const nodes = [
-        {
-            kind: 'start',
-            index: 0,
-            progressKm: 0,
-        },
-        ...stationNodes,
-        {
-            kind: 'destination',
-            index: stationNodes.length + 1,
-            progressKm: Number(routeKm || 0),
-        },
-    ];
-
-    const best = nodes.map(() => null);
-    best[0] = {
-        cost: 0,
-        previousIndex: -1,
-        arrivalFuelL: currentFuelL,
-        litresPurchased: 0,
-        safetyFallback: false,
-    };
-
-    for (let fromIndex = 0; fromIndex < nodes.length; fromIndex += 1) {
-        const fromBest = best[fromIndex];
-        if (!fromBest) {
-            continue;
-        }
-
-        const fromNode = nodes[fromIndex];
-        const departureFuelL = fromNode.kind === 'start' ? currentFuelL : tankCapacityL;
-        for (let toIndex = fromIndex + 1; toIndex < nodes.length; toIndex += 1) {
-            const toNode = nodes[toIndex];
-            const edgeKm = routeFuelGraphEdgeKm(fromNode, toNode);
-            const fuelUsedL = edgeKm * rateLPerKm;
-            const arrivalFuelL = departureFuelL - fuelUsedL;
-            if (arrivalFuelL < reserveL) {
-                if ((Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0)) > fullTankSafeRangeKm + detourLimitKm) {
-                    break;
-                }
-                continue;
-            }
-
-            let edgeCost = 0;
-            let litresPurchased = 0;
-            let safetyFallback = false;
-            let relaxedFallback = false;
-            if (toNode.kind === 'station') {
-                const station = toNode.station;
-                litresPurchased = Math.max(0, tankCapacityL - arrivalFuelL);
-                const minimumRefillL = allowRelaxedStops
-                    ? relaxedMinimumRefillL
-                    : (allowSafetyStops ? safetyMinimumRefillL : strictMinimumRefillL);
-                if (!(fromNode.kind === 'start' && launchFuelExemption) && litresPurchased < minimumRefillL) {
-                    continue;
-                }
-                safetyFallback = litresPurchased < strictMinimumRefillL;
-                relaxedFallback = allowRelaxedStops && litresPurchased < safetyMinimumRefillL;
-                const offRouteKm = routeFuelCandidateOffRouteKm(station);
-                const purchaseCost = litresPurchased * Number(station.price || 0);
-                const detourCost = routeFuelDetourCostCents(offRouteKm, station.price, economyLPer100km);
-                const reservePenalty = Math.max(0, (reserveL * 1.5) - arrivalFuelL) * 500;
-                const cheapFuelCredit = routeFuelEarlyStopSavingCents(station, litresPurchased, candidates);
-                edgeCost = purchaseCost + detourCost + routeFuelStopPenaltyCents(routeKm) + reservePenalty - cheapFuelCredit;
-            } else {
-                edgeCost = routeFuelDetourCostCents(routeFuelGraphEdgeKm(fromNode, toNode) - Math.max(0, Number(toNode.progressKm || 0) - Number(fromNode.progressKm || 0)), 250, economyLPer100km);
-            }
-
-            const nextCost = fromBest.cost + edgeCost;
-            if (!best[toIndex] || nextCost < best[toIndex].cost) {
-                best[toIndex] = {
-                    cost: nextCost,
-                    previousIndex: fromIndex,
-                    arrivalFuelL,
-                    litresPurchased,
-                    safetyFallback,
-                    relaxedFallback,
-                };
-            }
-        }
-    }
-
-    const destinationIndex = nodes.length - 1;
-    if (!best[destinationIndex]) {
-        return null;
-    }
-
-    const stops = [];
-    let cursorIndex = best[destinationIndex].previousIndex;
-    while (cursorIndex > 0) {
-        const node = nodes[cursorIndex];
-        const entry = best[cursorIndex];
-        if (node.kind === 'station') {
-            stops.push({
-                ...node.station,
-                plannedRefillL: entry.litresPurchased,
-                safetyFallback: entry.safetyFallback,
-                relaxedFallback: entry.relaxedFallback,
-            });
-        }
-        cursorIndex = entry.previousIndex;
-    }
-    stops.reverse();
-
-    return {
-        cost: best[destinationIndex].cost,
-        stops,
-        safetyFallback: allowSafetyStops,
-        relaxedFallback: allowRelaxedStops,
-    };
-}
-
-function selectRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys = new Set(), visitedNames = new Set()) {
-    const strictPlan = buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, false);
-    if (strictPlan) {
-        return strictPlan;
-    }
-    const safetyPlan = buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true, false);
-    if (safetyPlan) {
-        return safetyPlan;
-    }
-    return buildRouteFuelGraphPlan(candidates, currentFuelL, tankCapacityL, economyLPer100km, reserveL, routeKm, visitedKeys, visitedNames, true, true);
-}
-
-async function buildRouteFuelPlanSegment(cursor, destination, currentFuelL, tankCapacityL, economyLPer100km, fuelQuery, budget = null) {
-    const chosenStops = [];
-    const routePieces = [];
-    const excludedStations = [];
-    const visitedStationKeys = new Set();
-    const visitedStationNames = new Set();
-    let currentPoint = cursor;
-    let fuelInTank = currentFuelL;
-    const reserveL = routeFuelReserveL(tankCapacityL);
-    let reserveNote = null;
-
-    async function confirmRouteApproachCandidate(nextCandidate, minimumRefillL, isFirstStop) {
-        const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
-        const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true, budget);
-        const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
-        const nextArrivalFuel = Math.max(0, fuelInTank - nextApproachFuel);
-        const nextRefillL = Math.max(0, tankCapacityL - nextArrivalFuel);
-        if ((fuelInTank - nextApproachFuel) < reserveL) {
-            return null;
-        }
-        if (!isFirstStop && nextRefillL < minimumRefillL) {
-            return null;
-        }
-
-        return {
-            approach: nextApproach,
-            refillL: nextRefillL,
-        };
-    }
-
-    async function confirmRouteDestinationFallbackCandidate(nextCandidate) {
-        const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
-        const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true, budget);
-        const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
-        if (nextApproachFuel > fuelInTank) {
-            return null;
-        }
-        const nextArrivalFuel = Math.max(0, fuelInTank - nextApproachFuel);
-        const nextRefillL = Math.max(0, tankCapacityL - nextArrivalFuel);
-
-        return {
-            approach: nextApproach,
-            refillL: nextRefillL,
-            fuelAfterArrival: nextArrivalFuel,
-        };
-    }
-
-    async function confirmRouteExternalReserveCandidate(nextCandidate) {
-        const stopPoint = { lon: nextCandidate.longitude, lat: nextCandidate.latitude };
-        const nextApproach = await fetchRouteDetails(currentPoint, stopPoint, true, budget);
-        const nextApproachFuel = (nextApproach.distanceM / 1000) * (economyLPer100km / 100);
-        const requiredExternalReserveL = Math.max(0, nextApproachFuel + reserveL - fuelInTank);
-        if (requiredExternalReserveL <= 0.01) {
-            return null;
-        }
-
-        return {
-            approach: nextApproach,
-            requiredExternalReserveL,
-        };
-    }
-
-    while (true) {
-        const route = await fetchRouteDetails(currentPoint, destination, false, budget);
-        const routeKm = route.distanceM / 1000;
-        const fuelNeeded = routeKm * (economyLPer100km / 100);
-        const progress = buildRouteProgress(route.geometry);
-        const sampleLimit = Math.max(14, Math.min(42, Math.ceil(routeKm / 45)));
-        const searchRadiusKm = routeKm > 1600 ? 75 : (routeKm > 900 ? 50 : 30);
-        let candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, sampleLimit, searchRadiusKm, budget);
-        let candidates = candidateBundle.candidates;
-        excludedStations.push(...candidateBundle.excludedStations);
-        if (candidates.length === 0) {
-            candidateBundle = await collectRouteFuelCandidates(progress, fuelQuery, Math.min(42, sampleLimit + 6), routeKm > 1600 ? 90 : 60, budget);
-            candidates = candidateBundle.candidates;
-            excludedStations.push(...candidateBundle.excludedStations);
-        }
-
-        const currentCursor = routePoint(currentPoint.lon, currentPoint.lat, 0);
-        if (fuelInTank >= fuelNeeded && (fuelInTank - fuelNeeded) >= reserveL) {
-            routePieces.push({
-                type: 'route',
-                route: await fetchRouteDetails(currentPoint, destination, true, budget),
-            });
-            fuelInTank = Math.max(0, fuelInTank - fuelNeeded);
-            break;
-        }
-
-        let chosen = null;
-        let approach = null;
-        let safetyFallback = false;
-        let relaxedFallback = false;
-        let contingencyFallback = false;
-        const shortSafetyCandidates = [];
-        const contingencyCandidates = [];
-        const isFirstStop = routePieces.length === 0;
-        const graphPlan = selectRouteFuelGraphPlan(
-            candidates,
-            fuelInTank,
-            tankCapacityL,
-            economyLPer100km,
-            reserveL,
-            routeKm,
-            visitedStationKeys,
-            visitedStationNames
-        );
-        const graphCandidates = graphPlan ? graphPlan.stops.slice() : [];
-        const graphMinimumRefillL = graphPlan?.relaxedFallback
-            ? routeFuelRelaxedPurchaseL(tankCapacityL)
-            : (graphPlan?.safetyFallback ? Math.max(15, tankCapacityL * 0.25) : routeFuelMinimumPurchaseL(tankCapacityL));
-        while (graphCandidates.length > 0 || candidates.length > 0) {
-            const nextCandidate = graphCandidates.length > 0
-                ? graphCandidates.shift()
-                : (isFirstStop
-                    ? selectInitialFuelCandidate(
-                        candidates,
-                        currentCursor,
-                        fuelInTank,
-                        tankCapacityL,
-                        economyLPer100km,
-                        reserveL,
-                        routeKm,
-                        visitedStationKeys,
-                        visitedStationNames
-                    )
-                    : selectStationCandidate(
-                        candidates,
-                        currentCursor,
-                        fuelInTank,
-                        tankCapacityL,
-                        economyLPer100km,
-                        reserveL,
-                        routeKm,
-                        visitedStationKeys,
-                        visitedStationNames
-                    ));
-            if (!nextCandidate) {
-                break;
-            }
-
-            const estimatedApproachKm = routeFuelEstimateApproachDistanceKm(nextCandidate, currentCursor);
-            const estimatedApproachFuel = estimatedApproachKm * (economyLPer100km / 100);
-            const estimatedArrivalFuel = Math.max(0, fuelInTank - estimatedApproachFuel);
-            const estimatedRefillL = Math.max(0, tankCapacityL - estimatedArrivalFuel);
-            if (!isFirstStop && estimatedRefillL < graphMinimumRefillL) {
-                if ((nextCandidate.relaxedFallback || graphPlan?.relaxedFallback) && estimatedRefillL >= routeFuelRelaxedPurchaseL(tankCapacityL) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                    const validation = await confirmRouteApproachCandidate(nextCandidate, routeFuelRelaxedPurchaseL(tankCapacityL), isFirstStop);
-                    if (validation) {
-                        chosen = nextCandidate;
-                        approach = validation.approach;
-                        relaxedFallback = true;
-                        break;
-                    }
-                }
-                if ((nextCandidate.safetyFallback || graphPlan?.safetyFallback) && estimatedRefillL >= Math.max(15, tankCapacityL * 0.25) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                    const validation = await confirmRouteApproachCandidate(nextCandidate, Math.max(15, tankCapacityL * 0.25), isFirstStop);
-                    if (validation) {
-                        chosen = nextCandidate;
-                        approach = validation.approach;
-                        safetyFallback = true;
-                        break;
-                    }
-                }
-                if (estimatedRefillL >= routeFuelRelaxedPurchaseL(tankCapacityL) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                    shortSafetyCandidates.push({
-                        candidate: nextCandidate,
-                        estimatedRefillL,
-                        relaxedFallback: estimatedRefillL < Math.max(15, tankCapacityL * 0.25),
-                    });
-                }
-                if (estimatedRefillL >= routeFuelContingencyPurchaseL(tankCapacityL) && (fuelInTank - estimatedApproachFuel) >= reserveL) {
-                    contingencyCandidates.push({
-                        candidate: nextCandidate,
-                        estimatedRefillL,
-                    });
-                }
-                visitedStationKeys.add(stationKey(nextCandidate));
-                visitedStationNames.add(stationNameKey(nextCandidate));
-                continue;
-            }
-            if ((fuelInTank - estimatedApproachFuel) >= reserveL) {
-                const validation = await confirmRouteApproachCandidate(nextCandidate, graphMinimumRefillL, isFirstStop);
-                if (validation) {
-                    chosen = nextCandidate;
-                    approach = validation.approach;
-                    break;
-                }
-            }
-
-            visitedStationKeys.add(stationKey(nextCandidate));
-            visitedStationNames.add(stationNameKey(nextCandidate));
-        }
-
-        if (!chosen && shortSafetyCandidates.length > 0) {
-            shortSafetyCandidates.sort((left, right) => {
-                if (left.candidate.forwardFeasible !== right.candidate.forwardFeasible) {
-                    return Number(right.candidate.forwardFeasible) - Number(left.candidate.forwardFeasible);
-                }
-                if (left.estimatedRefillL !== right.estimatedRefillL) {
-                    return right.estimatedRefillL - left.estimatedRefillL;
-                }
-                if (left.candidate.effectiveCost !== right.candidate.effectiveCost) {
-                    return left.candidate.effectiveCost - right.candidate.effectiveCost;
-                }
-                return Number(left.candidate.price || 0) - Number(right.candidate.price || 0);
-            });
-            for (const option of shortSafetyCandidates) {
-                const validation = await confirmRouteApproachCandidate(
-                    option.candidate,
-                    routeFuelRelaxedPurchaseL(tankCapacityL),
-                    isFirstStop
-                );
-                if (validation) {
-                    chosen = option.candidate;
-                    approach = validation.approach;
-                    relaxedFallback = option.relaxedFallback || false;
-                    safetyFallback = !relaxedFallback;
-                    break;
-                }
-            }
-        }
-
-        if (!chosen && contingencyCandidates.length > 0) {
-            contingencyCandidates.sort((left, right) => {
-                if (left.candidate.forwardFeasible !== right.candidate.forwardFeasible) {
-                    return Number(right.candidate.forwardFeasible) - Number(left.candidate.forwardFeasible);
-                }
-                if (left.estimatedRefillL !== right.estimatedRefillL) {
-                    return right.estimatedRefillL - left.estimatedRefillL;
-                }
-                if (left.candidate.effectiveCost !== right.candidate.effectiveCost) {
-                    return left.candidate.effectiveCost - right.candidate.effectiveCost;
-                }
-                return Number(left.candidate.price || 0) - Number(right.candidate.price || 0);
-            });
-            for (const option of contingencyCandidates) {
-                const validation = await confirmRouteApproachCandidate(
-                    option.candidate,
-                    routeFuelContingencyPurchaseL(tankCapacityL),
-                    isFirstStop
-                );
-                if (validation) {
-                    chosen = option.candidate;
-                    approach = validation.approach;
-                    contingencyFallback = true;
-                    break;
-                }
-            }
-        }
-
-        if (!chosen) {
-            const externalReserveCandidates = candidates
-                .filter((candidate) => Number(candidate.progressKm || 0) > 0.01)
-                .filter((candidate) => Number.isFinite(Number(candidate.latitude)) && Number.isFinite(Number(candidate.longitude)))
-                .sort((left, right) => {
-                    const leftApproachKm = routeFuelEstimateApproachDistanceKm(left, currentCursor);
-                    const rightApproachKm = routeFuelEstimateApproachDistanceKm(right, currentCursor);
-                    if (leftApproachKm !== rightApproachKm) {
-                        return leftApproachKm - rightApproachKm;
-                    }
-                    return routeFuelCandidateOffRouteKm(left) - routeFuelCandidateOffRouteKm(right);
-                });
-
-            for (const externalReserveCandidate of externalReserveCandidates.slice(0, 12)) {
-                const validation = await confirmRouteExternalReserveCandidate(externalReserveCandidate);
-                if (!validation) {
-                    continue;
-                }
-
-                const fuelBeforeReserveL = fuelInTank;
-                fuelInTank += validation.requiredExternalReserveL;
-                reserveNote = mergeRouteFuelReserveNotes(
-                    reserveNote,
-                    routeFuelReserveNote(
-                        externalReserveCandidate,
-                        validation.approach.distanceM / 1000,
-                        fuelBeforeReserveL,
-                        tankCapacityL,
-                        economyLPer100km,
-                        fuelQuery
-                    )
-                );
-                chosen = externalReserveCandidate;
-                approach = validation.approach;
-                contingencyFallback = true;
-                break;
-            }
-        }
-
-        if (!chosen) {
-            routePlannerConsumeBudget(budget, 'fuel');
-            const destinationRows = await fetchRouteStations(destination, fuelQuery);
-            const destinationStations = destinationRows
-                .map((row) => ({
-                    ...row,
-                    progressKm: routeKm,
-                    routeDistanceFromCursorKm: Number(row.distance_km || 0),
-                    offRouteDistanceKm: Number(row.distance_km || 0),
-                }))
-                .sort((left, right) => {
-                    if (left.routeDistanceFromCursorKm !== right.routeDistanceFromCursorKm) {
-                        return left.routeDistanceFromCursorKm - right.routeDistanceFromCursorKm;
-                    }
-                    if (left.price !== right.price) {
-                        return left.price - right.price;
-                    }
-                    return String(left.station_name || '').localeCompare(String(right.station_name || ''));
-                });
-
-            for (const destinationStation of destinationStations) {
-                const validation = await confirmRouteDestinationFallbackCandidate(destinationStation);
-                if (validation) {
-                    const routeFuelAfterArrival = validation.fuelAfterArrival;
-                    const litresToBuy = Math.max(0, tankCapacityL - routeFuelAfterArrival);
-                    const purchaseCents = litresToBuy * Number(destinationStation.price || 0);
-                    const destinationFallbackFlag = true;
-
-                    routePieces.push({
-                        type: 'route',
-                        route,
-                    });
-
-                    chosenStops.push({
-                        ...destinationStation,
-                        litresPurchased: litresToBuy,
-                        purchaseCents,
-                        fuelAfterArrival: routeFuelAfterArrival,
-                        safetyFallback: false,
-                        relaxedFallback: false,
-                        contingencyFallback: false,
-                        destinationFallback: destinationFallbackFlag,
-                    });
-
-                    routePieces.push({
-                        type: 'fuel-stop',
-                        station: destinationStation,
-                        litresPurchased: litresToBuy,
-                        purchaseCents,
-                        safetyFallback: false,
-                        relaxedFallback: false,
-                        contingencyFallback: false,
-                        destinationFallback: destinationFallbackFlag,
-                    });
-
-                    fuelInTank = tankCapacityL;
-                    currentPoint = destination;
-                    chosen = destinationStation;
-                    break;
-                }
-            }
-
-            if (chosen) {
-                break;
-            }
-
-            const destinationFallbackCandidate = selectRouteFuelDestinationFallbackCandidate(
-                candidates,
-                currentCursor,
-                fuelInTank,
-                tankCapacityL,
-                economyLPer100km,
-                reserveL,
-                routeKm,
-                visitedStationKeys,
-                visitedStationNames
-            );
-            if (destinationFallbackCandidate) {
-                const validation = await confirmRouteDestinationFallbackCandidate(destinationFallbackCandidate);
-                if (validation) {
-                    const routeFuelAfterArrival = validation.fuelAfterArrival;
-                    const litresToBuy = Math.max(0, tankCapacityL - routeFuelAfterArrival);
-                    const purchaseCents = litresToBuy * Number(destinationFallbackCandidate.price || 0);
-                    const destinationFallbackFlag = true;
-
-                    routePieces.push({
-                        type: 'route',
-                        route,
-                    });
-
-                    chosenStops.push({
-                        ...destinationFallbackCandidate,
-                        litresPurchased: litresToBuy,
-                        purchaseCents,
-                        fuelAfterArrival: routeFuelAfterArrival,
-                        safetyFallback: false,
-                        relaxedFallback: false,
-                        contingencyFallback: false,
-                        destinationFallback: destinationFallbackFlag,
-                    });
-
-                    routePieces.push({
-                        type: 'fuel-stop',
-                        station: destinationFallbackCandidate,
-                        litresPurchased: litresToBuy,
-                        purchaseCents,
-                        safetyFallback: false,
-                        relaxedFallback: false,
-                        contingencyFallback: false,
-                        destinationFallback: destinationFallbackFlag,
-                    });
-
-                    fuelInTank = tankCapacityL;
-                    currentPoint = destination;
-                    break;
-                }
-            }
-
-            reserveNote = mergeRouteFuelReserveNotes(
-                reserveNote,
-                routeFuelReserveNote(destination, routeKm, fuelInTank, tankCapacityL, economyLPer100km, fuelQuery)
-            );
-            routePieces.push({
-                type: 'route',
-                route,
-            });
-            return {
-                cursor,
-                destination,
-                routePieces,
-                stops: chosenStops,
-                excludedStations,
-                remainingFuelL: Number(reserveNote?.requiredExternalReserveL || 0) > 0
-                    ? reserveL
-                    : Math.max(0, fuelInTank - fuelNeeded),
-                requiresExternalReserve: true,
-                reserveNote,
-            };
-        }
-
-        visitedStationKeys.add(stationKey(chosen));
-        visitedStationNames.add(stationNameKey(chosen));
-        const stopPoint = { lon: chosen.longitude, lat: chosen.latitude };
-        const approachFuel = (approach.distanceM / 1000) * (economyLPer100km / 100);
-
-        routePieces.push({
-            type: 'route',
-            route: approach,
-        });
-
-        const fuelAfterArrival = Math.max(0, fuelInTank - approachFuel);
-        const litresToBuy = Math.max(0, tankCapacityL - fuelAfterArrival);
-        const purchaseCents = litresToBuy * chosen.price;
-        chosenStops.push({
-            ...chosen,
-            litresPurchased: litresToBuy,
-            purchaseCents,
-            fuelAfterArrival,
-            safetyFallback,
-            relaxedFallback,
-            contingencyFallback,
-        });
-
-        routePieces.push({
-            type: 'fuel-stop',
-            station: chosen,
-            litresPurchased: litresToBuy,
-            purchaseCents,
-            safetyFallback,
-            relaxedFallback,
-            contingencyFallback,
-        });
-
-        fuelInTank = tankCapacityL;
-        currentPoint = stopPoint;
-        continue;
-    }
-
-    return {
-        cursor,
-        destination,
-        routePieces,
-        stops: chosenStops,
-        excludedStations,
-        remainingFuelL: Math.max(0, fuelInTank),
-        reserveNote,
-    };
-}
-
-async function buildRoutePlan(resolveStops, fuelQuery, tankCapacityL, economyLPer100km) {
-    const budget = createRoutePlannerBudget();
-    const segments = [];
-    const excludedStations = [];
-    let currentFuel = tankCapacityL * 0.2;
-    let finalFuelRemaining = currentFuel;
-    let currentPoint = resolveStops[0];
-    let totalDistanceM = 0;
-    let totalDurationS = 0;
-    let totalFillCostCents = 0;
-    let totalFuelUsedL = 0;
-
-    for (let index = 1; index < resolveStops.length; index += 1) {
-        const destination = resolveStops[index];
-        let segment = null;
-        let planningError = null;
-        try {
-            segment = await buildRouteFuelPlanSegment(
-                currentPoint,
-                destination,
-                currentFuel,
-                tankCapacityL,
-                economyLPer100km,
-                fuelQuery,
-                budget
-            );
-        } catch (error) {
-            planningError = error;
-        }
-
-        if (!segment && currentFuel < tankCapacityL) {
-            try {
-                segment = await buildRouteFuelPlanSegment(
-                    currentPoint,
-                    destination,
-                    tankCapacityL,
-                    tankCapacityL,
-                    economyLPer100km,
-                    fuelQuery,
-                    budget
-                );
-            } catch (retryError) {
-                planningError = retryError;
-            }
-        }
-
-        if (!segment) {
-            throw planningError || new Error(`No fuel stop is reachable before running out of fuel on the way to ${destination.display_name || destination.query}.`);
-        }
-
-        const routeItems = segment.routePieces.filter((item) => item.type === 'route');
-        routeItems.forEach((item) => {
-            totalDistanceM += item.route.distanceM;
-            totalDurationS += item.route.durationS;
-            totalFuelUsedL += (item.route.distanceM / 1000) * (economyLPer100km / 100);
-        });
-
-        segment.stops.forEach((stop) => {
-            totalFillCostCents += stop.purchaseCents;
-        });
-
-        segments.push(segment);
-        excludedStations.push(...(Array.isArray(segment.excludedStations) ? segment.excludedStations : []));
-        currentPoint = destination;
-        finalFuelRemaining = Math.max(0, segment.remainingFuelL);
-        currentFuel = finalFuelRemaining;
-    }
-
-    const reserveNote = segments.reduce(
-        (note, segment) => mergeRouteFuelReserveNotes(note, segment?.reserveNote || null),
-        null
-    );
-    const totalPurchasedL = segments.reduce(
-        (total, segment) => total + segment.stops.reduce(
-            (segmentTotal, stop) => segmentTotal + Number(stop.litresPurchased || 0),
-            0
-        ),
-        0
-    );
-    const stationFillCostCents = totalFillCostCents;
-    const averageFillPriceCentsPerL = totalPurchasedL > 0
-        ? stationFillCostCents / totalPurchasedL
-        : routePlannerFallbackFuelPriceCentsPerL;
-    const externalReservePricedL = Number(reserveNote?.requiredExternalReserveL || 0) * 1.2;
-    const externalReserveCostCents = externalReservePricedL * averageFillPriceCentsPerL;
-    totalFillCostCents = stationFillCostCents + externalReserveCostCents;
-
-    return {
-        fuelQuery,
-        tankCapacityL,
-        economyLPer100km,
-        segments,
-        totalDistanceM,
-        totalDurationS,
-        totalFuelUsedL,
-        totalFillCostCents,
-        stationFillCostCents,
-        externalReserveCostCents,
-        externalReservePricedL,
-        averageFillPriceCentsPerL,
-        fuelRemainingL: finalFuelRemaining,
-        reserveNote,
-        excludedStations: dedupeRouteExcludedStations(excludedStations),
-    };
 }
 
 function routeOptimizerReturnMode() {
@@ -2969,27 +1736,38 @@ function routeOptimizerPlanFromResponse(
         geometry: routeCoordinates.map((coordinate) => routePoint(coordinate[0], coordinate[1])),
         steps: [],
     };
-    const stops = (Array.isArray(payload?.stops) ? payload.stops : []).map((stop) => ({
-        source: String(stop?.station?.source || ''),
-        state: String(stop?.station?.state || ''),
-        station_id: String(stop?.station?.station_id || ''),
-        station_name: String(stop?.station?.station_name || ''),
-        address: String(stop?.station?.address || ''),
-        latitude: Number(stop?.station?.latitude),
-        longitude: Number(stop?.station?.longitude),
-        price: Number(stop?.price_cents_per_l || 0),
-        litresPurchased: Number(stop?.purchase_l || 0),
-        purchaseCents: Number(stop?.purchase_cost_cents || 0),
-        fuelAfterArrival: Number(stop?.arrival_fuel_l || 0),
-        departureFuelL: Number(stop?.departure_fuel_l || 0),
-        classification: String(stop?.classification || ''),
-        reasonCodes: Array.isArray(stop?.reason_codes) ? stop.reason_codes : [],
-        marginalNetSavingCents: Number(stop?.marginal_net_saving_cents || 0),
-        additionalFuelL: Number(stop?.additional_fuel_l || 0),
-        additionalFuelCostCents: Number(stop?.additional_fuel_cost_cents || 0),
-        additionalFuelNextStop: String(stop?.additional_fuel_next_stop || ''),
-        additionalFuelLegIndex: Number(stop?.additional_fuel_leg_index || 0),
-    }));
+    const stops = (Array.isArray(payload?.stops) ? payload.stops : []).map((stop) => {
+        const rawLegIndex = stop?.itinerary_leg_index;
+        const itineraryLegIndex = rawLegIndex === null || rawLegIndex === undefined
+            ? null
+            : Number(rawLegIndex);
+        return {
+            nodeId: String(stop?.node_id || ''),
+            sequence: Number(stop?.sequence || 0),
+            itineraryLegIndex: Number.isInteger(itineraryLegIndex) && itineraryLegIndex >= 0
+                ? itineraryLegIndex
+                : null,
+            routeProgressKm: Number(stop?.route_progress_km || 0),
+            source: String(stop?.station?.source || ''),
+            state: String(stop?.station?.state || ''),
+            station_id: String(stop?.station?.station_id || ''),
+            station_name: String(stop?.station?.station_name || ''),
+            address: String(stop?.station?.address || ''),
+            latitude: Number(stop?.station?.latitude),
+            longitude: Number(stop?.station?.longitude),
+            price: Number(stop?.price_cents_per_l || 0),
+            litresPurchased: Number(stop?.purchase_l || 0),
+            purchaseCents: Number(stop?.purchase_cost_cents || 0),
+            fuelAfterArrival: Number(stop?.arrival_fuel_l || 0),
+            departureFuelL: Number(stop?.departure_fuel_l || 0),
+            classification: String(stop?.classification || ''),
+            reasonCodes: Array.isArray(stop?.reason_codes) ? stop.reason_codes : [],
+            marginalNetSavingCents: Number(stop?.marginal_net_saving_cents || 0),
+            additionalFuelL: Number(stop?.additional_fuel_l || 0),
+            additionalFuelCostCents: Number(stop?.additional_fuel_cost_cents || 0),
+            additionalFuelNextStop: String(stop?.additional_fuel_next_stop || ''),
+        };
+    });
     const additionalFuelRequirements = Array.isArray(payload?.additional_fuel_requirements)
         ? payload.additional_fuel_requirements
         : [];
@@ -3003,6 +1781,9 @@ function routeOptimizerPlanFromResponse(
             classification: stop.classification,
             reasonCodes: stop.reasonCodes,
             marginalNetSavingCents: stop.marginalNetSavingCents,
+            nodeId: stop.nodeId,
+            itineraryLegIndex: stop.itineraryLegIndex,
+            routeProgressKm: stop.routeProgressKm,
         })),
     ];
 
@@ -3017,7 +1798,6 @@ function routeOptimizerPlanFromResponse(
             destination: route.to,
             routePieces,
             stops,
-            excludedStations: [],
             remainingFuelL: Number(summary.ending_fuel_l || 0),
             reserveNote: null,
         }],
@@ -3037,7 +1817,6 @@ function routeOptimizerPlanFromResponse(
             : 0,
         fuelRemainingL: Number(summary.ending_fuel_l || 0),
         reserveNote: null,
-        excludedStations: [],
         warnings: Array.isArray(payload?.warnings) ? payload.warnings : [],
     };
 }
@@ -3079,24 +1858,6 @@ async function buildOptimizedRoutePlan(
         tankCapacityL,
         economyLPer100km
     );
-}
-
-function buildRouteSequence(origin, destinations) {
-    const nodes = [origin, ...destinations];
-    if (routeReturnMode() === 'one-way') {
-        return nodes;
-    }
-
-    if (routeReturnMode() === 'reverses') {
-        if (destinations.length > 0) {
-            nodes.push(...destinations.slice(0, -1).reverse());
-        }
-        nodes.push(origin);
-        return nodes;
-    }
-
-    nodes.push(origin);
-    return nodes;
 }
 
 function renderRouteSummary(plan) {
@@ -3197,20 +1958,21 @@ function renderRouteMap(plan) {
             });
         });
         segment.stops.forEach((stop, stopIndex) => {
+            const stopLegNumber = routeFuelStopLegNumber(stop, segmentIndex + 1);
             markerFeatures.push({
                 type: 'Feature',
                 properties: {
                     kind: 'fuel-stop',
                     label: routeFuelStopLabel(stop),
                     sublabel: `${Number(stop.litresPurchased || 0).toFixed(1)} L bought`,
-                    segment_index: segmentIndex + 1,
+                    segment_index: stopLegNumber,
                     stop_index: stopIndex + 1,
                     price: stop.price,
                     price_text: routeFuelPriceText(stop.price),
                     station_name: stop.station_name || '',
                     address: stop.address || '',
                     station_key: stationKey(stop),
-                    color: palette[segmentIndex % palette.length],
+                    color: palette[(stopLegNumber - 1) % palette.length],
                 },
                 geometry: {
                     type: 'Point',
@@ -3665,6 +2427,14 @@ function renderFuelStopFinderMap(plan) {
 
 function renderRouteBreakdownInto(targetElement, plan) {
     const rows = [];
+    const optimizerStopProgressByNodeId = new Map(
+        (Array.isArray(plan?.optimizerResponse?.stops) ? plan.optimizerResponse.stops : [])
+            .map((stop) => [
+                String(stop?.node_id || ''),
+                Number(stop?.route_progress_km || 0),
+            ])
+            .filter(([nodeId]) => nodeId !== '')
+    );
     if (plan.optimizerResponse) {
         const corridor = plan.optimizerResponse.corridor || {};
         const alternatives = Array.isArray(plan.optimizerResponse.alternatives)
@@ -3707,11 +2477,13 @@ function renderRouteBreakdownInto(targetElement, plan) {
             : '';
         const legRow = {
             leg: Number(leg.index || 0) + 1,
-            type: 'Planned stop',
+            type: 'Leg Destination',
             instruction: String(leg?.target?.label || `Itinerary stop ${Number(leg.index || 0) + 1}`),
             distance: formatRouteDistance(Number(leg.distance_m || 0)),
             duration: formatRouteDuration(Number(leg.duration_s || 0)),
             details: leg?.target?.physical_stop === false ? 'Route waypoint' : 'Planned stop',
+            routeOrder: Number(leg.end_m || 0) / 1000,
+            typeOrder: 3,
         };
         legRow.details += fuelDetails;
         rows.push(legRow);
@@ -3728,6 +2500,9 @@ function renderRouteBreakdownInto(targetElement, plan) {
             duration: '-',
             details: `${String(requirement.purchase_instruction || '')} Additional fuel cost: $${(additionalFuelCostCents / 100).toFixed(2)} at ${routeFuelPriceText(requirement.price_cents_per_l)}/L. Leg fuel cost including the additional fuel: $${(legFuelCostCents / 100).toFixed(2)}.`,
             additionalFuelRequired: true,
+            routeOrder: optimizerStopProgressByNodeId.get(String(requirement.station_node_id || ''))
+                ?? Number.POSITIVE_INFINITY,
+            typeOrder: 2,
         });
     });
     plan.segments.forEach((segment, segmentIndex) => {
@@ -3747,13 +2522,16 @@ function renderRouteBreakdownInto(targetElement, plan) {
                 if (piece.recommendedOnly) {
                     const detourKm = Number(piece.detourKm || routeFuelCandidateOffRouteKm(piece.station) || 0);
                     const scope = String(piece.selectionScope || 'strict');
+                    const stationRegion = routeFuelStationRegionText(piece.station);
                     rows.push({
-                        leg: segmentIndex + 1,
+                        leg: routeFuelStopLegNumber(piece, segmentIndex + 1),
                         type: 'Fuel stop',
-                        instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
+                        instruction: `${piece.station.station_name}${stationRegion !== '' ? ` at ${stationRegion}` : ''} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',
                         details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
+                        routeOrder: Number(piece.routeProgressKm || 0),
+                        typeOrder: 1,
                     });
                 } else {
                     const departureTopUp = Array.isArray(piece.reasonCodes)
@@ -3770,13 +2548,16 @@ function renderRouteBreakdownInto(targetElement, plan) {
                     const reasonDetails = Array.isArray(piece.reasonCodes) && piece.reasonCodes.length > 0
                         ? `, ${piece.reasonCodes.map((reason) => String(reason).replace(/_/g, ' ')).join(', ')}`
                         : '';
+                    const stationRegion = routeFuelStationRegionText(piece.station);
                     rows.push({
-                        leg: segmentIndex + 1,
+                        leg: routeFuelStopLegNumber(piece, segmentIndex + 1),
                         type: departureTopUp ? 'Departure top-up' : 'Fuel stop',
-                        instruction: `${piece.station.station_name} at ${piece.station.state} ${piece.station.source.toUpperCase()} - ${routeFuelPriceText(piece.station.price)}/L`,
+                        instruction: `${piece.station.station_name}${stationRegion !== '' ? ` at ${stationRegion}` : ''} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',
                         details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
+                        routeOrder: Number(piece.routeProgressKm || 0),
+                        typeOrder: 1,
                     });
                 }
             }
@@ -3792,6 +2573,28 @@ function renderRouteBreakdownInto(targetElement, plan) {
         return;
     }
 
+    const displayRows = plan.optimizerResponse
+        ? rows
+            .map((row, originalIndex) => ({ ...row, originalIndex }))
+            .sort((left, right) => {
+                const leftLeg = Number(left.leg);
+                const rightLeg = Number(right.leg);
+                const leftHasLeg = Number.isInteger(leftLeg) && leftLeg > 0;
+                const rightHasLeg = Number.isInteger(rightLeg) && rightLeg > 0;
+                if (leftHasLeg !== rightHasLeg) {
+                    return leftHasLeg ? 1 : -1;
+                }
+                if (!leftHasLeg) {
+                    return left.originalIndex - right.originalIndex;
+                }
+                return (leftLeg - rightLeg)
+                    || (Number(left.routeOrder ?? Number.POSITIVE_INFINITY)
+                        - Number(right.routeOrder ?? Number.POSITIVE_INFINITY))
+                    || (Number(left.typeOrder || 0) - Number(right.typeOrder || 0))
+                    || (left.originalIndex - right.originalIndex);
+            })
+        : rows;
+
     targetElement.innerHTML = `
         <table class="route-table">
             <thead>
@@ -3805,7 +2608,7 @@ function renderRouteBreakdownInto(targetElement, plan) {
                 </tr>
             </thead>
             <tbody>
-                ${rows.map((row) => `
+                ${displayRows.map((row) => `
                     <tr class="${row.additionalFuelRequired ? 'route-breakdown-row route-breakdown-additional' : (row.type === 'Fuel stop' ? 'route-breakdown-row route-breakdown-stop' : 'route-breakdown-row')}">
                         <td>${escapeHtml(String(row.leg))}</td>
                         <td>${escapeHtml(row.type)}</td>
@@ -3870,12 +2673,6 @@ function restoreRoutePlannerState(state) {
     if (!['practical_least_cost', 'fewer_stops'].includes(routeOptimizationMode.value)) {
         routeOptimizationMode.value = 'practical_least_cost';
     }
-    if (routeUseOptimizer) {
-        routeUseOptimizer.checked = typeof state.useOptimizer === 'boolean'
-            ? state.useOptimizer
-            : routeOptimizerV2Default;
-    }
-    syncRouteOptimizerControls();
     syncRouteVehicleInputBounds();
     routeReturnOneWay.checked = String(state.returnMode || 'direct') === 'one-way';
     routeReturnReverses.checked = String(state.returnMode || 'direct') === 'reverses';
@@ -3886,8 +2683,100 @@ function restoreRoutePlannerState(state) {
         routeFuelType.value = String(state.fuelValue || '').trim();
     }
     persistFuelLabel(routeFuelSelectedLabel());
-    routeStatus.textContent = state.planned ? 'Restored last planned route.' : 'Restored saved route inputs.';
+    setRouteStatusText(state.planned ? 'Restored last planned route.' : 'Restored saved route inputs.');
     return true;
+}
+
+function setRouteStatusText(message) {
+    routeStatus.classList.remove('route-plan-status');
+    routeStatus.classList.remove('route-status-warning');
+    routeStatus.classList.remove('route-status-error');
+    routeStatus.textContent = String(message || '');
+}
+
+function routeStatusSentence(message) {
+    const text = String(message || '').trim();
+    if (text === '' || /[.!?]$/.test(text)) {
+        return text;
+    }
+    return `${text}.`;
+}
+
+function routeStatusList(items) {
+    const values = items.map((item) => String(item));
+    if (values.length < 2) {
+        return values[0] || '';
+    }
+    if (values.length === 2) {
+        return `${values[0]} and ${values[1]}`;
+    }
+    return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function renderRoutePlanStatus(plan, plannedLegCount, returnMode, hadContingencyStop) {
+    const requirements = Array.isArray(plan.additionalFuelRequirements)
+        ? plan.additionalFuelRequirements
+        : [];
+    const requirementWarnings = new Set();
+    requirements.forEach((requirement) => {
+        requirementWarnings.add(String(requirement?.message || '').trim());
+        requirementWarnings.add(String(requirement?.purchase_instruction || '').trim());
+    });
+    const warnings = Array.from(new Set(
+        (Array.isArray(plan.warnings) ? plan.warnings : [])
+            .map((warning) => String(warning || '').trim())
+            .filter((warning) => warning !== '' && !requirementWarnings.has(warning))
+    ));
+    const shortPurchaseStops = [];
+    const otherWarnings = [];
+    warnings.forEach((warning) => {
+        const match = warning.match(
+            /^Stop (\d+) buys less than the preferred minimum because it is required for route safety\.?$/
+        );
+        if (match) {
+            shortPurchaseStops.push(Number(match[1]));
+        } else {
+            otherWarnings.push(warning);
+        }
+    });
+    shortPurchaseStops.sort((left, right) => left - right);
+
+    const paragraphs = [
+        `<p class="route-status-summary">${escapeHtml(`Planned ${plannedLegCount} legs using ${returnMode}.`)}</p>`,
+    ];
+    if (hadContingencyStop) {
+        paragraphs.push('<p>Contingency refill used on one or more legs.</p>');
+    }
+    if (plan.reserveNote?.message) {
+        paragraphs.push(`<p>${escapeHtml(routeStatusSentence(plan.reserveNote.message))}</p>`);
+    }
+    requirements.forEach((requirement) => {
+        const message = routeStatusSentence(requirement?.message);
+        const instruction = routeStatusSentence(requirement?.purchase_instruction);
+        paragraphs.push(
+            `<p><strong>${escapeHtml(message)}</strong>${instruction !== '' ? ` ${escapeHtml(instruction)}` : ''}</p>`
+        );
+    });
+    if (shortPurchaseStops.length > 0) {
+        const stopLabel = shortPurchaseStops.length === 1
+            ? `Stop ${shortPurchaseStops[0]} buys`
+            : `Stops ${routeStatusList(shortPurchaseStops)} buy`;
+        const pronoun = shortPurchaseStops.length === 1 ? 'it is' : 'they are';
+        paragraphs.push(
+            `<p>${escapeHtml(`${stopLabel} less than the preferred minimum because ${pronoun} required for route safety.`)}</p>`
+        );
+    }
+    otherWarnings.forEach((warning) => {
+        paragraphs.push(`<p>${escapeHtml(routeStatusSentence(warning))}</p>`);
+    });
+
+    routeStatus.classList.add('route-plan-status');
+    routeStatus.innerHTML = paragraphs.join('');
+    return requirements.length > 0
+        || shortPurchaseStops.length > 0
+        || otherWarnings.length > 0
+        || Boolean(plan.reserveNote)
+        || hadContingencyStop;
 }
 
 async function planRoute() {
@@ -3899,41 +2788,34 @@ async function planRoute() {
     const fuelEconomy = routeFuelDefaultEconomyValue();
 
     if (originValue === '') {
-        routeStatus.textContent = 'Origin is required.';
+        setRouteStatusText('Origin is required.');
         return;
     }
     if (destinationValues.length === 0) {
-        routeStatus.textContent = 'At least one destination is required.';
+        setRouteStatusText('At least one destination is required.');
         return;
     }
     if (tankCapacity <= 0 || fuelEconomy <= 0) {
-        routeStatus.textContent = 'Tank capacity and fuel economy must be greater than zero.';
+        setRouteStatusText('Tank capacity and fuel economy must be greater than zero.');
         return;
     }
-    if (
-        routeOptimizerSelected()
-        && (startingFuel < 0 || startingFuel > tankCapacity)
-    ) {
-        routeStatus.textContent = 'Starting fuel must be between zero and tank capacity.';
+    if (startingFuel < 0 || startingFuel > tankCapacity) {
+        setRouteStatusText('Starting fuel must be between zero and tank capacity.');
         return;
     }
-    if (
-        routeOptimizerSelected()
-        && (reserveFuel < 0 || reserveFuel >= tankCapacity)
-    ) {
-        routeStatus.textContent = 'Required reserve must be non-negative and less than tank capacity.';
+    if (reserveFuel < 0 || reserveFuel >= tankCapacity) {
+        setRouteStatusText('Fuel reserve before refill must be non-negative and less than tank capacity.');
         return;
     }
 
     routePlan.disabled = true;
-    routeStatus.textContent = 'Resolving locations and building route legs...';
+    setRouteStatusText('Resolving locations and building route legs...');
     routeStatus.classList.remove('route-status-warning');
     routeStatus.classList.remove('route-status-error');
     routeSummary.innerHTML = renderRouteEmpty('Planning route...');
     routeMap.innerHTML = renderRouteEmpty('Resolving locations...');
     routeMapLegend.innerHTML = '';
     routeLegs.innerHTML = renderRouteEmpty('Building legs...');
-    routeExcludedStatus.textContent = '';
 
     try {
         const origin = await resolveRouteLocation(originValue);
@@ -3945,26 +2827,18 @@ async function planRoute() {
                 throw new Error(`Geocoding failed for "${value}": ${error.message}`);
             }
         }
-        const plan = routeOptimizerSelected()
-            ? await buildOptimizedRoutePlan(
-                origin,
-                destinations,
-                routeFuelQueryLabel(),
-                tankCapacity,
-                startingFuel,
-                fuelEconomy,
-                reserveFuel
-            )
-            : await buildRoutePlan(
-                buildRouteSequence(origin, destinations),
-                routeFuelQueryLabel(),
-                tankCapacity,
-                fuelEconomy
-            );
+        const plan = await buildOptimizedRoutePlan(
+            origin,
+            destinations,
+            routeFuelQueryLabel(),
+            tankCapacity,
+            startingFuel,
+            fuelEconomy,
+            reserveFuel
+        );
         renderRouteSummary(plan);
         renderRouteMap(plan);
         renderRouteBreakdown(plan);
-        routeExcludedStatus.textContent = formatRouteExcludedStations(plan.excludedStations);
         saveRoutePlannerState(true);
 
         const returnMode = routeReturnMode() === 'reverses'
@@ -3973,28 +2847,25 @@ async function planRoute() {
                 ? 'One Way'
                 : 'Return direct to origin';
         const hadContingencyStop = plan.segments.some((segment) => Array.isArray(segment.stops) && segment.stops.some((stop) => stop.contingencyFallback));
-        const contingencyMessage = hadContingencyStop ? ' Contingency refill used on one or more legs.' : '';
-        const warningMessage = Array.isArray(plan.warnings) && plan.warnings.length > 0
-            ? ` ${plan.warnings.join(' ')}`
-            : '';
         const plannedLegCount = Number(plan.itineraryLegCount || plan.segments.length);
+        const hasRouteWarnings = renderRoutePlanStatus(
+            plan,
+            plannedLegCount,
+            returnMode,
+            hadContingencyStop
+        );
         routeStatus.classList.toggle(
             'route-status-warning',
-            Boolean(plan.reserveNote) || warningMessage !== ''
+            hasRouteWarnings
         );
-        routeStatus.textContent = plan.reserveNote
-            ? `Planned ${plannedLegCount} legs using ${returnMode}.${contingencyMessage} ${plan.reserveNote.message}${warningMessage}`
-            : `Planned ${plannedLegCount} legs using ${returnMode}.${contingencyMessage}${warningMessage}`;
     } catch (error) {
-        routeStatus.classList.remove('route-status-warning');
-        routeStatus.classList.add('route-status-error');
         const message = String(error?.message || error || 'An unexpected error occurred.');
-        routeStatus.textContent = `Route planning failed: ${message}`;
+        setRouteStatusText(`Route planning failed: ${message}`);
+        routeStatus.classList.add('route-status-error');
         routeSummary.innerHTML = renderRouteError(message);
         routeMap.innerHTML = renderRouteError(message);
         routeMapLegend.innerHTML = '';
         routeLegs.innerHTML = renderRouteError(message);
-        routeExcludedStatus.textContent = '';
     } finally {
         routePlan.disabled = false;
     }
@@ -4009,10 +2880,6 @@ function resetRoutePlanner(options = {}) {
     routeFuelReserve.value = String(routePlannerDefaultReserveL);
     routeFuelEconomy.value = String(routePlannerDefaultFuelEconomyLPer100km);
     routeOptimizationMode.value = 'practical_least_cost';
-    if (routeUseOptimizer) {
-        routeUseOptimizer.checked = routeOptimizerV2Default;
-    }
-    syncRouteOptimizerControls();
     syncRouteVehicleInputBounds();
     routeReturnDirect.checked = true;
     routeReturnReverses.checked = false;
@@ -4020,11 +2887,10 @@ function resetRoutePlanner(options = {}) {
     syncRouteReturnModeControls();
     routeStatus.classList.remove('route-status-warning');
     routeStatus.classList.remove('route-status-error');
-    routeExcludedStatus.textContent = '';
     routeDestinationList.innerHTML = '';
     routeDestinationCounter = 0;
     addRouteDestination('');
-    routeStatus.textContent = 'Enter a trip to build a route.';
+    setRouteStatusText('Enter a trip to build a route.');
     routeSummary.innerHTML = renderRouteEmpty('No route planned yet.');
     routeMap.innerHTML = renderRouteEmpty('No route planned yet.');
     routeMapLegend.innerHTML = '';
@@ -4047,7 +2913,7 @@ function loadRouteTestCities() {
     routeStartingFuel.value = '60';
     routeFuelReserve.value = '6';
     routeFuelEconomy.value = '12';
-    routeStatus.textContent = 'Loaded test cities: Cairns -> Birdsville -> Brisbane.';
+    setRouteStatusText('Loaded test cities: Cairns -> Birdsville -> Brisbane.');
     planRoute();
 }
 
@@ -5398,11 +4264,6 @@ routeReturnDirect.addEventListener('change', syncRouteReturnModeControls);
 routeReturnReverses.addEventListener('change', syncRouteReturnModeControls);
 routeReturnOneWay.addEventListener('change', syncRouteReturnModeControls);
 routeTankCapacity.addEventListener('input', syncRouteVehicleInputBounds);
-routeUseOptimizer?.addEventListener('change', () => {
-    syncRouteOptimizerControls();
-    saveRoutePlannerState(false);
-});
-
 fuelStopFinderPlan.addEventListener('click', planFuelStopFinder);
 fuelStopFinderReset.addEventListener('click', resetFuelStopFinder);
 fuelStopFinderOrigin.addEventListener('input', () => saveFuelStopFinderState(false));

@@ -505,9 +505,13 @@ function fuelauParseCoordinates(string $coordinates): array
     return $normalized;
 }
 
-function fuelauRoutePlan(array $coordinates, bool $steps = true): array
+function fuelauRoutePlan(
+    array $coordinates,
+    bool $steps = true,
+    string $overview = 'simplified',
+): array
 {
-    return fuelauRoutePlanRequest($coordinates, $steps, 1);
+    return fuelauRoutePlanRequest($coordinates, $steps, 1, $overview);
 }
 
 function fuelauAlternativeRoutePlan(
@@ -519,7 +523,7 @@ function fuelauAlternativeRoutePlan(
         throw new InvalidArgumentException('Alternative route count must be between 1 and 3.');
     }
 
-    return fuelauRoutePlanRequest($coordinates, $steps, $maximumRoutes);
+    return fuelauRoutePlanRequest($coordinates, $steps, $maximumRoutes, 'simplified');
 }
 
 /**
@@ -530,8 +534,13 @@ function fuelauRoutePlanRequest(
     array $coordinates,
     bool $steps,
     int $maximumRoutes,
+    string $overview,
 ): array
 {
+    if (!in_array($overview, ['simplified', 'full'], true)) {
+        throw new InvalidArgumentException('Route overview must be simplified or full.');
+    }
+
     $encodedCoordinates = implode(
         ';',
         array_map(
@@ -544,7 +553,7 @@ function fuelauRoutePlanRequest(
         fuelauHttpBuildUrl(fuelauServiceBaseUrl('osrm') . "/route/v1/driving/{$encodedCoordinates}", [
             'alternatives' => $maximumRoutes > 1 ? (string) $maximumRoutes : 'false',
             'geometries' => 'geojson',
-            'overview' => 'simplified',
+            'overview' => $overview,
             'steps' => $steps ? 'true' : 'false',
         ]),
         [],

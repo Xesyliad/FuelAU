@@ -252,20 +252,20 @@ fuelauTest('rate limiter exposes a typed retry interval', static function (): vo
     throw new RuntimeException('The second request must be rate limited');
 });
 
-fuelauTest('route planner uses bounded request budgets', static function (): void {
+fuelauTest('fuel stop finder uses bounded request budgets', static function (): void {
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
 
     preg_match('/const routePlannerRouteBudgetLimit = (\d+);/', $source, $routeMatch);
     preg_match('/const routePlannerFuelBudgetLimit = (\d+);/', $source, $fuelMatch);
 
-    fuelauAssertTrue(isset($routeMatch[1], $fuelMatch[1]), 'Route planner budgets must be declared');
+    fuelauAssertTrue(isset($routeMatch[1], $fuelMatch[1]), 'Fuel stop finder budgets must be declared');
     fuelauAssertTrue((int) $routeMatch[1] >= 60, 'Route lookup budget must accommodate transcontinental return trips');
     fuelauAssertTrue((int) $routeMatch[1] <= 80, 'Route lookup budget must be at most 80');
     fuelauAssertTrue((int) $fuelMatch[1] <= 50, 'Fuel lookup budget must be at most 50');
 });
 
-fuelauTest('route optimizer default delegates complete itinerary planning to the backend', static function (): void {
+fuelauTest('route planner always delegates complete itinerary planning to the backend optimizer', static function (): void {
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
     fuelauAssertTrue(
@@ -273,13 +273,12 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         'The version one browser path must call the backend optimizer',
     );
     fuelauAssertTrue(
-        str_contains($source, 'const plan = routeOptimizerSelected()'),
-        'The backend optimizer must remain behind feature-gated user selection',
-    );
-    fuelauAssertTrue(
-        str_contains($source, 'routeUseOptimizer.checked = routeOptimizerV2Default')
-            && str_contains($source, 'useOptimizer: routeOptimizerSelected()'),
-        'The internal optimizer opt-in must default safely and persist explicitly',
+        str_contains($source, 'const plan = await buildOptimizedRoutePlan(')
+            && !str_contains($source, 'routeOptimizerSelected')
+            && !str_contains($source, 'routeUseOptimizer')
+            && !str_contains($source, 'async function buildRoutePlan(')
+            && !str_contains($source, 'function buildRouteSequence('),
+        'The backend optimizer must be the only route-planning engine',
     );
     fuelauAssertTrue(
         str_contains($source, 'destinations: destinations.map(routeOptimizerLocation)'),
@@ -289,6 +288,10 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
         str_contains($source, 'starting_fuel_l: startingFuelL')
             && str_contains($source, 'reserve_l: reserveL'),
         'Starting fuel and terminal reserve must be server-owned optimizer inputs',
+    );
+    fuelauAssertTrue(
+        str_contains($source, "type: 'Leg Destination'"),
+        'The optimized route breakdown must identify itinerary endpoints as leg destinations',
     );
     fuelauAssertTrue(
         str_contains($source, "details: leg?.target?.physical_stop === false ? 'Route waypoint' : 'Planned stop'"),
@@ -308,13 +311,28 @@ fuelauTest('route optimizer default delegates complete itinerary planning to the
             && str_contains($source, "', combined with departure'"),
         'Origin-proximate fuel must render as a departure top-up',
     );
+    fuelauAssertTrue(
+        str_contains($source, 'leg: routeFuelStopLegNumber(piece, segmentIndex + 1)')
+            && str_contains($source, 'itineraryLegIndex: stop.itineraryLegIndex'),
+        'Optimized fuel stops must retain and render their itinerary leg',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'function routeFuelStationRegionText(station)')
+            && str_contains($source, 'fractionDigits'),
+        'Fuel-stop labels must deduplicate regions and preserve fractional-cent prices',
+    );
+    fuelauAssertTrue(
+        str_contains($source, 'function renderRoutePlanStatus(')
+            && str_contains($source, '<p class="route-status-summary">')
+            && str_contains($source, 'shortPurchaseStops')
+            && !str_contains($source, "plan.warnings.join(' ')"),
+        'Route status must render structured paragraphs and group repeated safety warnings',
+    );
 });
 
-fuelauTest('route optimizer preview control obeys enabled and default flags', static function (): void {
-    $render = static function (bool $enabled, bool $default): string {
+fuelauTest('trip inputs separate equal vehicle controls from itinerary inputs', static function (): void {
+    $render = static function (): string {
         $containerManagementEnabled = false;
-        $routeOptimizerV2Enabled = $enabled;
-        $routeOptimizerV2Default = $default;
         $cspNonce = 'test-nonce';
         $mapConfig = [];
         ob_start();
@@ -322,23 +340,34 @@ fuelauTest('route optimizer preview control obeys enabled and default flags', st
 
         return (string) ob_get_clean();
     };
-    $disabled = $render(false, false);
-    $preview = $render(true, false);
-    $default = $render(true, true);
+    $page = $render();
+    $vehiclePosition = strpos($page, '<h3>Vehicle Configuration</h3>');
+    $originPosition = strpos($page, 'for="route-origin"');
+    $destinationHelpPosition = strpos(
+        $page,
+        'Add one or more stops, then reorder them before planning.',
+    );
 
     fuelauAssertTrue(
-        !str_contains($disabled, 'id="route-use-optimizer"'),
-        'The preview control must not render when the backend feature is disabled',
+        $vehiclePosition !== false
+            && $originPosition !== false
+            && $destinationHelpPosition !== false
+            && $vehiclePosition < $originPosition
+            && $originPosition < $destinationHelpPosition,
+        'Vehicle configuration must precede the origin and destination editor',
     );
     fuelauAssertTrue(
-        str_contains($preview, 'id="route-use-optimizer"')
-            && str_contains($preview, 'data-route-optimizer-field hidden'),
-        'Enabled default-off mode must expose opt-in while hiding optimizer fields',
+        str_contains($page, 'class="route-vehicle-grid"')
+            && str_contains($page, 'id="route-starting-fuel"')
+            && str_contains($page, 'id="route-fuel-reserve"')
+            && str_contains($page, 'id="route-optimization-mode"'),
+        'Vehicle configuration must expose every optimizer vehicle input in one grid',
     );
     fuelauAssertTrue(
-        preg_match('/id="route-use-optimizer"\\s+checked/', $default) === 1
-            && str_contains($default, 'data-route-optimizer-field>'),
-        'Enabled default-on mode must select the optimizer and reveal its fields',
+        !str_contains($page, 'id="route-use-optimizer"')
+            && !str_contains($page, 'data-route-optimizer-field')
+            && !str_contains($page, 'Route engine'),
+        'The retired route-engine preview control must not render',
     );
 });
 
@@ -1025,6 +1054,79 @@ fuelauTest('candidate road access is measured in bounded OSRM table chunks', sta
     fuelauAssertSame(210, $rows[1]['access_duration_s']);
 });
 
+fuelauTest('road access shortlist preserves a physical-range station backbone', static function (): void {
+    $corridor = new FuelauRouteCorridor(
+        distanceM: 1_000_000,
+        durationS: 36_000,
+        geometry: [
+            ['lat' => -20.0, 'lon' => 130.0],
+            ['lat' => -20.0, 'lon' => 140.0],
+        ],
+    );
+    $station = static fn (
+        string $id,
+        string $name,
+        float $longitude,
+        float $price,
+    ): array => [
+        'source' => 'qld',
+        'state' => 'QLD',
+        'station_id' => $id,
+        'station_name' => $name,
+        'fuel_code' => 'DL',
+        'latitude' => -20.0,
+        'longitude' => $longitude,
+        'price' => $price,
+        'price_status' => 'fresh',
+    ];
+    $rows = (new FuelauCandidateRoadAccessMeasurer())->measure(
+        $corridor,
+        [
+            $station('mount-isa', 'Mount Isa', 132.0, 200),
+            $station('camooweal', 'Camooweal', 134.0, 300),
+            $station('barkly', 'Barkly Homestead', 136.5, 300),
+            $station('threeways', 'Threeways', 138.5, 200),
+        ],
+        static function (array $coordinates): array {
+            $count = count($coordinates);
+            $distances = array_fill(0, $count, array_fill(0, $count, null));
+            $durations = array_fill(0, $count, array_fill(0, $count, null));
+            for ($index = 0; $index < $count; $index++) {
+                $distances[$index][$index] = 0;
+                $durations[$index][$index] = 0;
+            }
+            for ($index = 0; $index < $count; $index += 3) {
+                $distances[$index][$index + 1] = 0;
+                $distances[$index + 1][$index + 2] = 0;
+                $distances[$index][$index + 2] = 0;
+                $durations[$index][$index + 1] = 0;
+                $durations[$index + 1][$index + 2] = 0;
+                $durations[$index][$index + 2] = 0;
+            }
+
+            return ['distances' => $distances, 'durations' => $durations];
+        },
+        maximumCandidates: 2,
+        vehicle: new FuelauOptimizerVehicle(60, 60, 5, 12),
+    );
+
+    fuelauAssertSame(
+        ['Mount Isa', 'Barkly Homestead'],
+        array_column($rows, 'station_name'),
+        'Expensive range-safety stations must be protected before price ranking',
+    );
+    $input = (new FuelauFixedCorridorCandidateAdapter())->build($corridor, $rows);
+    $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+        $input->nodes,
+        new FuelauOptimizerVehicle(60, 60, 5, 12),
+        new FuelauOptimizerPolicy(
+            minimumDiscretionaryPurchaseL: 0,
+            minimumNetSavingCents: 0,
+        ),
+    );
+    fuelauAssertSame(60.0, $adjusted->effectiveFuelCapacityL);
+});
+
 fuelauTest('road access shortlist preserves bounded coverage on transcontinental routes', static function (): void {
     $corridor = new FuelauRouteCorridor(
         distanceM: 4_500_000,
@@ -1295,6 +1397,95 @@ fuelauTest('capacity fallback bounds transcontinental station graphs', static fu
     );
 });
 
+fuelauTest('expensive reachable stations do not trigger auxiliary fuel', static function (): void {
+    $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+        [
+            new FuelauOptimizerNode('origin', 0),
+            FuelauOptimizerNode::station('expensive-1', 500_000, 999.9),
+            FuelauOptimizerNode::station('expensive-2', 1_000_000, 999.9),
+            new FuelauOptimizerNode('destination', 1_500_000),
+        ],
+        new FuelauOptimizerVehicle(60, 60, 5, 10),
+        new FuelauOptimizerPolicy(
+            minimumDiscretionaryPurchaseL: 0,
+            minimumNetSavingCents: 0,
+        ),
+    );
+
+    fuelauAssertSame(60.0, $adjusted->effectiveFuelCapacityL);
+    fuelauAssertSame(
+        ['expensive-1', 'expensive-2'],
+        array_map(
+            static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+            $adjusted->plan->purchases,
+        ),
+        'Physical reachability must take precedence over station price',
+    );
+});
+
+fuelauTest('auxiliary fuel bridges only the stationless gap', static function (): void {
+    $nodes = [
+        new FuelauOptimizerNode('origin', 0),
+        FuelauOptimizerNode::station('before-gap', 500_000, 200),
+        FuelauOptimizerNode::station('after-gap', 1_300_000, 200),
+        FuelauOptimizerNode::station('expensive-reachable', 1_800_000, 999.9),
+        new FuelauOptimizerNode('destination', 2_300_000),
+    ];
+    $vehicle = new FuelauOptimizerVehicle(60, 60, 5, 10);
+    $adjusted = (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+        $nodes,
+        $vehicle,
+        new FuelauOptimizerPolicy(
+            minimumDiscretionaryPurchaseL: 0,
+            minimumNetSavingCents: 0,
+        ),
+    );
+
+    fuelauAssertSame(85.0, $adjusted->effectiveFuelCapacityL);
+    fuelauAssertTrue(
+        in_array(
+            'expensive-reachable',
+            array_map(
+                static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+                $adjusted->plan->purchases,
+            ),
+            true,
+        ),
+        'The capacity fallback must use a reachable expensive stop instead of demanding more fuel',
+    );
+    fuelauAssertSame(
+        ['before-gap'],
+        array_values(array_map(
+            static fn (FuelauOptimizerPurchase $purchase): string => $purchase->nodeId,
+            array_filter(
+                $adjusted->plan->purchases,
+                static fn (FuelauOptimizerPurchase $purchase): bool =>
+                    $purchase->departureFuelL > $vehicle->tankCapacityL,
+            ),
+        )),
+        'Auxiliary fuel may only be loaded immediately before the stationless gap',
+    );
+
+    try {
+        (new FuelauAdditionalFuelOptimizer())->optimizePractical(
+            $nodes,
+            $vehicle,
+            new FuelauOptimizerPolicy(
+                maximumFuelOnlyStops: 2,
+                minimumDiscretionaryPurchaseL: 0,
+                minimumNetSavingCents: 0,
+            ),
+        );
+        throw new RuntimeException('A restrictive stop limit unexpectedly produced a plan');
+    } catch (FuelauRouteInfeasibleException $exception) {
+        fuelauAssertSame(
+            'The configured stop limit is below the minimum feasible stop count.',
+            $exception->getMessage(),
+            'A stop preference must not be converted into a larger auxiliary-fuel demand',
+        );
+    }
+});
+
 fuelauTest('complete itinerary optimizer buys outbound fuel with return-leg lookahead', static function (): void {
     $request = FuelauRouteOptimizationRequest::fromBody([
         'version' => 1,
@@ -1479,6 +1670,12 @@ fuelauTest('planned physical stop fuel is combined without consuming fuel-only a
     fuelauAssertSame(1, $response['summary']['combined_stop_count']);
     fuelauAssertSame(0, $response['summary']['required_stop_count']);
     fuelauAssertSame(0, $response['summary']['discretionary_stop_count']);
+    fuelauAssertSame(1, $response['stops'][0]['itinerary_leg_index']);
+    fuelauAssertSame(2, $response['stops'][0]['itinerary_leg_number']);
+    fuelauAssertSame(
+        'station:nsw:NSW:meal-stop-fuel:E10:visit:0',
+        $response['stops'][0]['node_id'],
+    );
     fuelauAssertSame(
         1,
         $result->input->candidatesByNodeId[
@@ -2092,6 +2289,18 @@ fuelauTest('live route planner selects a cheaper complete alternative corridor',
     $routeCalls = 0;
     $candidateCalls = 0;
     $tableCalls = 0;
+    $displayCalls = 0;
+    $displayCoordinates = [];
+    $fullDisplayGeometry = [
+        'type' => 'LineString',
+        'coordinates' => [
+            [150.0, -30.0],
+            [151.5, -30.6],
+            [153.0, -31.0],
+            [154.5, -30.6],
+            [156.0, -30.0],
+        ],
+    ];
     $planner = new FuelauLiveRoutePlanner(
         routeLoader: static function (array $coordinates) use (
             &$routeCalls,
@@ -2143,6 +2352,20 @@ fuelauTest('live route planner selects a cheaper complete alternative corridor',
             $fastestRoute,
             $alternativeRoute,
         ],
+        displayRouteLoader: static function (array $coordinates) use (
+            &$displayCalls,
+            &$displayCoordinates,
+            $fullDisplayGeometry,
+        ): array {
+            $displayCalls++;
+            $displayCoordinates = $coordinates;
+
+            return [
+                'distance' => 1,
+                'duration' => 1,
+                'geometry' => $fullDisplayGeometry,
+            ];
+        },
     );
 
     $response = $planner->plan($request);
@@ -2158,6 +2381,20 @@ fuelauTest('live route planner selects a cheaper complete alternative corridor',
     fuelauAssertSame(2, $candidateCalls);
     fuelauAssertSame(2, $tableCalls);
     fuelauAssertSame(2, $routeCalls);
+    fuelauAssertSame(1, $displayCalls);
+    fuelauAssertTrue(
+        count(array_filter(
+            $displayCoordinates,
+            static fn (array $coordinate): bool => $coordinate['lat'] < -30.4,
+        )) > 0,
+        'Full display geometry must retain the selected alternative corridor shaping',
+    );
+    fuelauAssertSame(
+        $fullDisplayGeometry,
+        $response['route_pieces'][0]['geometry'],
+    );
+    fuelauAssertSame(630_000, $response['summary']['route_distance_m']);
+    fuelauAssertSame('full', $response['diagnostics']['display_geometry']);
     fuelauAssertSame(6, $response['diagnostics']['evaluated_raw_candidate_count']);
     fuelauAssertSame('corridor-1', $response['alternatives'][0]['id']);
     fuelauAssertSame('feasible', $response['alternatives'][0]['status']);

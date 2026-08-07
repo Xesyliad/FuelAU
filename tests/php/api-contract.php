@@ -173,21 +173,16 @@ fuelauApiContractTest('route optimizer requires POST', static function () use ($
     fuelauApiAssertSame('method_not_allowed', $response['payload']['error'] ?? null, 'Optimizer method error');
 });
 
-fuelauApiContractTest('route optimizer is disabled by default', static function () use ($projectRoot, $configPath): void {
+fuelauApiContractTest('route optimizer validates requests without a feature flag', static function () use ($projectRoot, $configPath): void {
     $response = fuelauRunApiRequest($projectRoot, $configPath, 'POST', '/api/route/optimize');
-    fuelauApiAssertSame(503, $response['status'], 'Optimizer disabled status code');
-    fuelauApiAssertSame('optimizer_disabled', $response['payload']['error'] ?? null, 'Optimizer disabled error');
+    fuelauApiAssertSame(400, $response['status'], 'Optimizer validation status code');
+    fuelauApiAssertSame('invalid_request', $response['payload']['error'] ?? null, 'Optimizer validation error');
 });
 
-fuelauApiContractTest('enabled optimizer accepts a supported return itinerary', static function () use (
+fuelauApiContractTest('optimizer accepts a supported return itinerary', static function () use (
     $projectRoot,
     $configPath,
-    $config,
 ): void {
-    file_put_contents(
-        $configPath,
-        $config . PHP_EOL . "ROUTE_OPTIMIZER_V2_ENABLED=true\n",
-    );
     $response = fuelauRunApiRequest(
         $projectRoot,
         $configPath,

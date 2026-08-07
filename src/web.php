@@ -32,8 +32,6 @@ function fuelauApplyBrowserSecurityHeaders(string $cspNonce): void
 
 function fuelauRenderAppPage(
     bool $containerManagementEnabled,
-    bool $routeOptimizerV2Enabled,
-    bool $routeOptimizerV2Default,
     string $cspNonce
 ): void
 {
@@ -66,8 +64,6 @@ function fuelauRunWebApplication(): void
         if ($request->path === '/') {
             fuelauRenderAppPage(
                 fuelauConfigBool($config, 'CONTAINER_MANAGEMENT_ENABLED', false),
-                fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_ENABLED', false),
-                fuelauConfigBool($config, 'ROUTE_OPTIMIZER_V2_DEFAULT', false),
                 $cspNonce,
             );
             return;
