@@ -1,0 +1,359 @@
+{
+  "version": 8,
+  "name": "FuelAU Topographic",
+  "glyphs": "{fontstack}/{range}.pbf",
+  "sources": {
+    "australia": {
+      "type": "vector",
+      "url": "mbtiles://{australia}"
+    },
+    "terrain-dem": {
+      "type": "raster-dem",
+      "url": "mbtiles://{terrain}",
+      "encoding": "terrarium",
+      "tileSize": 256,
+      "maxzoom": 8
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#e9eef3"
+      }
+    },
+    {
+      "id": "terrain-hillshade",
+      "type": "hillshade",
+      "source": "terrain-dem",
+      "paint": {
+        "hillshade-exaggeration": 0.28,
+        "hillshade-shadow-color": "#2c3d4f",
+        "hillshade-highlight-color": "#ffffff",
+        "hillshade-accent-color": "#b9c7d4"
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "australia",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#9bc8e3"
+      }
+    },
+    {
+      "id": "boundary",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "boundary",
+      "paint": {
+        "line-color": "#8ea0b2",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          0,
+          0.4,
+          4,
+          1,
+          7,
+          2
+        ]
+      }
+    },
+    {
+      "id": "road-ferry-casing",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["==", "class", "ferry"],
+      "paint": {
+        "line-color": "#94a3b8",
+        "line-dasharray": [2, 2],
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          1.4,
+          10,
+          2.8,
+          14,
+          4.2
+        ]
+      }
+    },
+    {
+      "id": "road-ferry",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["==", "class", "ferry"],
+      "paint": {
+        "line-color": "#475569",
+        "line-dasharray": [2, 2],
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.6,
+          10,
+          1.4,
+          14,
+          2.4
+        ]
+      }
+    },
+    {
+      "id": "road-minor-casing",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "minor", "busway"],
+      "paint": {
+        "line-color": "#d7c7b7",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          8,
+          1,
+          11,
+          1.8,
+          14,
+          3.4,
+          16,
+          6
+        ]
+      }
+    },
+    {
+      "id": "road-minor",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "minor", "busway"],
+      "paint": {
+        "line-color": "#faf3e7",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          8,
+          0.4,
+          11,
+          0.9,
+          14,
+          2,
+          16,
+          4
+        ]
+      }
+    },
+    {
+      "id": "road-secondary-casing",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "secondary", "tertiary"],
+      "paint": {
+        "line-color": "#d7a96d",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          1.2,
+          8,
+          2.2,
+          12,
+          4.4,
+          16,
+          10
+        ]
+      }
+    },
+    {
+      "id": "road-secondary",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "secondary", "tertiary"],
+      "paint": {
+        "line-color": "#fee8c8",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.5,
+          8,
+          1.2,
+          12,
+          3,
+          16,
+          8
+        ]
+      }
+    },
+    {
+      "id": "road-primary-casing",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "primary", "trunk"],
+      "paint": {
+        "line-color": "#cf7f43",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          1.4,
+          8,
+          2.8,
+          12,
+          5.4,
+          16,
+          12
+        ]
+      }
+    },
+    {
+      "id": "road-primary",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["in", "class", "primary", "trunk"],
+      "paint": {
+        "line-color": "#ffd59d",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          0.7,
+          8,
+          1.7,
+          12,
+          4,
+          16,
+          10
+        ]
+      }
+    },
+    {
+      "id": "road-motorway-casing",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["==", "class", "motorway"],
+      "paint": {
+        "line-color": "#9b5b38",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          1.8,
+          8,
+          3.4,
+          12,
+          6.6,
+          16,
+          14
+        ]
+      }
+    },
+    {
+      "id": "road-motorway",
+      "type": "line",
+      "source": "australia",
+      "source-layer": "transportation",
+      "filter": ["==", "class", "motorway"],
+      "paint": {
+        "line-color": "#ffb26b",
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5,
+          1,
+          8,
+          2.2,
+          12,
+          5,
+          16,
+          12
+        ]
+      }
+    },
+    {
+      "id": "place-label",
+      "type": "symbol",
+      "source": "australia",
+      "source-layer": "place",
+      "minzoom": 0,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          ["get", "name_en"],
+          ["get", "name_int"],
+          ["get", "name"]
+        ],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          0,
+          12,
+          4,
+          16,
+          7,
+          20
+        ],
+        "text-anchor": "center",
+        "text-allow-overlap": false
+      },
+      "paint": {
+        "text-color": "#1f2937",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.2
+      }
+    },
+    {
+      "id": "road-labels",
+      "type": "symbol",
+      "source": "australia",
+      "source-layer": "transportation_name",
+      "minzoom": 10,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": [
+          "coalesce",
+          ["get", "ref"],
+          ["get", "name"]
+        ],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10,
+          10,
+          14,
+          12
+        ]
+      },
+      "paint": {
+        "text-color": "#334155",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1
+      }
+    }
+  ]
+}

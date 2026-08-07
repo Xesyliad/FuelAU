@@ -1,17 +1,66 @@
-\#recycle/
-.codex
-node_modules/
-vendor/
-.phpunit.cache/
-.php-cs-fixer.cache
-.env
-config/app.env
-config/mysql.env
-var/
+# Local AI/tooling metadata
+/.agents/
+/.codex/
+/.playwright-cli/
+
+# Local environment and secrets (keep sanitized examples)
+/.env*
+!/.env.sample
+/config/*.env
+!/config/*-sample.env
+
+# Dependencies
+/node_modules/
+/vendor/
+
+# PHP tooling
+/.phpunit.cache/
+/.phpunit.result.cache
+/.php-cs-fixer.cache
+/.php-cs-fixer.php
+
+# Python bytecode, environments, and tooling caches
 __pycache__/
 *.py[cod]
-*.swp
-.playwright-cli/
+*.egg-info/
+/.venv/
+/venv/
+/.coverage
+/coverage.xml
+/htmlcov/
+/.mypy_cache/
+/.pytest_cache/
+/.ruff_cache/
+
+# Runtime data. Keep only the map server configuration and style definitions.
+/var/*
+!/var/docker/
+/var/docker/*
+!/var/docker/map-tiles/
+/var/docker/map-tiles/*
+!/var/docker/map-tiles/config.json
+!/var/docker/map-tiles/styles/
+/var/docker/map-tiles/styles/*
+!/var/docker/map-tiles/styles/basic-preview/
+!/var/docker/map-tiles/styles/topo-3d/
+
+# Logs, database dumps, and local databases
+*.log
 *.sql
 *.sql.gz
-importer-optimisation.md
+*.sqlite
+*.sqlite3
+
+# Editor and operating-system files
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+\#recycle/
+
+# Local working notes
+/importer-optimisation.md
