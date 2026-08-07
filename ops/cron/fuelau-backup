@@ -1,0 +1,10 @@
+CRON_TZ=Australia/Brisbane
+SHELL=/bin/bash
+HOME=/root
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Create, validate, and upload a database backup daily at 04:55 Brisbane time.
+55 4 * * * root /opt/FuelAU/scripts/backup-database.sh >> /opt/FuelAU/var/docker/app-logs/database-backup.log 2>&1
+
+# Emit a syslog and file alert if the latest verified backup is missing, invalid, or older than 24 hours.
+25 * * * * root /opt/FuelAU/scripts/check-backup-status.sh >> /opt/FuelAU/var/docker/app-logs/database-backup-alert.log 2>&1

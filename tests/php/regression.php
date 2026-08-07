@@ -10,6 +10,7 @@ require dirname(__DIR__, 2) . '/src/routing.php';
 require dirname(__DIR__, 2) . '/src/request.php';
 require dirname(__DIR__, 2) . '/src/route_optimizer.php';
 require dirname(__DIR__, 2) . '/src/route_planning.php';
+require dirname(__DIR__, 2) . '/src/api.php';
 
 $tests = [];
 $failures = [];
@@ -67,6 +68,37 @@ function fuelauWithQuery(array $query, callable $callback): mixed
         $_GET = $original;
     }
 }
+
+fuelauTest('backup health reports verified, stale, invalid, and missing state', static function (): void {
+    $statusPath = tempnam(sys_get_temp_dir(), 'fuelau-backup-health-');
+    if ($statusPath === false) {
+        throw new RuntimeException('Unable to create backup health fixture.');
+    }
+
+    try {
+        $now = strtotime('2026-08-08T00:00:00Z');
+        file_put_contents($statusPath, json_encode([
+            'verified' => true,
+            'completed_at_utc' => '2026-08-07T23:30:00Z',
+        ], JSON_THROW_ON_ERROR));
+        $healthy = fuelauBackupHealth($statusPath, $now, 3600);
+        fuelauAssertSame('ok', $healthy['status']);
+        fuelauAssertSame(1800, $healthy['age_seconds']);
+
+        $stale = fuelauBackupHealth($statusPath, $now, 900);
+        fuelauAssertSame('stale', $stale['status']);
+
+        file_put_contents($statusPath, '{invalid');
+        fuelauAssertSame('invalid', fuelauBackupHealth($statusPath, $now, 3600)['status']);
+
+        unlink($statusPath);
+        fuelauAssertSame('missing', fuelauBackupHealth($statusPath, $now, 3600)['status']);
+    } finally {
+        if (is_file($statusPath)) {
+            unlink($statusPath);
+        }
+    }
+});
 
 fuelauTest('container management uses an expiring session and CSRF token', static function (): void {
     $token = bin2hex(random_bytes(24));

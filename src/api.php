@@ -160,13 +160,69 @@ function fuelauHealthController(): never
         $database = 'unavailable';
     }
 
-    $healthy = $database === 'ok';
+    $backup = fuelauBackupHealth();
+    $databaseHealthy = $database === 'ok';
+    $status = match (true) {
+        !$databaseHealthy => 'unavailable',
+        $backup['status'] !== 'ok' => 'degraded',
+        default => 'ok',
+    };
     fuelauJsonResponse([
         'service' => 'fuelau-api',
-        'status' => $healthy ? 'ok' : 'unavailable',
+        'status' => $status,
         'database' => $database,
+        'backup' => $backup,
         'time' => gmdate(DATE_ATOM),
-    ], $healthy ? 200 : 503);
+    ], $databaseHealthy ? 200 : 503);
+}
+
+/**
+ * @return array{status: string, last_verified_at: ?string, age_seconds: ?int, max_age_seconds: int}
+ */
+function fuelauBackupHealth(
+    ?string $statusPath = null,
+    ?int $now = null,
+    ?int $maxAgeSeconds = null,
+): array {
+    $statusPath ??= getenv('FUELAU_BACKUP_STATUS_PATH') ?: fuelauProjectRoot() . '/var/docker/backup-status.json';
+    $now ??= time();
+    if ($maxAgeSeconds === null) {
+        $configuredMaxAge = filter_var(
+            getenv('FUELAU_BACKUP_MAX_AGE_SECONDS') ?: '86400',
+            FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1]],
+        );
+        $maxAgeSeconds = is_int($configuredMaxAge) ? $configuredMaxAge : 86400;
+    }
+
+    $result = [
+        'status' => 'missing',
+        'last_verified_at' => null,
+        'age_seconds' => null,
+        'max_age_seconds' => $maxAgeSeconds,
+    ];
+    if (!is_readable($statusPath)) {
+        return $result;
+    }
+
+    $contents = file_get_contents($statusPath);
+    $payload = $contents === false ? null : json_decode($contents, true);
+    $completedAtValue = is_array($payload) ? ($payload['completed_at_utc'] ?? null) : null;
+    $completedAt = is_string($completedAtValue) ? trim($completedAtValue) : '';
+    $verified = is_array($payload) && ($payload['verified'] ?? false) === true;
+    $completedTimestamp = $completedAt === '' ? false : strtotime($completedAt);
+    if (!$verified || $completedTimestamp === false || $completedTimestamp > $now + 300) {
+        $result['status'] = 'invalid';
+        return $result;
+    }
+
+    $ageSeconds = max(0, $now - $completedTimestamp);
+    return [
+        'status' => $ageSeconds <= $maxAgeSeconds ? 'ok' : 'stale',
+        'last_verified_at' => gmdate(DATE_ATOM, $completedTimestamp),
+        'age_seconds' => $ageSeconds,
+        'max_age_seconds' => $maxAgeSeconds,
+    ];
 }
 
 /**

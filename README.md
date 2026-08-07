@@ -115,6 +115,46 @@ docker compose exec -T db sh -c \
   < fuelau-before-migration.sql
 ```
 
+### Automated database backups
+
+Production database backups are created by `scripts/backup-database.sh`. The script takes a non-blocking host lock,
+streams a `mariadb-dump --single-transaction` backup from the database container, compresses it, validates the gzip
+stream and expected database markers, and only then uploads it to the private S3 bucket. Each upload includes its
+SHA-256 digest as object metadata and requests AES-256 server-side encryption.
+
+The default destination is `s3://fuelau-production-backups` in `ap-southeast-2`, using the `fuelau-mcp` profile in
+`/root/.aws/credentials`. These defaults can be overridden with `FUELAU_BACKUP_BUCKET`, `AWS_REGION`, `AWS_PROFILE`,
+and `AWS_SHARED_CREDENTIALS_FILE`. Run a backup manually with:
+
+```bash
+sudo /opt/FuelAU/scripts/backup-database.sh
+```
+
+The host cron definition in `ops/cron/fuelau-backup` runs the backup at 04:55 in `Australia/Brisbane`. Install it as
+`/etc/cron.d/fuelau-backup`, owned by root with mode `0644`. Logs are written to
+`var/docker/app-logs/database-backup.log`.
+
+Retention keeps the seven newest daily objects, four newest Sunday copies, six newest first-of-month copies, and
+seven local `fuelau-production-*.sql.gz` files. S3 bucket lifecycle separately expires database objects after 210
+days, removes noncurrent versions after 30 days, and aborts incomplete multipart uploads after seven days.
+
+After a successful upload the job atomically updates `var/docker/backup-status.json`. `/api/health` reports the last
+verified backup time and age, while the hourly `check-backup-status.sh` cron job emits an error to syslog and
+`database-backup-alert.log` if the status is missing, invalid, or older than 24 hours. The maximum age defaults to
+86,400 seconds and can be overridden with `FUELAU_BACKUP_MAX_AGE_SECONDS`.
+
+List the newest off-host backups with:
+
+```bash
+AWS_PROFILE=fuelau-mcp AWS_REGION=ap-southeast-2 \
+  aws s3api list-objects-v2 --bucket fuelau-production-backups \
+  --prefix database/ --query 'reverse(sort_by(Contents,&LastModified))[:10].[LastModified,Size,Key]' \
+  --output table
+```
+
+The restore procedure and latest drill evidence are recorded in
+[`docs/operations/database-backup-restore.md`](docs/operations/database-backup-restore.md).
+
 Fresh database initialization can also create separate least-privilege accounts when the `MYSQL_APP_*` and `MYSQL_SYNC_*` values from both `.env.sample` and `config/mysql-sample.env` are configured consistently:
 
 - `MYSQL_USERNAME` / `MYSQL_PASSWORD`: schema migrator used only by `setup.php`.

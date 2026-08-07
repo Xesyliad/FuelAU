@@ -47,6 +47,7 @@ PHP;
     $environment = array_merge(getenv(), [
         'FUELAU_MYSQL_ENV_PATH' => $configPath,
         'FUELAU_APP_ENV_PATH' => $configPath . '.missing',
+        'FUELAU_BACKUP_STATUS_PATH' => $configPath . '.backup-missing',
     ]);
     $process = proc_open(
         [PHP_BINARY, '-r', $script, $method, $requestUri, $projectRoot, $remoteAddress],
@@ -112,6 +113,7 @@ fuelauApiContractTest('health is unavailable when the database is unavailable', 
     fuelauApiAssertSame(503, $response['status'], 'Health status code');
     fuelauApiAssertSame('unavailable', $response['payload']['status'] ?? null, 'Health payload status');
     fuelauApiAssertSame('unavailable', $response['payload']['database'] ?? null, 'Database health');
+    fuelauApiAssertSame('missing', $response['payload']['backup']['status'] ?? null, 'Backup health');
 });
 
 fuelauApiContractTest('GET endpoints reject POST', static function () use ($projectRoot, $configPath): void {
