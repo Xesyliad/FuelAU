@@ -400,7 +400,7 @@ function fuelauRouteController(FuelauHttpRequest $request): never
     }
 
     try {
-        fuelauJsonResponse(fuelauRoutePlan($route->coordinates, $route->steps));
+        fuelauJsonResponse(fuelauRoutePlan($route->coordinates, $route->steps, $route->overview));
     } catch (FuelauUpstreamException $exception) {
         error_log('FuelAU route planning failed: ' . $exception->getMessage());
         fuelauJsonResponse([

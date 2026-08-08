@@ -38,6 +38,28 @@ final class RequestDtoTest extends TestCase
             ['lon' => 153.1, 'lat' => -27.1],
         ], $request->coordinates);
         self::assertFalse($request->steps);
+        self::assertSame('simplified', $request->overview);
+    }
+
+    public function testRouteRequestAcceptsFullOverview(): void
+    {
+        $request = FuelauRouteRequest::fromQuery([
+            'coordinates' => '153,-27;153.1,-27.1',
+            'overview' => 'FULL',
+        ]);
+
+        self::assertSame('full', $request->overview);
+    }
+
+    public function testRouteRequestRejectsUnsupportedOverview(): void
+    {
+        $this->expectException(FuelauValidationException::class);
+        $this->expectExceptionMessage('overview must be simplified or full.');
+
+        FuelauRouteRequest::fromQuery([
+            'coordinates' => '153,-27;153.1,-27.1',
+            'overview' => 'false',
+        ]);
     }
 
     public function testRouteCandidateRequestNormalizesAndClampsInput(): void

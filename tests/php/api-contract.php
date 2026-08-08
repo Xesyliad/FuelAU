@@ -133,6 +133,17 @@ fuelauApiContractTest('malformed route coordinates return 400', static function 
     fuelauApiAssertSame('invalid_query', $response['payload']['error'] ?? null, 'Route validation error');
 });
 
+fuelauApiContractTest('unsupported route overview returns 400', static function () use ($projectRoot, $configPath): void {
+    $response = fuelauRunApiRequest(
+        $projectRoot,
+        $configPath,
+        'GET',
+        '/api/route?coordinates=153,-27;153.1,-27.1&overview=false'
+    );
+    fuelauApiAssertSame(400, $response['status'], 'Route overview validation status code');
+    fuelauApiAssertSame('invalid_query', $response['payload']['error'] ?? null, 'Route overview validation error');
+});
+
 fuelauApiContractTest('out-of-range reverse coordinates return 400', static function () use ($projectRoot, $configPath): void {
     $response = fuelauRunApiRequest(
         $projectRoot,

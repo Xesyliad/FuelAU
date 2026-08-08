@@ -160,6 +160,7 @@ final readonly class FuelauRouteRequest
     public function __construct(
         public array $coordinates,
         public bool $steps,
+        public string $overview,
     ) {}
 
     /**
@@ -172,9 +173,15 @@ final readonly class FuelauRouteRequest
             throw new FuelauValidationException('Missing required query parameter: coordinates');
         }
 
+        $overview = strtolower(trim(FuelauRequestValue::string($query['overview'] ?? 'simplified', 'simplified')));
+        if (!in_array($overview, ['simplified', 'full'], true)) {
+            throw new FuelauValidationException('overview must be simplified or full.');
+        }
+
         return new self(
             coordinates: fuelauParseCoordinates($coordinates),
             steps: FuelauRequestValue::string($query['steps'] ?? '1', '1') !== '0',
+            overview: $overview,
         );
     }
 }

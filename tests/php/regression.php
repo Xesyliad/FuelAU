@@ -297,6 +297,20 @@ fuelauTest('fuel stop finder uses bounded request budgets', static function (): 
     fuelauAssertTrue((int) $fuelMatch[1] <= 50, 'Fuel lookup budget must be at most 50');
 });
 
+fuelauTest('fuel stop finder requests full route geometry for its final map', static function (): void {
+    $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+    fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
+    fuelauAssertTrue(
+        str_contains($source, "fetchRouteDetails(origin, destination, true, budget, 'full')"),
+        'Fuel Stop Finder must request full OSRM geometry for its displayed route',
+    );
+    fuelauAssertTrue(
+        str_contains($source, "overview = 'simplified'")
+            && str_contains($source, '&overview=${encodeURIComponent(overview)}'),
+        'Route lookups must retain a simplified default while forwarding explicit overview detail',
+    );
+});
+
 fuelauTest('route planner always delegates complete itinerary planning to the backend optimizer', static function (): void {
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
