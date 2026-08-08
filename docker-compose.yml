@@ -72,7 +72,7 @@ services:
     restart: unless-stopped
 
   docker-proxy:
-    image: haproxy:3.2-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a
+    image: haproxy:3.4-alpine@sha256:fb87fc81943143b9acaea7442973e6ba654035fff76ffe7af6829dd1bcb0f7a5
     profiles:
       - admin
     user: "0:0"
