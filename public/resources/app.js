@@ -759,7 +759,7 @@ async function collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, bud
 
 async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLPer100km) {
     const budget = createRoutePlannerBudget();
-    const route = await fetchRouteDetails(origin, destination, true, budget);
+    const route = await fetchRouteDetails(origin, destination, true, budget, 'full');
     const routeKm = route.distanceM / 1000;
     const progress = buildRouteProgress(route.geometry);
     const candidates = await collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget);
@@ -1594,10 +1594,10 @@ function routePlannerConsumeBudget(budget, key, amount = 1) {
     }
 }
 
-async function fetchRouteDetails(from, to, steps = true, budget = null) {
+async function fetchRouteDetails(from, to, steps = true, budget = null, overview = 'simplified') {
     routePlannerConsumeBudget(budget, 'route');
     const coordinates = `${from.lon},${from.lat};${to.lon},${to.lat}`;
-    const payload = await apiRequest(`/api/route?coordinates=${encodeURIComponent(coordinates)}&steps=${steps ? '1' : '0'}`);
+    const payload = await apiRequest(`/api/route?coordinates=${encodeURIComponent(coordinates)}&steps=${steps ? '1' : '0'}&overview=${encodeURIComponent(overview)}`);
     const route = Array.isArray(payload.routes) ? payload.routes[0] : null;
     if (!route || !route.geometry || !Array.isArray(route.geometry.coordinates)) {
         throw new Error('Route service returned no geometry.');
