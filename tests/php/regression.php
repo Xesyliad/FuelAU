@@ -2860,6 +2860,23 @@ fuelauTest('OSRM setup and runtime use the tested digest-pinned image', static f
     );
 });
 
+fuelauTest('HTTP stream fallback is compatible with current PHP response headers', static function (): void {
+    $httpSource = file_get_contents(dirname(__DIR__, 2) . '/src/http.php');
+    fuelauAssertTrue(is_string($httpSource), 'Unable to read src/http.php');
+    fuelauAssertTrue(
+        str_contains($httpSource, "function_exists('http_get_last_response_headers')"),
+        'HTTP fallback must prefer the PHP 8.4 response-header API',
+    );
+    fuelauAssertTrue(
+        !str_contains($httpSource, '$http_response_header'),
+        'HTTP fallback must not directly access the PHP 8.5-deprecated response-header variable',
+    );
+    fuelauAssertTrue(
+        !str_contains($httpSource, 'curl_close('),
+        'HTTP client must not call the PHP 8.5-deprecated no-op curl_close function',
+    );
+});
+
 fuelauTest('Docker build context excludes database dumps', static function (): void {
     $dockerignore = file_get_contents(dirname(__DIR__, 2) . '/.dockerignore');
     fuelauAssertTrue(is_string($dockerignore), 'Unable to read .dockerignore');
