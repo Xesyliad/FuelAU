@@ -117,7 +117,9 @@ services:
     restart: unless-stopped
 
   nominatim:
-    image: mediagis/nominatim:5.1
+    image: mediagis/nominatim:5.3.2@sha256:7923a8e67197fc6d4f4ecb7c0e8bbedffeddcfdf4519596fe946e46a28f5a9f8
+    # The upstream script enables xtrace in its shebang, which would expose NOMINATIM_PASSWORD in Docker logs.
+    command: ["bash", "-e", "+x", "/app/start.sh"]
     profiles:
       - routing
     depends_on:
@@ -129,6 +131,8 @@ services:
       UPDATE_MODE: continuous
       NOMINATIM_PASSWORD: "${NOMINATIM_PASSWORD:?set NOMINATIM_PASSWORD in .env}"
       THREADS: "${NOMINATIM_THREADS:-4}"
+      GUNICORN_WORKERS: "${NOMINATIM_GUNICORN_WORKERS:-4}"
+      HOME: /home/nominatim
       IMPORT_WIKIPEDIA: "false"
       IMPORT_US_POSTCODES: "false"
       FREEZE: "false"
@@ -140,7 +144,7 @@ services:
       - ./var/docker/nominatim-flatnode:/nominatim/flatnode
     shm_size: 1gb
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/status.php', timeout=5).read()\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/status', timeout=5).read()\""]
       interval: 30s
       timeout: 10s
       retries: 20
