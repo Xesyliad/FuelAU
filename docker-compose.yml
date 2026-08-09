@@ -312,7 +312,9 @@ services:
     working_dir: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
     environment:
       FUELAU_HOST_PROJECT_ROOT: "${FUELAU_HOST_PROJECT_ROOT:-/opt/FuelAU}"
-      TZ: "${TZ:-Australia/Brisbane}"
+      # docker:cli has no zoneinfo database, so use a POSIX timezone that musl
+      # can apply directly. Brisbane has no daylight-saving transition.
+      TZ: "${MAP_SCHEDULER_TZ:-AEST-10}"
     command:
       - sh
       - -c

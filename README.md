@@ -822,7 +822,10 @@ Deletion is resumable because staged IDs are removed only after the matching his
 reports zero candidates for every cleaned provider before dropping the staging table. Keep the backup until the
 cleanup and any separately scheduled table rebuild have both been validated.
 
-The weekly local basemap rebuild is handled by the `map-scheduler` Docker service, not by the app container cron. Its output goes to `var/docker/app-logs/map_build.log`.
+The weekly local map rebuild is handled by the `map-scheduler` Docker service, not by the app container cron.
+Terrain starts at 03:05 and the basemap starts at 03:10 each Sunday in Brisbane time. The lightweight scheduler
+image has no timezone database, so `MAP_SCHEDULER_TZ` uses the POSIX value `AEST-10` by default. Its output goes to
+`var/docker/app-logs/terrain_build.log` and `var/docker/app-logs/map_build.log`.
 
 Useful checks:
 
