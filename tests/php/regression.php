@@ -2847,6 +2847,19 @@ fuelauTest('Nominatim uses the current status endpoint without tracing credentia
     );
 });
 
+fuelauTest('OSRM setup and runtime use the tested digest-pinned image', static function (): void {
+    $compose = file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
+    fuelauAssertTrue(is_string($compose), 'Unable to read docker-compose.yml');
+
+    $image = 'ghcr.io/project-osrm/osrm-backend:v26.8.0-debian@sha256:'
+        . '3ac496ff8fd7e1af53846179d73d06a97f719c8ad2217d008ed868942398665c';
+    fuelauAssertSame(
+        4,
+        substr_count($compose, "image: {$image}"),
+        'Every OSRM setup and runtime service must use the tested 26.8.0 image',
+    );
+});
+
 fuelauTest('Docker build context excludes database dumps', static function (): void {
     $dockerignore = file_get_contents(dirname(__DIR__, 2) . '/.dockerignore');
     fuelauAssertTrue(is_string($dockerignore), 'Unable to read .dockerignore');
