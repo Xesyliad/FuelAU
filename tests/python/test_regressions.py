@@ -80,9 +80,13 @@ class TerrainPublicationTests(unittest.TestCase):
             connection = sqlite3.connect(output)
             try:
                 self.assertEqual("ok", connection.execute("PRAGMA integrity_check").fetchone()[0])
+                self.assertEqual("delete", connection.execute("PRAGMA journal_mode").fetchone()[0])
                 self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM tiles").fetchone()[0])
             finally:
                 connection.close()
+
+            self.assertFalse(Path(f"{output}-wal").exists())
+            self.assertFalse(Path(f"{output}-shm").exists())
 
     def test_overlapping_build_is_rejected_without_touching_output(self) -> None:
         builder = load_terrain_builder()
