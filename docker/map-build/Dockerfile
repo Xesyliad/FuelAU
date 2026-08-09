@@ -1,4 +1,4 @@
-FROM ghcr.io/onthegomap/planetiler@sha256:2085f8b965e47bd922f91e1c9d7faca371eb844a4928b52ce002710c395bbd03
+FROM ghcr.io/onthegomap/planetiler@sha256:db66b104ad08a7cde33ebbb9f371ab0ed2dbe62dc1daeb7a5179709257595e54
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends sqlite3 util-linux \
