@@ -2825,6 +2825,28 @@ fuelauTest('public app does not mount Docker socket', static function (): void {
     );
 });
 
+fuelauTest('Nominatim uses the current status endpoint without tracing credentials', static function (): void {
+    $compose = file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
+    fuelauAssertTrue(is_string($compose), 'Unable to read docker-compose.yml');
+
+    preg_match('/^  nominatim:\s*$.*?(?=^  [a-z0-9_-]+:\s*$)/ms', $compose, $matches);
+    $nominatimSection = $matches[0] ?? '';
+    fuelauAssertTrue($nominatimSection !== '', 'Unable to locate the Nominatim service');
+    fuelauAssertTrue(
+        str_contains($nominatimSection, 'mediagis/nominatim:5.3.2@sha256:'),
+        'Nominatim must use the tested digest-pinned 5.3.2 image',
+    );
+    fuelauAssertTrue(
+        str_contains($nominatimSection, 'command: ["bash", "-e", "+x", "/app/start.sh"]'),
+        'Nominatim startup must suppress the upstream credential-bearing shell trace',
+    );
+    fuelauAssertTrue(
+        str_contains($nominatimSection, "http://127.0.0.1:8080/status'")
+            && !str_contains($nominatimSection, '/status.php'),
+        'Nominatim health checks must use the current status endpoint',
+    );
+});
+
 fuelauTest('Docker build context excludes database dumps', static function (): void {
     $dockerignore = file_get_contents(dirname(__DIR__, 2) . '/.dockerignore');
     fuelauAssertTrue(is_string($dockerignore), 'Unable to read .dockerignore');

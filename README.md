@@ -412,7 +412,7 @@ Expected result:
 
 - `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
 - `db`: MariaDB 11.4 application database.
-- `nominatim`: Australia geocoding service using `mediagis/nominatim:5.1`.
+- `nominatim`: Australia geocoding service using the digest-pinned `mediagis/nominatim:5.3.2` image.
 - `osrm-download`: downloads the Australia OSM PBF for OSRM.
 - `osrm-extract`: builds the OSRM extract.
 - `osrm-partition`: prepares OSRM MLD partitions.
@@ -883,6 +883,8 @@ REPLICATION_URL=https://download.geofabrik.de/australia-oceania/australia-update
 ```
 
 Nominatim also runs in `UPDATE_MODE=continuous`, so after the initial import it keeps applying Geofabrik replication diffs.
+Its import and API worker counts default to four and can be adjusted with `NOMINATIM_THREADS` and
+`NOMINATIM_GUNICORN_WORKERS`.
 
 OSRM uses the same Australia PBF and stores generated files in `var/docker/osrm-data`.
 
