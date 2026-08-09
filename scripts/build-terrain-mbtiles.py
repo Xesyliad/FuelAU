@@ -245,6 +245,9 @@ def build_temporary_database(
         connection.execute("ANALYZE")
         connection.commit()
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        journal_mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if journal_mode is None or journal_mode[0].lower() != "delete":
+            raise RuntimeError(f"failed to finalize terrain database journal mode: {journal_mode}")
     finally:
         connection.close()
 
