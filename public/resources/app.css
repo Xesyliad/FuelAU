@@ -338,7 +338,10 @@ p {
     border-radius: 8px;
     background: #fff;
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-    overflow: hidden;
+    max-height: min(360px, 50vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .route-autocomplete-option {
@@ -356,6 +359,13 @@ p {
 
 .route-autocomplete-option:last-child {
     border-bottom: 0;
+}
+
+.route-autocomplete-option:hover,
+.route-autocomplete-option:focus-visible,
+.route-autocomplete-option.is-active {
+    background: #edf7f5;
+    outline: none;
 }
 
 .route-autocomplete-option strong {
