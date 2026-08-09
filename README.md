@@ -414,7 +414,7 @@ Expected result:
 - `db`: MariaDB 11.4 application database.
 - `nominatim`: Australia geocoding service using the digest-pinned `mediagis/nominatim:5.3.2` image.
 - `osrm-download`: downloads the Australia OSM PBF for OSRM.
-- `osrm-extract`: builds the OSRM extract.
+- `osrm-extract`: builds the OSRM extract using the digest-pinned OSRM 26.8.0 Debian image.
 - `osrm-partition`: prepares OSRM MLD partitions.
 - `osrm-customize`: customizes OSRM MLD cells.
 - `osrm-routed`: Australia routing API service.
@@ -893,7 +893,7 @@ Custom OSRM profile template:
 - `config/osrm/fuelmiser.car.profile.template.lua` is a tracked scaffold for a custom OSRM Lua profile.
 - The Compose setup mounts it as `/opt/fuelmiser.car.lua` and the file wraps the stock `/opt/car.lua` from the OSRM image.
 - The profile is tuned as a hybrid approximation. The exact 30 km switch still has to be selected outside OSRM because profiles are fixed at extraction time.
-- Fill in the `EDIT ME` sections with your access, speed, and penalty rules before rebuilding OSRM data.
+- Review the tracked access, speed, and penalty overrides before rebuilding OSRM data.
 
 Build OSRM data:
 
