@@ -117,7 +117,7 @@ services:
     restart: unless-stopped
 
   nominatim:
-    image: mediagis/nominatim:5.1
+    image: mediagis/nominatim:5.3
     profiles:
       - routing
     depends_on:
