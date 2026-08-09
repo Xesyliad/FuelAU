@@ -2847,6 +2847,23 @@ fuelauTest('Nominatim uses the current status endpoint without tracing credentia
     );
 });
 
+fuelauTest('MariaDB uses the tested digest-pinned 12.3.2 image', static function (): void {
+    $compose = file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
+    fuelauAssertTrue(is_string($compose), 'Unable to read docker-compose.yml');
+
+    preg_match('/^  db:\s*$.*?(?=^  [a-z0-9_-]+:\s*$)/ms', $compose, $matches);
+    $databaseSection = $matches[0] ?? '';
+    fuelauAssertTrue($databaseSection !== '', 'Unable to locate the database service');
+    fuelauAssertTrue(
+        str_contains(
+            $databaseSection,
+            'mariadb:12.3.2@sha256:'
+                . '759869cb6f003234a95c6384cdee245b4bce7de26913fe607a8110362c0c007d',
+        ),
+        'MariaDB must use the tested digest-pinned 12.3.2 image',
+    );
+});
+
 fuelauTest('OSRM setup and runtime use the tested digest-pinned image', static function (): void {
     $compose = file_get_contents(dirname(__DIR__, 2) . '/docker-compose.yml');
     fuelauAssertTrue(is_string($compose), 'Unable to read docker-compose.yml');

@@ -411,7 +411,7 @@ Expected result:
 ## Services
 
 - `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
-- `db`: MariaDB 11.4 application database.
+- `db`: MariaDB 12.3.2 application database using a tested digest-pinned image.
 - `nominatim`: Australia geocoding service using the digest-pinned `mediagis/nominatim:5.3.2` image.
 - `osrm-download`: downloads the Australia OSM PBF for OSRM.
 - `osrm-extract`: builds the OSRM extract using the digest-pinned OSRM 26.8.0 Debian image.
