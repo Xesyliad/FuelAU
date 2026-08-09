@@ -138,6 +138,11 @@ class ImporterFreshnessTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn("flock -n", line)
 
+    def test_map_scheduler_uses_timezone_without_external_zoneinfo(self) -> None:
+        compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn('TZ: "${MAP_SCHEDULER_TZ:-AEST-10}"', compose)
+
     def test_qld_cron_splits_prices_from_daily_reference(self) -> None:
         cron = (PROJECT_ROOT / "docker" / "cron.d" / "fuelau").read_text(encoding="utf-8")
         active_lines = [
