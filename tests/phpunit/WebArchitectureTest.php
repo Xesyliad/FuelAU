@@ -86,6 +86,22 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('Starting fuel must be between zero and tank capacity.', $script);
     }
 
+    public function testRouteInputsOfferAccessibleCompletionAfterThreeCharacters(): void
+    {
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($script);
+        self::assertStringContainsString('const routeAutocompleteMinCharacters = 3;', $script);
+        self::assertStringContainsString('function routeCatalogAutocompleteResults(query)', $script);
+        self::assertStringContainsString("provider: 'fuelau-catalog'", $script);
+        self::assertStringContainsString("input.setAttribute('role', 'combobox')", $script);
+        self::assertStringContainsString("event.key === 'ArrowDown'", $script);
+        self::assertStringContainsString('routeAutocompleteResolvedLocation(routeOrigin, originValue)', $script);
+        self::assertStringContainsString('routeAutocompleteResolvedLocation(fuelStopFinderOrigin, originValue)', $script);
+        self::assertStringContainsString('attachRouteAutocomplete(fuelStopFinderDestination);', $script);
+        self::assertStringContainsString('attachRouteAutocomplete(routeOrigin);', $script);
+    }
+
     public function testRoutePlannerAlwaysUsesBackendCompleteItineraryPlanner(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');

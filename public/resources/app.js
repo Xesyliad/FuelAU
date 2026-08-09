@@ -212,6 +212,8 @@ const routePlannerDefaultTankCapacityL = 60;
 const routePlannerDefaultStartingFuelL = 60;
 const routePlannerDefaultReserveL = 6;
 const routePlannerDefaultFuelEconomyLPer100km = 12;
+const routeAutocompleteMinCharacters = 3;
+const routeAutocompleteResultLimit = 10;
 const activeTabKey = 'fuelau_active_tab_v1';
 let containerManagementCsrfToken = '';
 
@@ -997,12 +999,96 @@ function removeRouteDestination(row) {
 }
 
 function routeDestinationValues() {
-    return Array.from(routeDestinationList.querySelectorAll('.route-destination-input'))
+    return routeDestinationInputs()
         .map((input) => input.value.trim())
         .filter((value) => value !== '');
 }
 
+function routeDestinationInputs() {
+    return Array.from(routeDestinationList.querySelectorAll('.route-destination-input'));
+}
+
 const routeAutocompleteState = new WeakMap();
+const routeAutocompleteCache = new Map();
+const routeAutocompleteStateNames = {
+    QLD: 'Queensland',
+    SA: 'South Australia',
+    WA: 'Western Australia',
+    NSW: 'New South Wales',
+    VIC: 'Victoria',
+    TAS: 'Tasmania',
+    NT: 'Northern Territory',
+};
+
+function normalizeRouteAutocompleteText(value) {
+    return String(value || '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function routeCatalogAutocompleteResults(query) {
+    const normalizedQuery = normalizeRouteAutocompleteText(query);
+    if (normalizedQuery.length < routeAutocompleteMinCharacters) {
+        return [];
+    }
+
+    return Object.entries(fuelRegionCatalog)
+        .flatMap(([stateCode, regions]) => regions.map((region) => {
+            const stateName = routeAutocompleteStateNames[stateCode] || stateCode;
+            return {
+                provider: 'fuelau-catalog',
+                place_id: `catalog-${stateCode}-${region.key}`,
+                display_name: `${region.label}, ${stateName}, Australia`,
+                label: `${region.label}, ${stateName}`,
+                lat: Number(region.lat),
+                lon: Number(region.lon),
+                class: 'place',
+                type: 'city',
+                tier: 1,
+                is_fallback: false,
+                address: {
+                    city: region.label,
+                    state: stateName,
+                    country: 'Australia',
+                    country_code: 'au',
+                },
+            };
+        }))
+        .filter((result) => normalizeRouteAutocompleteText(result.display_name).includes(normalizedQuery))
+        .sort((left, right) => {
+            const leftLabel = normalizeRouteAutocompleteText(left.label);
+            const rightLabel = normalizeRouteAutocompleteText(right.label);
+            const prefixDifference = Number(rightLabel.startsWith(normalizedQuery))
+                - Number(leftLabel.startsWith(normalizedQuery));
+            return prefixDifference || leftLabel.localeCompare(rightLabel);
+        })
+        .slice(0, routeAutocompleteResultLimit);
+}
+
+function mergeRouteAutocompleteResults(preferredResults, upstreamResults) {
+    const merged = [];
+    const seen = new Set();
+    [...preferredResults, ...upstreamResults].forEach((result) => {
+        const latitude = Number(result?.lat);
+        const longitude = Number(result?.lon);
+        const coordinateKey = Number.isFinite(latitude) && Number.isFinite(longitude)
+            ? `${latitude.toFixed(4)},${longitude.toFixed(4)}`
+            : '';
+        const labelKey = normalizeRouteAutocompleteText(
+            routeGeocodeInputValue(result, result?.display_name || ''),
+        );
+        const key = coordinateKey || labelKey;
+        if (key === '' || seen.has(key)) {
+            return;
+        }
+        seen.add(key);
+        merged.push(result);
+    });
+    return merged.slice(0, routeAutocompleteResultLimit);
+}
 
 function routeAutocompletePanel(input) {
     const host = input.closest('.route-autocomplete');
@@ -1015,8 +1101,15 @@ function clearRouteAutocomplete(input) {
         return;
     }
 
+    const state = routeAutocompleteState.get(input);
+    if (state) {
+        state.results = [];
+        state.activeIndex = -1;
+    }
     panel.innerHTML = '';
     panel.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
 }
 
 function routeGeocodeAddressLine(address) {
@@ -1061,34 +1154,103 @@ function renderRouteAutocompleteOptions(input, results) {
         return;
     }
 
+    const state = routeAutocompleteState.get(input);
+    if (state) {
+        state.results = Array.isArray(results) ? results : [];
+        state.activeIndex = -1;
+    }
+
     if (!Array.isArray(results) || results.length === 0) {
         panel.innerHTML = '<div class="route-autocomplete-empty">No matches found.</div>';
         panel.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
         return;
     }
 
-    panel.innerHTML = results.map((result) => {
+    panel.innerHTML = results.map((result, index) => {
         const fallback = Number(result?.tier || 3) >= 3 || Boolean(result?.is_fallback);
         const label = routeGeocodeLabel(result) || result.label || result.display_name || '';
         const secondary = result.display_name || [result.class, result.type].filter(Boolean).join(' · ') || 'Geocoding match';
         const fallbackLabel = fallback ? '<span class="route-autocomplete-fallback">Fallback</span>' : '';
         return `
-        <button type="button" class="route-autocomplete-option${fallback ? ' is-fallback' : ''}" data-route-match="${escapeHtml(JSON.stringify(result))}">
+        <button type="button" id="${escapeHtml(panel.id)}-option-${index}" role="option" aria-selected="false" class="route-autocomplete-option${fallback ? ' is-fallback' : ''}" data-route-match="${escapeHtml(JSON.stringify(result))}">
             <strong>${escapeHtml(label)}</strong>
             <span>${escapeHtml(secondary)}${fallbackLabel}</span>
         </button>
     `;}).join('');
 
-    panel.querySelectorAll('[data-route-match]').forEach((button) => {
+    panel.querySelectorAll('[data-route-match]').forEach((button, index) => {
         button.addEventListener('pointerdown', (event) => {
             event.preventDefault();
             const payload = JSON.parse(button.getAttribute('data-route-match') || '{}');
-            input.value = routeGeocodeInputValue(payload, input.value);
-            clearRouteAutocomplete(input);
+            selectRouteAutocompleteResult(input, payload);
         });
+        button.addEventListener('mouseenter', () => setRouteAutocompleteActiveOption(input, index));
     });
 
     panel.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+}
+
+function selectRouteAutocompleteResult(input, result) {
+    const state = routeAutocompleteState.get(input);
+    const value = routeGeocodeInputValue(result, input.value);
+    if (state) {
+        state.sequence += 1;
+        if (state.timer) {
+            window.clearTimeout(state.timer);
+            state.timer = null;
+        }
+        if (state.abortController) {
+            state.abortController.abort();
+            state.abortController = null;
+        }
+        state.selectedResult = result;
+        state.selectedValue = value;
+    }
+    input.value = value;
+    clearRouteAutocomplete(input);
+}
+
+function setRouteAutocompleteActiveOption(input, index) {
+    const panel = routeAutocompletePanel(input);
+    const state = routeAutocompleteState.get(input);
+    if (!panel || !state || state.results.length === 0) {
+        return;
+    }
+
+    const options = Array.from(panel.querySelectorAll('[data-route-match]'));
+    const nextIndex = Math.max(0, Math.min(options.length - 1, index));
+    state.activeIndex = nextIndex;
+    options.forEach((option, optionIndex) => {
+        const active = optionIndex === nextIndex;
+        option.classList.toggle('is-active', active);
+        option.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const activeOption = options[nextIndex];
+    input.setAttribute('aria-activedescendant', activeOption.id);
+    activeOption.scrollIntoView({ block: 'nearest' });
+}
+
+function routeAutocompleteResolvedLocation(input, query) {
+    const state = routeAutocompleteState.get(input);
+    const result = state?.selectedResult;
+    if (!result || state.selectedValue !== query) {
+        return null;
+    }
+
+    const latitude = Number(result.lat);
+    const longitude = Number(result.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return null;
+    }
+
+    return {
+        query,
+        display_name: routeGeocodeInputValue(result, result.display_name || query),
+        lat: latitude,
+        lon: longitude,
+    };
 }
 
 function attachRouteAutocomplete(input) {
@@ -1101,7 +1263,22 @@ function attachRouteAutocomplete(input) {
         sequence: 0,
         timer: null,
         abortController: null,
+        results: [],
+        activeIndex: -1,
+        selectedResult: null,
+        selectedValue: '',
     });
+
+    const panel = routeAutocompletePanel(input);
+    if (panel) {
+        panel.id = panel.id || `${input.id}-suggestions`;
+        panel.setAttribute('role', 'listbox');
+        panel.setAttribute('aria-live', 'polite');
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-controls', panel.id);
+        input.setAttribute('aria-expanded', 'false');
+    }
 
     input.addEventListener('input', () => {
         const state = routeAutocompleteState.get(input);
@@ -1116,23 +1293,42 @@ function attachRouteAutocomplete(input) {
             state.abortController.abort();
             state.abortController = null;
         }
+        state.sequence += 1;
+        state.selectedResult = null;
+        state.selectedValue = '';
 
         const query = input.value.trim();
-        if (query.length < 3) {
+        if (query.length < routeAutocompleteMinCharacters) {
             clearRouteAutocomplete(input);
             return;
         }
 
-        state.sequence += 1;
+        const catalogResults = routeCatalogAutocompleteResults(query);
+        const cacheKey = normalizeRouteAutocompleteText(query);
+        if (routeAutocompleteCache.has(cacheKey)) {
+            renderRouteAutocompleteOptions(
+                input,
+                mergeRouteAutocompleteResults(catalogResults, routeAutocompleteCache.get(cacheKey)),
+            );
+            return;
+        }
+
         const currentSequence = state.sequence;
+        if (catalogResults.length > 0) {
+            renderRouteAutocompleteOptions(input, catalogResults);
+        }
         state.timer = window.setTimeout(async () => {
             const panel = routeAutocompletePanel(input);
             if (!panel) {
                 return;
             }
 
-            panel.innerHTML = '<div class="route-autocomplete-loading">Searching...</div>';
-            panel.hidden = false;
+            state.timer = null;
+            if (catalogResults.length === 0) {
+                panel.innerHTML = '<div class="route-autocomplete-loading">Searching...</div>';
+                panel.hidden = false;
+                input.setAttribute('aria-expanded', 'true');
+            }
             const abortController = new AbortController();
             state.abortController = abortController;
 
@@ -1146,25 +1342,62 @@ function attachRouteAutocomplete(input) {
                 }
 
                 const results = Array.isArray(payload.results) ? payload.results : [];
-                renderRouteAutocompleteOptions(input, results);
+                routeAutocompleteCache.set(cacheKey, results);
+                if (routeAutocompleteCache.size > 100) {
+                    routeAutocompleteCache.delete(routeAutocompleteCache.keys().next().value);
+                }
+                renderRouteAutocompleteOptions(
+                    input,
+                    mergeRouteAutocompleteResults(catalogResults, results),
+                );
             } catch (error) {
                 if (error?.name === 'AbortError') {
                     return;
                 }
-                if (state.sequence === currentSequence) {
+                if (state.sequence === currentSequence && catalogResults.length === 0) {
                     panel.innerHTML = `<div class="route-autocomplete-empty">${escapeHtml(error.message)}</div>`;
                     panel.hidden = false;
+                    input.setAttribute('aria-expanded', 'true');
                 }
             } finally {
                 if (state.abortController === abortController) {
                     state.abortController = null;
                 }
             }
-        }, 500);
+        }, 350);
+    });
+
+    input.addEventListener('keydown', (event) => {
+        const state = routeAutocompleteState.get(input);
+        const panel = routeAutocompletePanel(input);
+        if (!state || !panel) {
+            return;
+        }
+
+        if (event.key === 'Escape') {
+            clearRouteAutocomplete(input);
+            return;
+        }
+        if (panel.hidden || state.results.length === 0) {
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            const start = state.activeIndex < 0
+                ? (direction > 0 ? -1 : state.results.length)
+                : state.activeIndex;
+            setRouteAutocompleteActiveOption(input, start + direction);
+            return;
+        }
+        if (event.key === 'Enter' && state.activeIndex >= 0) {
+            event.preventDefault();
+            selectRouteAutocompleteResult(input, state.results[state.activeIndex]);
+        }
     });
 
     input.addEventListener('focus', () => {
-        if (input.value.trim().length >= 3) {
+        if (input.value.trim().length >= routeAutocompleteMinCharacters) {
             input.dispatchEvent(new Event('input', { bubbles: true }));
         }
     });
@@ -2811,7 +3044,9 @@ function renderRoutePlanStatus(plan, plannedLegCount, returnMode, hadContingency
 
 async function planRoute() {
     const originValue = routeOrigin.value.trim();
-    const destinationValues = routeDestinationValues();
+    const destinationInputs = routeDestinationInputs()
+        .filter((input) => input.value.trim() !== '');
+    const destinationValues = destinationInputs.map((input) => input.value.trim());
     const tankCapacity = routeTankCapacityValue();
     const startingFuel = routeStartingFuelValue();
     const reserveFuel = routeFuelReserveValue();
@@ -2855,11 +3090,16 @@ async function planRoute() {
     routeLegs.innerHTML = renderRouteEmpty('Building legs...');
 
     try {
-        const origin = await resolveRouteLocation(originValue);
+        const origin = routeAutocompleteResolvedLocation(routeOrigin, originValue)
+            || await resolveRouteLocation(originValue);
         const destinations = [];
-        for (const value of destinationValues) {
+        for (const input of destinationInputs) {
+            const value = input.value.trim();
             try {
-                destinations.push(await resolveRouteLocation(value));
+                destinations.push(
+                    routeAutocompleteResolvedLocation(input, value)
+                    || await resolveRouteLocation(value),
+                );
             } catch (error) {
                 throw new Error(`Geocoding failed for "${value}": ${error.message}`);
             }
@@ -3029,10 +3269,14 @@ async function planFuelStopFinder() {
     fuelStopFinderLegs.innerHTML = renderRouteEmpty('Building route...');
 
     try {
-        const origin = await resolveRouteLocation(originValue);
+        const origin = routeAutocompleteResolvedLocation(fuelStopFinderOrigin, originValue)
+            || await resolveRouteLocation(originValue);
         let destination = null;
         try {
-            destination = await resolveRouteLocation(destinationValue);
+            destination = routeAutocompleteResolvedLocation(
+                fuelStopFinderDestination,
+                destinationValue,
+            ) || await resolveRouteLocation(destinationValue);
         } catch (error) {
             throw new Error(`Geocoding failed for "${destinationValue}": ${error.message}`);
         }
