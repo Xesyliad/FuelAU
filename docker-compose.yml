@@ -92,7 +92,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: mariadb:11.4
+    image: mariadb:12.3.2@sha256:759869cb6f003234a95c6384cdee245b4bce7de26913fe607a8110362c0c007d
     user: "${UID:-999}:${GID:-999}"
     environment:
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}"
