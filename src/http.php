@@ -42,11 +42,8 @@ function fuelauHttpJsonRequest(string $url, array $headers = [], int $timeout = 
         $statusCode = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
         if ($body === false) {
             $error = curl_error($curl);
-            curl_close($curl);
             throw new FuelauUpstreamException($error !== '' ? "HTTP request failed for {$url}: {$error}" : "HTTP request failed for {$url}");
         }
-
-        curl_close($curl);
     } else {
         $context = stream_context_create([
             'http' => [
@@ -58,7 +55,9 @@ function fuelauHttpJsonRequest(string $url, array $headers = [], int $timeout = 
         ]);
 
         $body = @file_get_contents($url, false, $context);
-        $responseHeaders = $http_response_header;
+        $responseHeaders = function_exists('http_get_last_response_headers')
+            ? (http_get_last_response_headers() ?? [])
+            : (${'http_response_header'} ?? []);
         $statusLine = $responseHeaders[0] ?? 'HTTP/1.1 500 Internal Server Error';
         preg_match('/\s(\d{3})\s/', $statusLine, $matches);
         $statusCode = (int) ($matches[1] ?? 500);

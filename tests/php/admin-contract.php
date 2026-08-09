@@ -77,7 +77,9 @@ function fuelauAdminRequest(
         ],
     ]);
     $responseBody = @file_get_contents("http://{$address}{$path}", false, $context);
-    $responseHeaders = $http_response_header ?? [];
+    $responseHeaders = function_exists('http_get_last_response_headers')
+        ? (http_get_last_response_headers() ?? [])
+        : (${'http_response_header'} ?? []);
     preg_match('/\s(\d{3})\s/', (string) ($responseHeaders[0] ?? ''), $statusMatch);
 
     return [
