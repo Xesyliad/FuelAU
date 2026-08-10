@@ -1139,6 +1139,10 @@ function routeGeocodeAddressLine(address) {
 }
 
 function routeGeocodeLabel(result) {
+    const providerLabel = String(result?.label || '').trim();
+    if (result?.provider === 'photon' && providerLabel !== '') {
+        return providerLabel;
+    }
     const addressLine = routeGeocodeAddressLine(result?.address);
     return addressLine !== '' ? addressLine : String(result?.display_name || '');
 }
@@ -1334,7 +1338,7 @@ function attachRouteAutocomplete(input) {
 
             try {
                 const payload = await apiRequest(
-                    `/api/geo/search?q=${encodeURIComponent(query)}&limit=10`,
+                    `/api/geo/autocomplete?q=${encodeURIComponent(query)}&limit=10`,
                     { signal: abortController.signal }
                 );
                 if (state.sequence !== currentSequence || input.value.trim() !== query) {

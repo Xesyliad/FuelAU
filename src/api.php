@@ -33,6 +33,10 @@ function fuelauDispatchApi(FuelauHttpRequest $request, array $config): never
         fuelauGeoSearchController($request);
     }
 
+    if ($request->path === '/api/geo/autocomplete') {
+        fuelauGeoAutocompleteController($request, $config);
+    }
+
     if ($request->path === '/api/geo/reverse') {
         fuelauGeoReverseController($request);
     }
@@ -94,6 +98,7 @@ function fuelauEnforceApiMethod(FuelauHttpRequest $request): void
         '/api/docker/status',
         '/api/services/status',
         '/api/geo/search',
+        '/api/geo/autocomplete',
         '/api/geo/reverse',
         '/api/route',
         '/api/map/config',
@@ -345,6 +350,50 @@ function fuelauGeoSearchController(FuelauHttpRequest $request): never
         fuelauJsonResponse([
             'error' => 'upstream_unavailable',
             'message' => fuelauNominatimUnavailableMessage(),
+        ], 503);
+    }
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function fuelauGeoAutocompleteController(FuelauHttpRequest $request, array $config): never
+{
+    try {
+        $search = FuelauGeoAutocompleteRequest::fromQuery($request->query);
+    } catch (FuelauValidationException $exception) {
+        fuelauJsonResponse([
+            'error' => 'invalid_query',
+            'message' => $exception->getMessage(),
+        ], 400);
+    }
+
+    try {
+        fuelauRateLimit("geo-autocomplete:{$request->remoteAddress}", 120, 60);
+        $autocomplete = fuelauAutocompleteSearch(
+            $search->query,
+            $search->limit,
+            $config,
+            fuelauProjectRoot() . '/var/docker/app-state/geocode-cache',
+        );
+        header('Cache-Control: private, max-age=300');
+        fuelauJsonResponse([
+            'query' => $search->query,
+            'provider' => $autocomplete['provider'],
+            'fallback' => $autocomplete['fallback'],
+            'results' => $autocomplete['results'],
+        ]);
+    } catch (FuelauRateLimitException $exception) {
+        header('Retry-After: ' . $exception->retryAfterSeconds());
+        fuelauJsonResponse([
+            'error' => 'rate_limited',
+            'message' => 'Autocomplete is temporarily rate limited.',
+        ], 429);
+    } catch (FuelauUpstreamException $exception) {
+        error_log('FuelAU autocomplete failed: ' . $exception->getMessage());
+        fuelauJsonResponse([
+            'error' => 'upstream_unavailable',
+            'message' => 'Autocomplete services are unavailable. Check Photon and Nominatim.',
         ], 503);
     }
 }

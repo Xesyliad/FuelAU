@@ -155,6 +155,28 @@ fuelauApiContractTest('out-of-range reverse coordinates return 400', static func
     fuelauApiAssertSame('invalid_query', $response['payload']['error'] ?? null, 'Reverse validation error');
 });
 
+fuelauApiContractTest('autocomplete rejects queries shorter than three characters', static function () use ($projectRoot, $configPath): void {
+    $response = fuelauRunApiRequest(
+        $projectRoot,
+        $configPath,
+        'GET',
+        '/api/geo/autocomplete?q=Br&limit=10'
+    );
+    fuelauApiAssertSame(400, $response['status'], 'Autocomplete validation status code');
+    fuelauApiAssertSame('invalid_query', $response['payload']['error'] ?? null, 'Autocomplete validation error');
+});
+
+fuelauApiContractTest('autocomplete rejects POST', static function () use ($projectRoot, $configPath): void {
+    $response = fuelauRunApiRequest(
+        $projectRoot,
+        $configPath,
+        'POST',
+        '/api/geo/autocomplete?q=Bri&limit=10'
+    );
+    fuelauApiAssertSame(405, $response['status'], 'Autocomplete method status code');
+    fuelauApiAssertSame('method_not_allowed', $response['payload']['error'] ?? null, 'Autocomplete method error');
+});
+
 fuelauApiContractTest('route throttling returns 429', static function () use ($projectRoot, $configPath): void {
     $remoteAddress = '192.0.2.123';
     $rateLimitDirectory = $projectRoot . '/var/docker/app-state/rate-limits';
