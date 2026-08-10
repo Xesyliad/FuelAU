@@ -15,8 +15,27 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f6f8">
     <title>FuelAU</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <script nonce="<?= htmlspecialchars($cspNonce, ENT_QUOTES, 'UTF-8') ?>">
+        (() => {
+            const themeKey = 'fuelau_theme_v1';
+            const supportedThemes = ['system', 'light', 'dark'];
+            let preference = 'system';
+
+            try {
+                const savedPreference = window.localStorage.getItem(themeKey);
+                if (supportedThemes.includes(savedPreference)) {
+                    preference = savedPreference;
+                }
+            } catch (error) {
+                // Storage can be unavailable in privacy-restricted browser contexts.
+            }
+
+            document.documentElement.dataset.theme = preference;
+        })();
+    </script>
     <link
         rel="stylesheet"
         href="/resources/maplibre-gl.css"
@@ -41,6 +60,11 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             <?php if ($containerManagementEnabled): ?>
             <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab">Container Management</button>
             <?php endif; ?>
+            <div class="theme-switcher" role="group" aria-label="Colour theme">
+                <button class="theme-option" type="button" data-theme-preference="system" aria-pressed="false">System</button>
+                <button class="theme-option" type="button" data-theme-preference="light" aria-pressed="false">Light</button>
+                <button class="theme-option" type="button" data-theme-preference="dark" aria-pressed="false">Dark</button>
+            </div>
         </nav>
 
         <section class="content">

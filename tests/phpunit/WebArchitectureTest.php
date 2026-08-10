@@ -30,6 +30,43 @@ final class WebArchitectureTest extends TestCase
         self::assertFileExists(dirname(__DIR__, 2) . '/public/favicon.svg');
     }
 
+    public function testThemeSelectorSupportsPersistedSystemLightAndDarkModes(): void
+    {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
+        $stylesheet = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.css');
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($template);
+        self::assertIsString($stylesheet);
+        self::assertIsString($script);
+        self::assertStringContainsString("const themeKey = 'fuelau_theme_v1';", $template);
+        self::assertStringContainsString('document.documentElement.dataset.theme = preference;', $template);
+        self::assertStringContainsString('data-theme-preference="system"', $template);
+        self::assertStringContainsString('data-theme-preference="light"', $template);
+        self::assertStringContainsString('data-theme-preference="dark"', $template);
+        $themeBootstrapPosition = strpos($template, "const themeKey = 'fuelau_theme_v1';");
+        $stylesheetPosition = strpos($template, 'href="/resources/app.css');
+        self::assertIsInt($themeBootstrapPosition);
+        self::assertIsInt($stylesheetPosition);
+        self::assertLessThan($stylesheetPosition, $themeBootstrapPosition);
+        self::assertStringContainsString('@media (prefers-color-scheme: dark)', $stylesheet);
+        self::assertStringContainsString(':root[data-theme="dark"]', $stylesheet);
+        self::assertStringContainsString("window.localStorage.setItem(themePreferenceKey", $script);
+        self::assertStringContainsString("systemDarkTheme.addEventListener('change'", $script);
+        self::assertStringContainsString("option.setAttribute(\n            'aria-pressed'", $script);
+        self::assertStringContainsString('const fuelauDarkMapPaint = {', $script);
+        self::assertStringContainsString('function fuelauApplyMapTheme(map)', $script);
+        self::assertStringContainsString('style = map?.getStyle?.();', $script);
+        self::assertStringContainsString('!Array.isArray(style.layers)', $script);
+        self::assertStringContainsString('map.setPaintProperty(', $script);
+        self::assertStringContainsString(
+            "document.addEventListener('fuelau:themechange', fuelauApplyThemeToActiveMaps);",
+            $script,
+        );
+        self::assertStringContainsString('fuelauApplyMapTheme(fuelMapInstance);', $script);
+        self::assertStringNotContainsString('.setStyle(', $script);
+    }
+
     public function testFuelMapViewportRefreshIsGuarded(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');

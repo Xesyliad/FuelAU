@@ -1,5 +1,10 @@
 const tabs = document.querySelectorAll('.tab');
 const panels = document.querySelectorAll('.panel');
+const themeOptions = document.querySelectorAll('[data-theme-preference]');
+const themeColourMeta = document.querySelector('meta[name="theme-color"]');
+const themePreferenceKey = 'fuelau_theme_v1';
+const supportedThemePreferences = new Set(['system', 'light', 'dark']);
+const systemDarkTheme = window.matchMedia('(prefers-color-scheme: dark)');
 const containerGrid = document.getElementById('container-grid');
 const containerStatus = document.getElementById('container-status');
 const containerLogs = document.getElementById('container-logs');
@@ -96,6 +101,203 @@ const topoContourThresholds = {
 };
 let topoContourDemSource = null;
 let topoContourProtocolReady = false;
+const fuelauMapOriginalPaint = new WeakMap();
+const fuelauDarkMapPaint = {
+    background: {
+        'background-color': '#0d1720',
+    },
+    'terrain-hillshade': {
+        'hillshade-shadow-color': '#02070d',
+        'hillshade-highlight-color': '#344657',
+        'hillshade-accent-color': '#172838',
+    },
+    water: {
+        'fill-color': '#163a50',
+    },
+    boundary: {
+        'line-color': '#667b8f',
+    },
+    'road-ferry-casing': {
+        'line-color': '#273a4a',
+    },
+    'road-ferry': {
+        'line-color': '#9aafc1',
+    },
+    'road-minor-casing': {
+        'line-color': '#2b3844',
+    },
+    'road-minor': {
+        'line-color': '#687786',
+    },
+    'road-secondary-casing': {
+        'line-color': '#5b4632',
+    },
+    'road-secondary': {
+        'line-color': '#b4824e',
+    },
+    'road-primary-casing': {
+        'line-color': '#704330',
+    },
+    'road-primary': {
+        'line-color': '#d28b57',
+    },
+    'road-motorway-casing': {
+        'line-color': '#713a34',
+    },
+    'road-motorway': {
+        'line-color': '#e9846d',
+    },
+    'place-label': {
+        'text-color': '#e3edf5',
+        'text-halo-color': '#101a24',
+    },
+    'road-labels': {
+        'text-color': '#cfdae4',
+        'text-halo-color': '#101a24',
+    },
+    [topoContourLayerId]: {
+        'line-color': [
+            'case',
+            ['==', ['get', 'level'], 1],
+            '#b28b60',
+            '#80694f',
+        ],
+        'line-opacity': 0.58,
+    },
+    [topoContourLabelLayerId]: {
+        'text-color': '#c7a87f',
+        'text-halo-color': '#101a24',
+    },
+    'route-origin-marker': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'route-destination-marker': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'route-origin-label': {
+        'text-color': '#e6edf3',
+        'text-halo-color': '#0b1118',
+    },
+    'route-destination-label': {
+        'text-color': '#e6edf3',
+        'text-halo-color': '#0b1118',
+    },
+    'fuel-stations-circle': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'fuel-station-highlight-min': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'fuel-station-highlight-max': {
+        'circle-stroke-color': '#0b1118',
+    },
+};
+
+function fuelauThemeIsDark(preference) {
+    return preference === 'dark' || (preference === 'system' && systemDarkTheme.matches);
+}
+
+function fuelauApplyTheme(preference, persist = true) {
+    const selectedPreference = supportedThemePreferences.has(preference) ? preference : 'system';
+    const resolvedTheme = fuelauThemeIsDark(selectedPreference) ? 'dark' : 'light';
+
+    document.documentElement.dataset.theme = selectedPreference;
+    document.documentElement.dataset.themeResolved = resolvedTheme;
+    themeOptions.forEach((option) => {
+        option.setAttribute(
+            'aria-pressed',
+            String(option.dataset.themePreference === selectedPreference),
+        );
+    });
+
+    if (themeColourMeta) {
+        themeColourMeta.content = resolvedTheme === 'dark' ? '#0b1118' : '#f4f6f8';
+    }
+
+    if (persist) {
+        try {
+            window.localStorage.setItem(themePreferenceKey, selectedPreference);
+        } catch (error) {
+            // The visual preference still applies when persistent storage is unavailable.
+        }
+    }
+
+    document.dispatchEvent(new CustomEvent('fuelau:themechange', {
+        detail: { preference: selectedPreference, resolvedTheme },
+    }));
+}
+
+function fuelauInitializeTheme() {
+    const initialPreference = document.documentElement.dataset.theme || 'system';
+    fuelauApplyTheme(initialPreference, false);
+
+    themeOptions.forEach((option) => {
+        option.addEventListener('click', () => {
+            fuelauApplyTheme(option.dataset.themePreference || 'system');
+        });
+    });
+
+    systemDarkTheme.addEventListener('change', () => {
+        if (document.documentElement.dataset.theme === 'system') {
+            fuelauApplyTheme('system', false);
+        }
+    });
+}
+
+function fuelauApplyMapTheme(map) {
+    let style = null;
+    try {
+        style = map?.getStyle?.();
+    } catch (error) {
+        void error;
+    }
+    if (!style || !Array.isArray(style.layers)) {
+        return;
+    }
+
+    const darkTheme = document.documentElement.dataset.themeResolved === 'dark';
+    let originalPaint = fuelauMapOriginalPaint.get(map);
+    if (!originalPaint) {
+        originalPaint = new Map();
+        fuelauMapOriginalPaint.set(map, originalPaint);
+    }
+
+    Object.entries(fuelauDarkMapPaint).forEach(([layerId, overrides]) => {
+        if (!map.getLayer(layerId)) {
+            return;
+        }
+
+        Object.entries(overrides).forEach(([property, darkValue]) => {
+            const propertyKey = `${layerId}:${property}`;
+            try {
+                if (!originalPaint.has(propertyKey)) {
+                    originalPaint.set(propertyKey, map.getPaintProperty(layerId, property));
+                }
+                const originalValue = originalPaint.get(propertyKey);
+                map.setPaintProperty(
+                    layerId,
+                    property,
+                    darkTheme ? darkValue : (originalValue === undefined ? null : originalValue),
+                );
+            } catch (error) {
+                // A third-party style can omit or restrict paint properties we theme locally.
+                void error;
+            }
+        });
+    });
+
+    map.triggerRepaint();
+}
+
+function fuelauApplyThemeToActiveMaps() {
+    [fuelMapInstance, fuelStopFinderMapInstance, routeMapInstance].forEach((map) => {
+        fuelauApplyMapTheme(map);
+    });
+}
+
+document.addEventListener('fuelau:themechange', fuelauApplyThemeToActiveMaps);
+
+fuelauInitializeTheme();
 
 function fuelauIsTopographicStyle() {
     return String(window.fuelauMapConfig?.style_id || '') === topoStyleId;
@@ -2408,6 +2610,7 @@ function renderRouteMap(plan) {
             },
         });
 
+        fuelauApplyMapTheme(map);
         const pointBounds = new maplibregl.LngLatBounds();
         bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
         map.fitBounds(pointBounds, { padding: 36, duration: 0 });
@@ -2665,6 +2868,7 @@ function renderFuelStopFinderMap(plan) {
             },
         });
 
+        fuelauApplyMapTheme(map);
         const pointBounds = new maplibregl.LngLatBounds();
         bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
         map.fitBounds(pointBounds, { padding: 36, duration: 0 });
@@ -3667,24 +3871,24 @@ function renderLineChart(container, meta, series) {
             ${yTicks.map((tick) => {
                 const y = padding.top + ((max - tick) / spread) * plotHeight;
                 return `<g>
-                    <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5edf3" stroke-width="1"></line>
-                    <text x="${padding.left - 8}" y="${y + 4}" fill="#5b6775" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
+                    <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="var(--chart-grid)" stroke-width="1"></line>
+                    <text x="${padding.left - 8}" y="${y + 4}" fill="var(--muted)" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
                 </g>`;
             }).join('')}
-            ${bandPath ? `<path d="${bandPath}" fill="rgba(15,118,110,0.22)" stroke="none"></path>` : ''}
-            ${maxPath ? `<path d="${maxPath}" fill="none" stroke="rgba(15,118,110,0.38)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
-            ${minPath ? `<path d="${minPath}" fill="none" stroke="rgba(15,118,110,0.38)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
-            <path d="${avgPath}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${bandPath ? `<path d="${bandPath}" fill="var(--chart-band)" stroke="none"></path>` : ''}
+            ${maxPath ? `<path d="${maxPath}" fill="none" stroke="var(--chart-range)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
+            ${minPath ? `<path d="${minPath}" fill="none" stroke="var(--chart-range)" stroke-width="2" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round"></path>` : ''}
+            <path d="${avgPath}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
             ${points.map((point) => `
                 <g class="fuel-chart-node" data-bucket-date="${escapeHtml(String(point.item.bucket_date))}" data-min-price="${escapeHtml(String(point.item.minimum_price))}" data-max-price="${escapeHtml(String(point.item.maximum_price))}">
-                    <circle cx="${point.x}" cy="${point.maxY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
-                    <circle cx="${point.x}" cy="${point.minY}" r="2.5" fill="#0f766e" opacity="0.55"></circle>
-                    <circle cx="${point.x}" cy="${point.y}" r="4" fill="#0f766e"></circle>
+                    <circle cx="${point.x}" cy="${point.maxY}" r="2.5" fill="var(--accent)" opacity="0.55"></circle>
+                    <circle cx="${point.x}" cy="${point.minY}" r="2.5" fill="var(--accent)" opacity="0.55"></circle>
+                    <circle cx="${point.x}" cy="${point.y}" r="4" fill="var(--accent)"></circle>
                     <title>${formatCompactDate(point.item.bucket_date)}: avg ${formatPrice(point.item.average_price)}, min ${formatPrice(point.item.minimum_price)}, max ${formatPrice(point.item.maximum_price)}</title>
                 </g>
             `).join('')}
             ${points.filter((_, index) => index % Math.ceil(series.length / 6) === 0 || index === points.length - 1).map((point) => `
-                <text x="${point.x}" y="${height - 10}" fill="#5b6775" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(point.item.bucket_date))}</text>
+                <text x="${point.x}" y="${height - 10}" fill="var(--muted)" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(point.item.bucket_date))}</text>
             `).join('')}
         </svg>
     `;
@@ -3730,8 +3934,8 @@ function renderBarChart(container, meta, series) {
             ${[min, min + spread / 2, max].map((tick) => {
                 const y = padding.top + ((max - tick) / spread) * plotHeight;
                 return `<g>
-                    <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5edf3" stroke-width="1"></line>
-                    <text x="${padding.left - 8}" y="${y + 4}" fill="#5b6775" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
+                    <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="var(--chart-grid)" stroke-width="1"></line>
+                    <text x="${padding.left - 8}" y="${y + 4}" fill="var(--muted)" font-size="11" text-anchor="end">${tick.toFixed(1)}</text>
                 </g>`;
             }).join('')}
             ${series.map((item, index) => {
@@ -3740,9 +3944,9 @@ function renderBarChart(container, meta, series) {
                 const y = height - padding.bottom - barHeight;
                 return `
                     <g class="fuel-chart-bar" data-bucket-date="${escapeHtml(String(item.bucket_date))}" data-min-price="${escapeHtml(String(item.minimum_price))}" data-max-price="${escapeHtml(String(item.maximum_price))}">
-                        <rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(barHeight, 2)}" rx="4" fill="#0f766e"></rect>
+                        <rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(barHeight, 2)}" rx="4" fill="var(--accent)"></rect>
                         <title>${formatCompactDate(item.bucket_date)}: avg ${formatPrice(item.average_price)}, min ${formatPrice(item.minimum_price)}, max ${formatPrice(item.maximum_price)}</title>
-                        <text x="${x + barWidth / 2}" y="${height - 12}" fill="#5b6775" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(item.bucket_date))}</text>
+                        <text x="${x + barWidth / 2}" y="${height - 12}" fill="var(--muted)" font-size="11" text-anchor="middle">${escapeHtml(formatCompactDate(item.bucket_date))}</text>
                     </g>
                 `;
             }).join('')}
@@ -3854,13 +4058,13 @@ function fuelMapPopupHtml(row) {
     const updatedAt = escapeHtml(formatDateTime(row.updated_at));
     const source = escapeHtml(`${String(row.state || '').trim()} · ${String(row.source || '').toUpperCase()}`);
     return `
-        <div style="min-width:220px;max-width:280px;font:inherit;color:#16212d;">
+        <div style="min-width:220px;max-width:280px;font:inherit;color:var(--text);">
             <strong style="display:block;font-size:13px;line-height:1.3;margin-bottom:4px;">${station}</strong>
-            <div style="font-size:11px;color:#5b6775;line-height:1.3;margin-bottom:6px;">${address}</div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.3;margin-bottom:6px;">${address}</div>
             <div style="font-size:12px;line-height:1.35;margin-bottom:4px;"><strong>${fuelName}</strong></div>
             <div style="font-size:13px;line-height:1.35;margin-bottom:4px;">${price}</div>
-            <div style="font-size:11px;color:#5b6775;line-height:1.3;">${source}</div>
-            <div style="font-size:11px;color:#5b6775;line-height:1.3;">Updated ${updatedAt}</div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.3;">${source}</div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.3;">Updated ${updatedAt}</div>
         </div>
     `;
 }
@@ -4276,6 +4480,7 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
                 });
             }
 
+            fuelauApplyMapTheme(fuelMapInstance);
             fuelMapInstance.on('mouseenter', 'fuel-stations-circle', () => {
                 fuelMapInstance.getCanvas().style.cursor = 'pointer';
             });

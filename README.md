@@ -1090,7 +1090,7 @@ docker compose --env-file .env.sample --profile admin config --quiet
 node --check public/resources/app.js
 ```
 
-GitHub Actions also builds the application, map-builder, and Photon images. `public/index.php` is a bootstrap-only entry point; HTTP dispatch and controllers live in `src/web.php` and `src/api.php`, immutable request DTOs live in `src/request.php`, and the page markup lives in `templates/app.php`. Browser CSS and JavaScript live in `public/resources/app.css` and `public/resources/app.js`; the remaining inline script contains only server-rendered configuration protected by a per-request CSP nonce. New HTTP modules are checked separately at PHPStan level 9 without raising the existing codebase-wide level or introducing a baseline.
+GitHub Actions also builds the application, map-builder, and Photon images. `public/index.php` is a bootstrap-only entry point; HTTP dispatch and controllers live in `src/web.php` and `src/api.php`, immutable request DTOs live in `src/request.php`, and the page markup lives in `templates/app.php`. Browser CSS and JavaScript live in `public/resources/app.css` and `public/resources/app.js`; the remaining inline scripts contain the pre-render theme bootstrap and server-rendered configuration, both protected by a per-request CSP nonce. New HTTP modules are checked separately at PHPStan level 9 without raising the existing codebase-wide level or introducing a baseline.
 
 ## Git Hygiene
 
