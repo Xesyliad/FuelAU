@@ -6,6 +6,7 @@ function fuelauServiceBaseUrl(string $service): string
 {
     return match ($service) {
         'nominatim' => 'http://nominatim:8080',
+        'photon' => 'http://photon:2322',
         'osrm' => 'http://osrm-routed:5000',
         default => throw new RuntimeException("Unknown service: {$service}"),
     };
@@ -36,6 +37,23 @@ function fuelauMapTileConfig(): array
 function fuelauServiceStatus(): array
 {
     $services = [];
+
+    try {
+        $status = fuelauHttpJsonRequest(fuelauServiceBaseUrl('photon') . '/status', [], 15);
+        if (strtolower((string) ($status['status'] ?? '')) !== 'ok') {
+            throw new FuelauUpstreamException('Photon status response was not healthy.');
+        }
+        $services['photon'] = [
+            'status' => 'ok',
+            'import_date' => (string) ($status['import_date'] ?? ''),
+        ];
+    } catch (Throwable $exception) {
+        error_log('FuelAU photon status probe failed: ' . $exception->getMessage());
+        $services['photon'] = [
+            'status' => 'unavailable',
+            'message' => fuelauPhotonUnavailableMessage(),
+        ];
+    }
 
     try {
         fuelauHttpJsonRequest(fuelauHttpBuildUrl(fuelauServiceBaseUrl('nominatim') . '/search', [
@@ -114,6 +132,252 @@ function fuelauNominatimUnavailableMessage(): string
     }
 
     return 'Geocoding service unavailable. Check `docker compose logs -f nominatim`.';
+}
+
+function fuelauPhotonUnavailableMessage(): string
+{
+    $service = fuelauDockerService('photon');
+    if (!is_array($service)) {
+        return 'Autocomplete service unavailable. Unable to inspect the Photon container.';
+    }
+
+    if (($service['has_container'] ?? false) !== true) {
+        return 'Autocomplete service unavailable. Start it with `docker compose --profile routing up -d photon`.';
+    }
+
+    $displayState = strtolower((string) ($service['display_state'] ?? ''));
+    $displayStatus = strtolower((string) ($service['display_status'] ?? ''));
+    if (str_contains($displayStatus, 'health: starting')) {
+        return 'Autocomplete service is still opening its index. Try again shortly.';
+    }
+    if (str_contains($displayStatus, 'unhealthy')) {
+        return 'Autocomplete service is unhealthy. Check `docker compose logs -f photon`.';
+    }
+    if ($displayState !== '' && $displayState !== 'running') {
+        return 'Autocomplete service is not running. Start it with `docker compose --profile routing up -d photon`.';
+    }
+
+    return 'Autocomplete service unavailable. Check `docker compose logs -f photon`.';
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function fuelauAutocompleteProvider(array $config): string
+{
+    $provider = strtolower(trim((string) ($config['GEOCODER_AUTOCOMPLETE_PROVIDER'] ?? 'photon')));
+    if (!in_array($provider, ['photon', 'nominatim'], true)) {
+        throw new RuntimeException('GEOCODER_AUTOCOMPLETE_PROVIDER must be photon or nominatim.');
+    }
+
+    return $provider;
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function fuelauPhotonSearch(string $query, int $limit = 10): array
+{
+    $query = fuelauValidateNominatimQuery($query);
+    $limit = max(1, min(50, $limit));
+    $payload = fuelauHttpJsonRequest(
+        fuelauHttpBuildUrl(fuelauServiceBaseUrl('photon') . '/api', [
+            'q' => $query,
+            'lang' => 'en',
+            'limit' => $limit,
+        ]),
+        [],
+        10,
+    );
+    $features = $payload['features'] ?? null;
+    if (($payload['type'] ?? null) !== 'FeatureCollection' || !is_array($features)) {
+        throw new FuelauUpstreamException('Photon returned an invalid GeoJSON response.');
+    }
+
+    $results = [];
+    foreach ($features as $feature) {
+        if (!is_array($feature)) {
+            continue;
+        }
+        $properties = is_array($feature['properties'] ?? null) ? $feature['properties'] : [];
+        $geometry = is_array($feature['geometry'] ?? null) ? $feature['geometry'] : [];
+        $coordinates = is_array($geometry['coordinates'] ?? null) ? $geometry['coordinates'] : [];
+        $longitude = isset($coordinates[0]) && is_numeric($coordinates[0]) ? (float) $coordinates[0] : null;
+        $latitude = isset($coordinates[1]) && is_numeric($coordinates[1]) ? (float) $coordinates[1] : null;
+        $countryCode = strtoupper(trim((string) ($properties['countrycode'] ?? '')));
+        if ($longitude === null || $latitude === null || $countryCode !== 'AU') {
+            continue;
+        }
+        try {
+            fuelauValidateCoordinates($latitude, $longitude);
+        } catch (FuelauValidationException) {
+            continue;
+        }
+
+        $address = fuelauPhotonAddress($properties);
+        $displayName = fuelauPhotonDisplayName($properties, $address);
+        $item = [
+            'class' => (string) ($properties['osm_key'] ?? ''),
+            'type' => (string) ($properties['type'] ?? $properties['osm_value'] ?? ''),
+            'display_name' => $displayName,
+        ];
+        $tier = fuelauNominatimLookupTier($item);
+        $results[] = [
+            'provider' => 'photon',
+            'place_id' => 'photon-' . (string) ($properties['osm_type'] ?? '') . '-' . (string) ($properties['osm_id'] ?? ''),
+            'osm_type' => (string) ($properties['osm_type'] ?? ''),
+            'osm_id' => (string) ($properties['osm_id'] ?? ''),
+            'display_name' => $displayName,
+            'label' => fuelauPhotonLabel($properties, $address),
+            'lat' => $latitude,
+            'lon' => $longitude,
+            'class' => (string) ($item['class'] ?? ''),
+            'type' => (string) ($item['type'] ?? ''),
+            'tier' => $tier,
+            'is_fallback' => $tier >= 3,
+            'importance' => 0.0,
+            'score' => 0.0,
+            'address' => $address,
+        ];
+    }
+
+    return array_slice($results, 0, $limit);
+}
+
+/**
+ * @param array<string, mixed> $properties
+ * @return array<string, string>
+ */
+function fuelauPhotonAddress(array $properties): array
+{
+    $mapping = [
+        'house_number' => 'housenumber',
+        'road' => 'street',
+        'suburb' => 'locality',
+        'city_district' => 'district',
+        'city' => 'city',
+        'county' => 'county',
+        'state' => 'state',
+        'postcode' => 'postcode',
+        'country' => 'country',
+        'country_code' => 'countrycode',
+    ];
+    $address = [];
+    foreach ($mapping as $target => $source) {
+        $value = trim((string) ($properties[$source] ?? ''));
+        if ($value !== '') {
+            $address[$target] = $target === 'country_code' ? strtolower($value) : $value;
+        }
+    }
+
+    return $address;
+}
+
+/**
+ * @param array<string, mixed> $properties
+ * @param array<string, string> $address
+ */
+function fuelauPhotonDisplayName(array $properties, array $address): string
+{
+    $label = fuelauPhotonLabel($properties, $address);
+    $country = trim((string) ($address['country'] ?? ''));
+    if ($country === '' || str_contains(fuelauNormalizeLookupText($label), fuelauNormalizeLookupText($country))) {
+        return $label;
+    }
+
+    return "{$label}, {$country}";
+}
+
+/**
+ * @param array<string, mixed> $properties
+ * @param array<string, string> $address
+ */
+function fuelauPhotonLabel(array $properties, array $address): string
+{
+    $houseNumber = trim((string) ($address['house_number'] ?? ''));
+    $street = trim((string) ($address['road'] ?? ''));
+    $name = trim((string) ($properties['name'] ?? ''));
+    if ($houseNumber !== '' && $street !== '') {
+        $primary = "{$houseNumber} {$street}";
+    } elseif ($name !== '') {
+        $primary = $name;
+    } else {
+        $primary = $street;
+    }
+
+    $parts = array_filter([
+        $primary,
+        (string) ($address['suburb'] ?? ''),
+        (string) ($address['city_district'] ?? ''),
+        (string) ($address['city'] ?? ''),
+        (string) ($address['state'] ?? ''),
+        (string) ($address['postcode'] ?? ''),
+    ]);
+    $unique = [];
+    foreach ($parts as $part) {
+        $normalized = fuelauNormalizeLookupText($part);
+        if ($normalized !== '' && !isset($unique[$normalized])) {
+            $unique[$normalized] = trim($part);
+        }
+    }
+
+    return implode(', ', $unique);
+}
+
+/**
+ * @return list<array<string, mixed>>
+ */
+function fuelauCachedPhotonSearch(
+    string $query,
+    int $limit,
+    string $cacheDirectory,
+    int $ttlSeconds = 3600,
+): array {
+    $query = fuelauValidateNominatimQuery($query);
+    $limit = max(1, min(50, $limit));
+    $cacheKey = hash('sha256', 'photon-v2|' . strtolower($query) . '|' . $limit);
+
+    return fuelauRememberArray(
+        rtrim($cacheDirectory, '/') . "/photon-autocomplete-{$cacheKey}.json",
+        $ttlSeconds,
+        static fn (): array => fuelauPhotonSearch($query, $limit),
+    );
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array{provider: string, fallback: bool, results: list<array<string, mixed>>}
+ */
+function fuelauAutocompleteSearch(
+    string $query,
+    int $limit,
+    array $config,
+    string $cacheDirectory,
+): array {
+    $provider = fuelauAutocompleteProvider($config);
+    if ($provider === 'nominatim') {
+        return [
+            'provider' => 'nominatim',
+            'fallback' => false,
+            'results' => fuelauCachedNominatimSearch($query, $limit, $cacheDirectory),
+        ];
+    }
+
+    try {
+        $results = fuelauCachedPhotonSearch($query, $limit, $cacheDirectory);
+        if ($results !== []) {
+            return ['provider' => 'photon', 'fallback' => false, 'results' => $results];
+        }
+        error_log("FuelAU Photon autocomplete returned no results for a bounded query; trying Nominatim fallback.");
+    } catch (FuelauUpstreamException $exception) {
+        error_log('FuelAU Photon autocomplete failed; trying Nominatim fallback: ' . $exception->getMessage());
+    }
+
+    return [
+        'provider' => 'nominatim',
+        'fallback' => true,
+        'results' => fuelauCachedNominatimSearch($query, $limit, $cacheDirectory),
+    ];
 }
 
 function fuelauNominatimSearch(string $query, int $limit = 10): array

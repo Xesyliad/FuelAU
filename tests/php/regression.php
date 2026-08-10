@@ -194,6 +194,67 @@ fuelauTest('geocoding results obey requested limit', static function (): void {
     fuelauAssertSame([['id' => 1]], $results);
 });
 
+fuelauTest('Photon is the default autocomplete provider and normalizes its address shape', static function (): void {
+    fuelauAssertSame('photon', fuelauAutocompleteProvider([]));
+    fuelauAssertSame('nominatim', fuelauAutocompleteProvider([
+        'GEOCODER_AUTOCOMPLETE_PROVIDER' => 'nominatim',
+    ]));
+    fuelauAssertThrows(
+        RuntimeException::class,
+        static fn (): string => fuelauAutocompleteProvider(['GEOCODER_AUTOCOMPLETE_PROVIDER' => 'invalid']),
+        'Invalid autocomplete providers must be rejected',
+    );
+
+    $properties = [
+        'housenumber' => '10',
+        'street' => 'Ann Street',
+        'city' => 'Brisbane',
+        'state' => 'Queensland',
+        'postcode' => '4000',
+        'country' => 'Australia',
+        'countrycode' => 'AU',
+    ];
+    $address = fuelauPhotonAddress($properties);
+    fuelauAssertSame('10', $address['house_number'] ?? null);
+    fuelauAssertSame('Ann Street', $address['road'] ?? null);
+    fuelauAssertSame('au', $address['country_code'] ?? null);
+    fuelauAssertSame(
+        '10 Ann Street, Brisbane, Queensland, 4000, Australia',
+        fuelauPhotonDisplayName($properties, $address),
+    );
+    fuelauAssertSame(
+        '10 Ann Street, Brisbane, Queensland, 4000',
+        fuelauPhotonLabel($properties, $address),
+    );
+    fuelauAssertSame(
+        'Brisbane, Queensland',
+        fuelauPhotonLabel(
+            ['name' => 'Brisbane', 'type' => 'city'],
+            ['state' => 'Queensland', 'country' => 'Australia', 'country_code' => 'au'],
+        ),
+    );
+});
+
+fuelauTest('Photon autocomplete cache is versioned for normalized response changes', static function (): void {
+    $routingSource = file_get_contents(dirname(__DIR__, 2) . '/src/routing.php');
+    fuelauAssertTrue(is_string($routingSource), 'Unable to read routing.php');
+    fuelauAssertTrue(
+        str_contains($routingSource, "'photon-v2|'"),
+        'Photon autocomplete cache keys must include a response-schema version',
+    );
+});
+
+fuelauTest('autocomplete requires three characters and caps suggestion count', static function (): void {
+    fuelauAssertThrows(
+        FuelauValidationException::class,
+        static fn (): FuelauGeoAutocompleteRequest => FuelauGeoAutocompleteRequest::fromQuery(['q' => 'Br']),
+        'Two-character autocomplete queries must be rejected',
+    );
+    $request = FuelauGeoAutocompleteRequest::fromQuery(['q' => 'Bri', 'limit' => 50]);
+    fuelauAssertSame('Bri', $request->query);
+    fuelauAssertSame(10, $request->limit);
+});
+
 fuelauTest('geocoding retries transient and malformed upstream responses', static function (): void {
     fuelauAssertTrue(
         fuelauNominatimShouldRetrySearch(

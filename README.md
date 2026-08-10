@@ -326,7 +326,9 @@ If any fuel API credential is left at its sample placeholder value, the correspo
 
 ### Stage 3: Route Planning Without Local Map Tiles
 
-Use this stage to test Nominatim search, OSRM routing, route summaries, turn-by-turn legs, and fuel-stop planning. This stage does not require the local basemap tile build, but it does require routing/geocoding data.
+Use this stage to test Photon autocomplete, Nominatim final/reverse geocoding, OSRM routing, route summaries,
+turn-by-turn legs, and fuel-stop planning. This stage does not require the local basemap tile build, but it does
+require routing/geocoding data.
 
 1. Build OSRM data.
 
@@ -334,23 +336,28 @@ Use this stage to test Nominatim search, OSRM routing, route summaries, turn-by-
 docker compose --profile routing-setup up osrm-customize
 ```
 
-2. Start Nominatim and OSRM.
+2. Prepare Photon once, then start the geocoders, updater, and OSRM.
 
 ```bash
-docker compose --profile routing up -d nominatim osrm-routed
+sudo install -d -m 0755 -o 10001 -g 10001 var/docker/photon-input var/docker/photon-eval
+docker compose --profile photon-setup run --rm --no-deps photon-refresh
+docker compose --profile routing up -d photon photon-scheduler nominatim osrm-routed
 ```
 
 3. Watch service status.
 
 ```bash
 docker compose --profile routing ps
+docker compose --profile routing logs -f photon
+docker compose --profile routing logs -f photon-scheduler
 docker compose --profile routing logs -f nominatim
 docker compose --profile routing logs -f osrm-routed
 ```
 
 Expected result:
 
-- Origin and destination search suggestions work after Nominatim import is ready.
+- Origin and destination suggestions use Photon by default, with Nominatim fallback.
+- Final unresolved searches and reverse geocoding continue to use Nominatim.
 - Route Planning can build routes after OSRM data exists.
 - Fuel stops are calculated from imported fuel data.
 - The route map area may still lack a useful basemap until Stage 4 is complete.
@@ -360,6 +367,45 @@ Important notes:
 - Nominatim Australia import is large and can take hours.
 - OSRM setup downloads and processes the Australia OSM extract.
 - On Synology or NFS-backed storage, Nominatim may need host-side ownership fixes described in `Local Runtime State`.
+
+#### Photon autocomplete and automatic updates (Docker only)
+
+Photon is FuelAU's default autocomplete provider. Like Nominatim, its data import and API run through Docker
+Compose; Java and OpenSearch are not installed on the host. The same pinned `fuelau-photon:1.3.0` image is used by
+the updater, importer, validation server, and long-running service. Set `GEOCODER_AUTOCOMPLETE_PROVIDER=nominatim`
+in `config/app.env` for immediate rollback without deleting Photon data.
+
+Prepare the persistent directories for the container's non-root UID, build the image, and run the initial refresh:
+
+```bash
+sudo install -d -m 0755 -o 10001 -g 10001 var/docker/photon-input var/docker/photon-eval
+docker compose --profile photon-setup build photon-refresh
+docker compose --profile photon-setup run --rm --no-deps photon-refresh
+```
+
+The updater retrieves the publisher's checksum first and skips the large download when the snapshot is unchanged.
+For changed data, it verifies the complete snapshot, builds into a versioned directory, starts Photon against the
+new index, checks health and a Brisbane query, and atomically updates the `current` symlink only after validation.
+The current index and two rollback generations are retained by default.
+
+Start and inspect the loopback-only service and weekly scheduler with:
+
+```bash
+docker compose --profile routing up -d photon photon-scheduler
+docker compose --profile routing ps photon photon-scheduler
+curl --fail http://127.0.0.1:12322/status
+```
+
+The scheduler checks for updates at 02:15 each Monday in Brisbane time. An unchanged snapshot does not restart
+Photon. A changed snapshot is imported and validated before Photon is restarted, and scheduler output is written to
+`var/docker/app-logs/photon_refresh.log`. Run `scripts/run-photon-refresh.sh` for an immediate manual check.
+
+With both Photon and Nominatim running, compare them against the tracked Australian prefix, typo, postcode, remote,
+and street corpus with:
+
+```bash
+python3 scripts/benchmark-geocoders.py --runs 3
+```
 
 ### Stage 4: Full Local Map Display
 
@@ -413,6 +459,9 @@ Expected result:
 - `app`: PHP Apache runtime, API/UI, cron jobs, and Docker management API.
 - `db`: MariaDB 12.3.2 application database using a tested digest-pinned image.
 - `nominatim`: Australia geocoding service using the digest-pinned `mediagis/nominatim:5.3.2` image.
+- `photon`: default Australia autocomplete geocoder using the pinned Photon 1.3.0 image.
+- `photon-refresh`: verified, atomic one-shot Photon snapshot refresh.
+- `photon-scheduler`: weekly Docker CLI scheduler for Photon refreshes.
 - `osrm-download`: downloads the Australia OSM PBF for OSRM.
 - `osrm-extract`: builds the OSRM extract using the digest-pinned OSRM 26.8.0 Debian image.
 - `osrm-partition`: prepares OSRM MLD partitions.
@@ -438,7 +487,9 @@ Edit these files before starting the stack:
 
 Files containing real secrets are ignored by Git. Commit only `.env.sample`, `config/app-sample.env`, and `config/mysql-sample.env`.
 
-Set `FUELAU_HOST_PROJECT_ROOT` in `.env` when the project is not checked out at `/opt/FuelAU`. The `map-scheduler` container runs Docker Compose from inside Docker, so the project must be mounted at the same absolute path that exists on the Docker host.
+Set `FUELAU_HOST_PROJECT_ROOT` in `.env` when the project is not checked out at `/opt/FuelAU`. The `map-scheduler`
+and `photon-scheduler` containers run Docker Compose from inside Docker, so the project must be mounted at the same
+absolute path that exists on the Docker host.
 
 Current application-level config keys include:
 
@@ -451,6 +502,7 @@ Current application-level config keys include:
 - `NSW_FUEL_API_SECRET`
 - `NSW_FUEL_API_AUTHORIZATION_HEADER`
 - `VIC_SERVO_SAVER_API_KEY`
+- `GEOCODER_AUTOCOMPLETE_PROVIDER` (`photon` by default; `nominatim` for rollback)
 - `MAP_TILE_SERVER_URL`
 - `MAP_TILE_STYLE`
 
@@ -472,6 +524,8 @@ Project-owned runtime state is stored under `/opt/FuelAU/var/docker/`, which is 
 - `var/docker/db-data`: MariaDB data directory
 - `var/docker/nominatim-db`: Nominatim PostgreSQL data
 - `var/docker/nominatim-flatnode`: Nominatim flatnode data
+- `var/docker/photon-input`: last verified Australia Photon snapshot and checksums
+- `var/docker/photon-eval`: active and rollback Photon indexes
 - `var/docker/osrm-data`: downloaded and processed OSRM routing data
 - `var/docker/map-tiles`: Australia basemap tiles for the local map stack
 
@@ -507,9 +561,11 @@ Web UI:      http://localhost:18080/
 Health API:  http://localhost:18080/api/health
 OSRM:        http://localhost:15000/
 Nominatim:   http://localhost:18081/
+Photon:      http://localhost:12322/
 ```
 
-OSRM and Nominatim bind to `127.0.0.1` by default. Their ports are only active when those profile services are running.
+OSRM, Nominatim, and Photon bind to `127.0.0.1` by default. Their ports are only active when those profile services
+are running.
 
 ## Optional Services
 
@@ -531,7 +587,8 @@ Start the local basemap server and weekly rebuild scheduler:
 docker compose --profile map up -d map-server map-scheduler
 ```
 
-The basemap scheduler runs weekly after the first manual build. The routing setup and map build jobs are one-shot preprocessing services and do not stay running.
+The basemap and Photon schedulers run weekly after their first manual builds. The routing setup and map build jobs
+are one-shot preprocessing services and do not stay running.
 
 ## User Experience
 
@@ -546,7 +603,7 @@ The Fuel Prices tab has:
 
 The Route Planning tab has:
 
-- Origin and reorderable destinations with Nominatim-backed search suggestions.
+- Origin and reorderable destinations with Photon-backed suggestions and Nominatim fallback.
 - Fuel type, tank fill size, and fuel economy controls.
 - Direct-return or reverse-path return mode.
 - A MapLibre route map using the local `/tiles/` basemap when the map stack is running.
@@ -567,6 +624,7 @@ Current core endpoints:
 - `/api/fuel/current?source=all&limit=100`
 - `/api/fuel/current?source=all&q=sydney&fuel=DL&state=NSW&lat=-33.8688&lon=151.2093&radius_km=5`
 - `POST /api/fuel/route-candidates` with sampled route points, fuel, and corridor radius
+- `/api/geo/autocomplete?q=Syd&limit=5` (Photon by default, Nominatim fallback)
 - `/api/geo/search?q=Sydney&limit=5`
 - `/api/geo/reverse?lat=-33.8688&lon=151.2093`
 - `/api/route?coordinates=151.2093,-33.8688;151.2069,-33.8731`
@@ -827,6 +885,10 @@ Terrain starts at 03:05 and the basemap starts at 03:10 each Sunday in Brisbane 
 image has no timezone database, so `MAP_SCHEDULER_TZ` uses the POSIX value `AEST-10` by default. Its output goes to
 `var/docker/app-logs/terrain_build.log` and `var/docker/app-logs/map_build.log`.
 
+The weekly Photon refresh is handled by `photon-scheduler` at 02:15 each Monday in Brisbane time. It downloads only
+the publisher checksum when data is unchanged, and its output goes to `var/docker/app-logs/photon_refresh.log`.
+Both Docker CLI schedulers require the Docker socket and the correctly resolved `FUELAU_HOST_PROJECT_ROOT` mount.
+
 Useful checks:
 
 ```bash
@@ -839,6 +901,8 @@ docker compose exec app tail -f /var/log/fuelapi/nsw_sync.log
 docker compose exec app tail -f /var/log/fuelapi/vic_sync.log
 docker compose exec app tail -f /var/log/fuelapi/wa_sync.log
 docker compose --profile map logs -f map-scheduler
+docker compose --profile routing logs -f photon-scheduler
+tail -f var/docker/app-logs/photon_refresh.log
 ```
 
 ## Container Management
@@ -907,7 +971,7 @@ docker compose --profile routing-setup up osrm-customize
 Start routing services after OSRM data exists:
 
 ```bash
-docker compose --profile routing up -d nominatim osrm-routed
+docker compose --profile routing up -d photon photon-scheduler nominatim osrm-routed
 ```
 
 Or start all profile services:
@@ -1019,14 +1083,14 @@ Run the Python and shell checks used by CI:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests/python -p 'test_*.py' -v
-ruff check src tests/python scripts/build-terrain-mbtiles.py
+ruff check src tests/python scripts/build-terrain-mbtiles.py scripts/benchmark-geocoders.py
 mypy
 find docker scripts tests -type f \( -name '*.sh' -o -name run \) -print0 | xargs -0 shellcheck
 docker compose --env-file .env.sample --profile admin config --quiet
 node --check public/resources/app.js
 ```
 
-GitHub Actions also builds the application and map-builder images. `public/index.php` is a bootstrap-only entry point; HTTP dispatch and controllers live in `src/web.php` and `src/api.php`, immutable request DTOs live in `src/request.php`, and the page markup lives in `templates/app.php`. Browser CSS and JavaScript live in `public/resources/app.css` and `public/resources/app.js`; the remaining inline script contains only server-rendered configuration protected by a per-request CSP nonce. New HTTP modules are checked separately at PHPStan level 9 without raising the existing codebase-wide level or introducing a baseline.
+GitHub Actions also builds the application, map-builder, and Photon images. `public/index.php` is a bootstrap-only entry point; HTTP dispatch and controllers live in `src/web.php` and `src/api.php`, immutable request DTOs live in `src/request.php`, and the page markup lives in `templates/app.php`. Browser CSS and JavaScript live in `public/resources/app.css` and `public/resources/app.js`; the remaining inline script contains only server-rendered configuration protected by a per-request CSP nonce. New HTTP modules are checked separately at PHPStan level 9 without raising the existing codebase-wide level or introducing a baseline.
 
 ## Git Hygiene
 

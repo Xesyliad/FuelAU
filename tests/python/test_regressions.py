@@ -143,6 +143,37 @@ class ImporterFreshnessTests(unittest.TestCase):
 
         self.assertIn('TZ: "${MAP_SCHEDULER_TZ:-AEST-10}"', compose)
 
+    def test_photon_is_docker_only_scheduled_and_loopback_bound(self) -> None:
+        compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        dockerfile = (PROJECT_ROOT / "docker" / "photon" / "Dockerfile").read_text(encoding="utf-8")
+        refresh = (PROJECT_ROOT / "scripts" / "refresh-photon-index.sh").read_text(encoding="utf-8")
+        scheduler = (PROJECT_ROOT / "scripts" / "run-photon-refresh.sh").read_text(encoding="utf-8")
+
+        self.assertIn("photon-import:", compose)
+        self.assertIn("photon-refresh:", compose)
+        self.assertIn("photon-scheduler:", compose)
+        self.assertIn("photon-setup", compose)
+        self.assertIn("photon-eval-setup", compose)
+        self.assertIn("photon-eval", compose)
+        self.assertIn("- routing", compose)
+        self.assertIn('127.0.0.1:${PHOTON_HTTP_PORT:-12322}:2322', compose)
+        self.assertIn("./var/docker/photon-eval:/data", compose)
+        self.assertIn("USER 10001:10001", dockerfile)
+        self.assertIn("photon-1.3.0.jar", dockerfile)
+        self.assertIn("refresh-photon-index", dockerfile)
+        self.assertNotIn("java -jar", compose)
+        self.assertIn("md5sum --check", refresh)
+        self.assertIn("build-photon-index", refresh)
+        self.assertIn("publish_result unchanged", refresh)
+        self.assertIn("docker compose --profile routing restart photon", scheduler)
+        self.assertIn('PHOTON_REFRESH_CRON: "${PHOTON_REFRESH_CRON:-15 2 * * 1}"', compose)
+        self.assertIn('PHOTON_INDEX_RETENTION: "${PHOTON_INDEX_RETENTION:-3}"', compose)
+        self.assertIn(
+            "docker:29-cli@sha256:27a51d5ab1cd38d9eeaba7b415b8c07bc10c31e1cf1ec8d78f6413fcfab3f44f",
+            compose,
+        )
+        self.assertNotIn("/var/run/docker.sock", compose.split("  photon:\n", 1)[1].split("\n  ", 1)[0])
+
     def test_qld_cron_splits_prices_from_daily_reference(self) -> None:
         cron = (PROJECT_ROOT / "docker" / "cron.d" / "fuelau").read_text(encoding="utf-8")
         active_lines = [

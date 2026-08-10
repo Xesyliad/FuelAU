@@ -128,6 +128,27 @@ final readonly class FuelauGeoSearchRequest
     }
 }
 
+final readonly class FuelauGeoAutocompleteRequest
+{
+    public function __construct(
+        public string $query,
+        public int $limit,
+    ) {}
+
+    /**
+     * @param array<string, mixed> $query
+     */
+    public static function fromQuery(array $query): self
+    {
+        $search = FuelauGeoSearchRequest::fromQuery($query);
+        if (strlen($search->query) < 3) {
+            throw new FuelauValidationException('Autocomplete query must contain at least three characters.');
+        }
+
+        return new self($search->query, min(10, $search->limit));
+    }
+}
+
 final readonly class FuelauCoordinateRequest
 {
     public function __construct(

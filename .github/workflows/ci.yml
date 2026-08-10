@@ -66,7 +66,7 @@ jobs:
       - name: Run Python tests and analysis
         run: |
           PYTHONPATH=src python -m unittest discover -s tests/python -p 'test_*.py' -v
-          ruff check src tests/python scripts/build-terrain-mbtiles.py
+          ruff check src tests/python scripts/build-terrain-mbtiles.py scripts/benchmark-geocoders.py
           mypy
 
       - name: Validate shell, Compose, and rendered JavaScript
@@ -81,4 +81,4 @@ jobs:
             node --input-type=module -e 'let source=""; for await (const chunk of process.stdin) source += chunk; const scripts=[...source.matchAll(/<script(?:\s+nonce="[^"]+")?>([\s\S]*?)<\/script>/g)].map((match)=>match[1]); scripts.forEach((script)=>new Function(script));'
 
       - name: Build application containers
-        run: docker compose --env-file .env.sample build app map-build
+        run: docker compose --env-file .env.sample build app map-build photon
