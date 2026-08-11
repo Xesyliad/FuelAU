@@ -42,6 +42,8 @@ const fuelStopFinderPanel = document.getElementById('fuel-stop-finder');
 const fuelStopFinderState = document.getElementById('fuel-stop-finder-state');
 const fuelStopFinderStatus = document.getElementById('fuel-stop-finder-status');
 const fuelStopFinderDetail = document.getElementById('fuel-stop-finder-detail');
+const fuelStopFinderResults = document.getElementById('fuel-stop-finder-results');
+const fuelStopFinderResultsSummary = document.getElementById('fuel-stop-finder-results-summary');
 const fuelStopFinderSummary = document.getElementById('fuel-stop-finder-summary');
 const fuelStopFinderRecommendation = document.getElementById('fuel-stop-finder-recommendation');
 const fuelStopFinderMapLegend = document.getElementById('fuel-stop-finder-map-legend');
@@ -91,6 +93,7 @@ let activeMapWorkflow = 'fuel-prices';
 let mapCameraRestoreInProgress = false;
 const mapWorkflowCameras = new Map();
 const mapWorkflowStatuses = new Map();
+const mapWorkflowRouteFeatures = new Map();
 const mapWorkflowDefinitions = {
     'fuel-prices': {
         sourceIds: ['fuelau-prices-stations', 'fuelau-prices-highlights', 'fuelau-prices-selection'],
@@ -1254,6 +1257,10 @@ function renderFuelStopFinderRecommendation(stop, plan) {
 
     const scope = String(plan?.segments?.[0]?.routePieces?.find((piece) => piece.type === 'fuel-stop')?.selectionScope || '').trim();
     const wazeLink = routeFuelWazeLink(stop);
+    const latitude = Number(stop.latitude ?? stop.lat ?? Number.NaN);
+    const longitude = Number(stop.longitude ?? stop.lon ?? Number.NaN);
+    const canFocus = Number.isFinite(latitude) && Number.isFinite(longitude)
+        && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
     fuelStopFinderRecommendation.innerHTML = `
         <div class="fuel-stop-finder-card">
             <strong>${escapeHtml(routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')}</strong>
@@ -1261,9 +1268,17 @@ function renderFuelStopFinderRecommendation(stop, plan) {
             <span>Price: ${escapeHtml(routeFuelPriceText(stop.price) || '$0.00')}/L</span>
             <span>Route detour: ${escapeHtml(Number(stop.offRouteDistanceKm || 0).toFixed(1))} km</span>
             <span>Selected because it is the cheapest eligible stop${scope !== '' ? ` within the ${escapeHtml(scope)} detour window` : ''}.</span>
+            ${canFocus ? `<button class="route-map-focus-button" type="button" data-route-map-focus data-map-workflow="fuel-stop-finder" data-focus-latitude="${latitude}" data-focus-longitude="${longitude}" aria-pressed="false">Show recommended stop on map</button>` : ''}
             ${wazeLink}
         </div>
     `;
+    fuelStopFinderRecommendation.querySelector('[data-route-map-focus]')?.addEventListener('click', (event) => {
+        const control = event.currentTarget;
+        focusRouteWorkflowOnMap('fuel-stop-finder', {
+            latitude: control.dataset.focusLatitude,
+            longitude: control.dataset.focusLongitude,
+        }, control);
+    });
 }
 
 function renderFuelStopFinderSummary(plan, stop, fuelQuery) {
@@ -2631,6 +2646,99 @@ function routeMapPadding() {
     };
 }
 
+function clearRouteWorkflowFocus(workflow) {
+    const prefix = workflow === 'fuel-stop-finder' ? 'fuelau-stop-finder' : 'fuelau-route-planner';
+    try {
+        if (fuelMapInstance?.getLayer(`${prefix}-lines`)) {
+            fuelMapInstance.setPaintProperty(`${prefix}-lines`, 'line-width', 5);
+            fuelMapInstance.setPaintProperty(`${prefix}-lines`, 'line-opacity', 0.92);
+        }
+    } catch (error) {
+        void error;
+    }
+    mapWorkflowMarkers(workflow).forEach((marker) => {
+        marker?.getElement?.()?.classList.remove('is-focused');
+    });
+    document.querySelectorAll(`[data-route-map-focus][data-map-workflow="${workflow}"]`).forEach((control) => {
+        control.setAttribute('aria-pressed', 'false');
+    });
+}
+
+function focusRouteWorkflowOnMap(workflow, options = {}, control = null) {
+    if (!fuelMapInstance || !fuelMapReady || workflow !== activeMapWorkflow) {
+        return false;
+    }
+    const prefix = workflow === 'fuel-stop-finder' ? 'fuelau-stop-finder' : 'fuelau-route-planner';
+    const latitude = options.latitude !== '' && options.latitude !== null && options.latitude !== undefined
+        ? Number(options.latitude)
+        : Number.NaN;
+    const longitude = options.longitude !== '' && options.longitude !== null && options.longitude !== undefined
+        ? Number(options.longitude)
+        : Number.NaN;
+    const legNumber = Number(options.leg);
+    clearRouteWorkflowFocus(workflow);
+    if (control) {
+        control.setAttribute('aria-pressed', 'true');
+    }
+
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)
+        && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+        mapWorkflowMarkers(workflow).forEach((marker) => {
+            const markerPosition = marker?.getLngLat?.();
+            const matches = markerPosition
+                && Math.abs(Number(markerPosition.lat) - latitude) < 0.00001
+                && Math.abs(Number(markerPosition.lng) - longitude) < 0.00001;
+            marker?.getElement?.()?.classList.toggle('is-focused', Boolean(matches));
+        });
+        fuelMapInstance.easeTo({
+            center: [longitude, latitude],
+            zoom: Math.max(fuelMapInstance.getZoom(), 14),
+            padding: routeMapPadding(),
+            retainPadding: false,
+            duration: 400,
+        });
+        return true;
+    }
+
+    if (!Number.isInteger(legNumber) || legNumber < 1) {
+        return false;
+    }
+    const legFeatures = (mapWorkflowRouteFeatures.get(workflow) || []).filter((feature) => (
+        Number(feature?.properties?.segment_index) === legNumber
+    ));
+    const bounds = new maplibregl.LngLatBounds();
+    let coordinateCount = 0;
+    legFeatures.forEach((feature) => {
+        (Array.isArray(feature?.geometry?.coordinates) ? feature.geometry.coordinates : []).forEach((coordinate) => {
+            const featureLongitude = Number(coordinate?.[0]);
+            const featureLatitude = Number(coordinate?.[1]);
+            if (Number.isFinite(featureLatitude) && Number.isFinite(featureLongitude)) {
+                bounds.extend([featureLongitude, featureLatitude]);
+                coordinateCount += 1;
+            }
+        });
+    });
+    if (coordinateCount === 0) {
+        return false;
+    }
+    try {
+        fuelMapInstance.setPaintProperty(`${prefix}-lines`, 'line-width', [
+            'case', ['==', ['get', 'segment_index'], legNumber], 7, 3,
+        ]);
+        fuelMapInstance.setPaintProperty(`${prefix}-lines`, 'line-opacity', [
+            'case', ['==', ['get', 'segment_index'], legNumber], 1, 0.24,
+        ]);
+    } catch (error) {
+        void error;
+    }
+    fuelMapInstance.fitBounds(bounds, {
+        padding: routeMapPadding(),
+        maxZoom: 14,
+        duration: 400,
+    });
+    return true;
+}
+
 function setGeoJsonSourceData(map, sourceId, features) {
     const data = emptyMapFeatureCollection(features);
     const source = map.getSource(sourceId);
@@ -2734,6 +2842,8 @@ function addRouteWorkflowLayers(map, workflow) {
 
 function renderSharedRouteWorkflow(workflow, routeFeatures, markerFeatures, bounds) {
     const legend = workflow === 'fuel-stop-finder' ? fuelStopFinderMapLegend : routeMapLegend;
+    clearRouteWorkflowFocus(workflow);
+    mapWorkflowRouteFeatures.set(workflow, routeFeatures);
     if (!window.maplibregl) {
         setMapWorkflowStatus(workflow, 'Route map unavailable in this browser.', 'error');
         legend.innerHTML = '';
@@ -2813,6 +2923,8 @@ function renderSharedRouteWorkflow(workflow, routeFeatures, markerFeatures, boun
 }
 
 function clearRouteWorkflow(workflow, message) {
+    clearRouteWorkflowFocus(workflow);
+    mapWorkflowRouteFeatures.delete(workflow);
     const definition = mapWorkflowDefinitions[workflow];
     definition?.sourceIds.forEach((sourceId) => {
         try {
@@ -3079,7 +3191,8 @@ function renderFuelStopFinderMap(plan) {
     renderSharedRouteWorkflow('fuel-stop-finder', routeFeatures, markerFeatures, bounds);
 }
 
-function renderRouteBreakdownInto(targetElement, plan) {
+function renderRouteBreakdownInto(targetElement, plan, options = {}) {
+    const workflow = String(options.workflow || '');
     const rows = [];
     const optimizerStopProgressByNodeId = new Map(
         (Array.isArray(plan?.optimizerResponse?.stops) ? plan.optimizerResponse.stops : [])
@@ -3186,6 +3299,8 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
                         wazeUrl: routeFuelWazeUrl(piece.station),
                         stationName: String(piece.station.station_name || 'fuel station'),
+                        focusLatitude: Number(piece.station.latitude ?? piece.station.lat ?? Number.NaN),
+                        focusLongitude: Number(piece.station.longitude ?? piece.station.lon ?? Number.NaN),
                         routeOrder: Number(piece.routeProgressKm || 0),
                         typeOrder: 1,
                     });
@@ -3214,6 +3329,8 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
                         wazeUrl: routeFuelWazeUrl(piece.station),
                         stationName: String(piece.station.station_name || 'fuel station'),
+                        focusLatitude: Number(piece.station.latitude ?? piece.station.lat ?? Number.NaN),
+                        focusLongitude: Number(piece.station.longitude ?? piece.station.lon ?? Number.NaN),
                         routeOrder: Number(piece.routeProgressKm || 0),
                         typeOrder: 1,
                     });
@@ -3266,12 +3383,21 @@ function renderRouteBreakdownInto(targetElement, plan) {
                 </tr>
             </thead>
             <tbody>
-                ${displayRows.map((row) => `
+                ${displayRows.map((row) => {
+                    const focusLeg = Number(row.leg);
+                    const focusLatitude = Number(row.focusLatitude);
+                    const focusLongitude = Number(row.focusLongitude);
+                    const canFocusPoint = Number.isFinite(focusLatitude) && Number.isFinite(focusLongitude);
+                    const canFocusLeg = Number.isInteger(focusLeg) && focusLeg > 0;
+                    const focusMarkup = workflow !== '' && (canFocusPoint || canFocusLeg)
+                        ? `<button class="route-breakdown-focus" type="button" data-route-map-focus data-map-workflow="${escapeHtml(workflow)}" data-focus-leg="${canFocusLeg ? focusLeg : ''}" data-focus-latitude="${canFocusPoint ? focusLatitude : ''}" data-focus-longitude="${canFocusPoint ? focusLongitude : ''}" aria-pressed="false" aria-label="Focus on map: ${escapeHtml(row.instruction)}">${escapeHtml(row.instruction)}</button>`
+                        : `<span class="route-breakdown-step">${escapeHtml(row.instruction)}</span>`;
+                    return `
                     <tr class="${row.additionalFuelRequired ? 'route-breakdown-row route-breakdown-additional' : (row.type === 'Fuel stop' ? 'route-breakdown-row route-breakdown-stop' : 'route-breakdown-row')}">
                         <td>${escapeHtml(String(row.leg))}</td>
                         <td>${escapeHtml(row.type)}</td>
                         <td>
-                            <span class="route-breakdown-step">${escapeHtml(row.instruction)}</span>
+                            ${focusMarkup}
                         </td>
                         <td>${escapeHtml(row.distance)}</td>
                         <td>${escapeHtml(row.duration)}</td>
@@ -3280,10 +3406,20 @@ function renderRouteBreakdownInto(targetElement, plan) {
                             ${row.wazeUrl ? `<a class="waze-navigation-link route-breakdown-waze" href="${escapeHtml(row.wazeUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Navigate with Waze: ${escapeHtml(row.stationName || 'fuel station')}">Navigate with Waze</a>` : ''}
                         </td>
                     </tr>
-                `).join('')}
+                `;
+                }).join('')}
             </tbody>
         </table>
     `;
+    targetElement.querySelectorAll('[data-route-map-focus]').forEach((control) => {
+        control.addEventListener('click', () => {
+            focusRouteWorkflowOnMap(workflow, {
+                leg: control.dataset.focusLeg,
+                latitude: control.dataset.focusLatitude,
+                longitude: control.dataset.focusLongitude,
+            }, control);
+        });
+    });
 }
 
 function renderRouteBreakdown(plan) {
@@ -3634,6 +3770,9 @@ function markFuelStopFinderInputChanged() {
     }
 
     setFuelStopFinderWorkflowState('stale');
+    if (fuelStopFinderResultsSummary) {
+        fuelStopFinderResultsSummary.textContent = 'Inputs changed · results need recalculating';
+    }
     fuelStopFinderStatus.classList.remove('route-status-warning');
     fuelStopFinderStatus.textContent = 'Trip inputs changed. Find the best stop again to refresh this route.';
 }
@@ -3648,6 +3787,12 @@ function resetFuelStopFinder(options = {}) {
     fuelStopFinderStatus.classList.remove('route-status-error');
     fuelStopFinderHasResult = false;
     setFuelStopFinderWorkflowState('input');
+    if (fuelStopFinderResults) {
+        fuelStopFinderResults.open = false;
+    }
+    if (fuelStopFinderResultsSummary) {
+        fuelStopFinderResultsSummary.textContent = 'Plan a trip to see a recommendation';
+    }
     fuelStopFinderDetail.textContent = '';
     fuelStopFinderSummary.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
     fuelStopFinderRecommendation.innerHTML = '';
@@ -3668,16 +3813,25 @@ async function planFuelStopFinder() {
 
     if (originValue === '') {
         setFuelStopFinderWorkflowState('error');
+        if (fuelStopFinderResultsSummary) {
+            fuelStopFinderResultsSummary.textContent = 'Review the trip inputs';
+        }
         fuelStopFinderStatus.textContent = 'Origin is required.';
         return;
     }
     if (destinationValue === '') {
         setFuelStopFinderWorkflowState('error');
+        if (fuelStopFinderResultsSummary) {
+            fuelStopFinderResultsSummary.textContent = 'Review the trip inputs';
+        }
         fuelStopFinderStatus.textContent = 'Destination is required.';
         return;
     }
     if (economy <= 0) {
         setFuelStopFinderWorkflowState('error');
+        if (fuelStopFinderResultsSummary) {
+            fuelStopFinderResultsSummary.textContent = 'Review the trip inputs';
+        }
         fuelStopFinderStatus.textContent = 'Fuel economy must be greater than zero.';
         return;
     }
@@ -3685,6 +3839,12 @@ async function planFuelStopFinder() {
     fuelStopFinderPlan.disabled = true;
     fuelStopFinderHasResult = false;
     setFuelStopFinderWorkflowState('calculating');
+    if (fuelStopFinderResults) {
+        fuelStopFinderResults.open = false;
+    }
+    if (fuelStopFinderResultsSummary) {
+        fuelStopFinderResultsSummary.textContent = 'Calculating the best stop';
+    }
     fuelStopFinderStatus.textContent = 'Resolving locations and searching for the best fuel stop...';
     fuelStopFinderStatus.classList.remove('route-status-warning');
     fuelStopFinderStatus.classList.remove('route-status-error');
@@ -3712,9 +3872,18 @@ async function planFuelStopFinder() {
         renderFuelStopFinderSummary(plan, stop, fuelQuery);
         renderFuelStopFinderRecommendation(stop, plan);
         renderFuelStopFinderMap(plan);
-        renderRouteBreakdownInto(fuelStopFinderLegs, plan);
+        renderRouteBreakdownInto(fuelStopFinderLegs, plan, { workflow: 'fuel-stop-finder' });
         fuelStopFinderHasResult = true;
         setFuelStopFinderWorkflowState('result');
+        if (fuelStopFinderResults) {
+            fuelStopFinderResults.open = true;
+        }
+        if (fuelStopFinderResultsSummary) {
+            const resultLabel = stop
+                ? (routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')
+                : 'Route ready · no eligible stop';
+            fuelStopFinderResultsSummary.textContent = `${resultLabel} · ${formatRouteDistance(plan.totalDistanceM || 0)}`;
+        }
         saveFuelStopFinderState(true);
 
         fuelStopFinderDetail.textContent = `Evaluating ${fuelQuery || 'Diesel'} stations along the route and selecting the cheapest eligible stop with a sensible detour.`;
@@ -3735,6 +3904,12 @@ async function planFuelStopFinder() {
         fuelStopFinderMapLegend.innerHTML = '';
         fuelStopFinderLegs.innerHTML = renderRouteEmpty(error.message);
         fuelStopFinderDetail.textContent = '';
+        if (fuelStopFinderResults) {
+            fuelStopFinderResults.open = true;
+        }
+        if (fuelStopFinderResultsSummary) {
+            fuelStopFinderResultsSummary.textContent = 'Unable to build this route';
+        }
     } finally {
         fuelStopFinderPlan.disabled = false;
     }

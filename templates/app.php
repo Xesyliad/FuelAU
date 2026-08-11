@@ -229,16 +229,27 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                         <div class="status-line route-status-muted" id="fuel-stop-finder-detail"></div>
                     </section>
 
-                    <section class="surface-block">
-                        <h2>Trip Summary</h2>
-                        <div class="route-summary-grid" id="fuel-stop-finder-summary"></div>
-                        <div class="fuel-stop-finder-recommendation" id="fuel-stop-finder-recommendation"></div>
-                    </section>
-
-                    <section class="surface-block">
-                        <h2>Route Breakdown</h2>
-                        <div id="fuel-stop-finder-legs"></div>
-                    </section>
+                    <details class="panel-disclosure fuel-stop-results-disclosure" id="fuel-stop-finder-results">
+                        <summary>
+                            <span>Route results</span>
+                            <small id="fuel-stop-finder-results-summary">Plan a trip to see a recommendation</small>
+                        </summary>
+                        <div class="fuel-stop-results-content">
+                            <section class="fuel-stop-result-section fuel-stop-recommendation-section">
+                                <h2>Recommended stop</h2>
+                                <div class="fuel-stop-finder-recommendation" id="fuel-stop-finder-recommendation"></div>
+                            </section>
+                            <section class="fuel-stop-result-section">
+                                <h2>Trip summary</h2>
+                                <div class="route-summary-grid" id="fuel-stop-finder-summary"></div>
+                            </section>
+                            <section class="fuel-stop-result-section">
+                                <h2>Route breakdown</h2>
+                                <p>Select a route instruction or fuel stop to focus it on the map.</p>
+                                <div id="fuel-stop-finder-legs"></div>
+                            </section>
+                        </div>
+                    </details>
                 </div>
             </div>
             <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab">
