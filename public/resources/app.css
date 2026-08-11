@@ -1989,6 +1989,69 @@ textarea {
     outline: none;
 }
 
+.snapshot-table tr.is-selected td {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.snapshot-table tr.is-selected td:first-child {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.snapshot-station-select[aria-pressed="true"] {
+    color: var(--accent);
+}
+
+.route-workflow-status {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+}
+
+.route-workflow-status .status-line {
+    flex: 1 1 auto;
+    margin: 0;
+}
+
+.route-workflow-state {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-height: 25px;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--control-bg);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+#fuel-stop-finder[data-workflow-state="calculating"] .route-workflow-state {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+#fuel-stop-finder[data-workflow-state="result"] .route-workflow-state {
+    border-color: color-mix(in srgb, #16a34a 60%, var(--border));
+    background: color-mix(in srgb, #16a34a 12%, var(--surface));
+    color: #15803d;
+}
+
+#fuel-stop-finder[data-workflow-state="stale"] .route-workflow-state,
+#fuel-stop-finder[data-workflow-state="error"] .route-workflow-state {
+    border-color: color-mix(in srgb, #d97706 60%, var(--border));
+    background: color-mix(in srgb, #d97706 12%, var(--surface));
+    color: #b45309;
+}
+
+#fuel-stop-finder[data-workflow-state="stale"] .fuel-stop-finder-recommendation,
+#fuel-stop-finder[data-workflow-state="stale"] #fuel-stop-finder-summary,
+#fuel-stop-finder[data-workflow-state="stale"] #fuel-stop-finder-legs {
+    opacity: 0.62;
+}
+
 .map-overlay-legend {
     position: absolute;
     z-index: 5;
