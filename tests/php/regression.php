@@ -2774,8 +2774,8 @@ fuelauTest('shared map prevents repeated hidden viewport refreshes', static func
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
     fuelauAssertTrue(
-        str_contains($source, 'function fuelPricesTabIsActive()'),
-        'Viewport refreshes must check whether the fuel tab is active'
+        str_contains($source, 'function fuelPricesToolIsActive()'),
+        'Viewport refreshes must check whether the fuel-price tool is active'
     );
     fuelauAssertTrue(
         str_contains($source, 'requestKey === fuelMapViewportLastRequestKey'),

@@ -614,6 +614,9 @@ The Route Planning tool has:
 - Reserve warnings are shown under the route button in red, and the planner continues into later legs instead of stopping the whole trip.
 - Route stations that are skipped because they have no government pricing or no price are listed under the route button with the station name, address, and exclusion reason.
 
+Release acceptance checks and the presentation-only rollback procedure are documented in
+[`docs/operations/ui-refresh-rollout.md`](docs/operations/ui-refresh-rollout.md).
+
 ## App API
 
 The frontend should use the app-owned API under `http://localhost:18080/api/` rather than talking directly to Nominatim or OSRM on separate ports.

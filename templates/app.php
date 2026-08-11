@@ -91,22 +91,22 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             </div>
         </header>
 
-        <nav class="tabs tool-navigation" role="tablist" aria-label="Map tools">
-            <button class="tab tool-button" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab" data-tool-title="Explore prices">
+        <nav class="tool-navigation" aria-label="Map tools">
+            <button class="tool-button" type="button" aria-pressed="true" aria-controls="fuel-prices" id="fuel-prices-tool" data-tool-title="Explore prices">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 10.5 1H20v9.5L13.5 17 4 7.5Zm11-2.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5Z"/></svg>
                 <span>Prices</span>
             </button>
-            <button class="tab tool-button" type="button" role="tab" aria-selected="false" aria-controls="fuel-stop-finder" id="fuel-stop-finder-tab" data-tool-title="Find a fuel stop" tabindex="-1">
+            <button class="tool-button" type="button" aria-pressed="false" aria-controls="fuel-stop-finder" id="fuel-stop-finder-tool" data-tool-title="Find a fuel stop">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10v18H5V3Zm2 2v6h6V5H7Zm9 3h2l2 3v7.5a2.5 2.5 0 0 1-5 0V16h2v2.5a.5.5 0 0 0 1 0V12l-2-2V8Z"/></svg>
                 <span>Fuel stop</span>
             </button>
-            <button class="tab tool-button" type="button" role="tab" aria-selected="false" aria-controls="route-planning" id="route-planning-tab" data-tool-title="Route planning" tabindex="-1">
+            <button class="tool-button" type="button" aria-pressed="false" aria-controls="route-planning" id="route-planning-tool" data-tool-title="Route planning">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm12 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM8.5 6H14a4 4 0 0 1 0 8h-4a2 2 0 0 0 0 4h5.5v2H10a4 4 0 0 1 0-8h4a2 2 0 0 0 0-4H8.5V6Z"/></svg>
                 <span>Route</span>
             </button>
         </nav>
         <?php if ($containerManagementEnabled): ?>
-        <button type="button" id="container-management-tab" aria-controls="container-management" aria-selected="false" data-tool-title="Container management" hidden></button>
+        <button type="button" id="container-management-tool" aria-controls="container-management" aria-pressed="false" data-tool-title="Container management" hidden></button>
         <?php endif; ?>
 
         <button class="sheet-reopen" type="button" id="workspace-sheet-reopen" aria-controls="workspace-sheet" aria-label="Open active tool panel">
@@ -126,7 +126,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             </header>
 
             <section class="content">
-            <div class="panel active" role="tabpanel" id="fuel-prices" aria-labelledby="fuel-prices-tab">
+            <div class="panel active" id="fuel-prices" data-tool-panel role="region" aria-label="Fuel prices">
                 <h1>Fuel Prices</h1>
                 <p>Compare current prices, inspect nearby stations, and open trends when you need more detail.</p>
 
@@ -193,7 +193,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
 
                 </div>
             </div>
-            <div class="panel" role="tabpanel" id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab" data-workflow-state="input">
+            <div class="panel" id="fuel-stop-finder" data-tool-panel role="region" aria-label="Fuel stop finder" data-workflow-state="input" hidden>
                 <h1>Fuel Stop Finder</h1>
                 <p>Enter an origin, destination, fuel type, and fuel economy. The planner will find the best station to fill up at between the two points while keeping the route detour sensible.</p>
 
@@ -262,7 +262,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                     </details>
                 </div>
             </div>
-            <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab" data-workflow-state="input">
+            <div class="panel" id="route-planning" data-tool-panel role="region" aria-label="Route planning" data-workflow-state="input" hidden>
                 <h1>Route Planning</h1>
                 <p>Plan routes through the app-owned geocoding and routing API. Add multiple destinations, reorder them, and choose how the return leg behaves.</p>
 
@@ -384,7 +384,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 </div>
             </div>
             <?php if ($containerManagementEnabled): ?>
-            <div class="panel admin-panel" role="tabpanel" id="container-management" aria-labelledby="open-container-management" tabindex="-1">
+            <div class="panel admin-panel" id="container-management" data-tool-panel role="region" aria-label="Container management" tabindex="-1" hidden>
                 <h1>Container Management</h1>
                 <p>Status, logs, restart controls, and constrained cleanup tasks for this Compose project.</p>
 
