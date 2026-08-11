@@ -52,22 +52,70 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             'containerManagementEnabled' => $containerManagementEnabled,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
-    <main class="app-shell">
-        <nav class="tabs" aria-label="Primary">
-            <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab">Fuel Prices</button>
-            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="fuel-stop-finder" id="fuel-stop-finder-tab">Fuel Stop Finder</button>
-            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="route-planning" id="route-planning-tab">Route Planning</button>
-            <?php if ($containerManagementEnabled): ?>
-            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab">Container Management</button>
-            <?php endif; ?>
+    <main class="app-shell" data-active-tool="fuel-prices">
+        <section class="map-stage" aria-label="FuelAU map workspace">
+            <div class="map-view base-map-view active" data-map-view="shared" aria-hidden="false">
+                <div class="fuel-map-frame" id="fuel-map"></div>
+                <div class="map-status-overlay" id="map-status-overlay" role="status" aria-live="polite" hidden></div>
+                <div class="fuel-map-legend map-overlay-legend" id="fuel-map-legend" data-map-legend="fuel-prices"></div>
+                <div class="route-map-legend map-overlay-legend" id="fuel-stop-finder-map-legend" data-map-legend="fuel-stop-finder" hidden></div>
+                <div class="route-map-legend map-overlay-legend" id="route-map-legend" data-map-legend="route-planning" hidden></div>
+            </div>
+        </section>
+
+        <header class="app-bar">
+            <div class="app-brand" aria-label="FuelAU home">
+                <span>Fuel</span><strong>AU</strong>
+            </div>
+            <div class="app-context">
+                <span>Map workspace</span>
+                <strong id="active-tool-title">Explore prices</strong>
+            </div>
             <div class="theme-switcher" role="group" aria-label="Colour theme">
                 <button class="theme-option" type="button" data-theme-preference="system" aria-pressed="false">System</button>
                 <button class="theme-option" type="button" data-theme-preference="light" aria-pressed="false">Light</button>
                 <button class="theme-option" type="button" data-theme-preference="dark" aria-pressed="false">Dark</button>
             </div>
+        </header>
+
+        <nav class="tabs tool-navigation" role="tablist" aria-label="Map tools">
+            <button class="tab tool-button" type="button" role="tab" aria-selected="true" aria-controls="fuel-prices" id="fuel-prices-tab" data-tool-title="Explore prices">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 10.5 1H20v9.5L13.5 17 4 7.5Zm11-2.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5Z"/></svg>
+                <span>Prices</span>
+            </button>
+            <button class="tab tool-button" type="button" role="tab" aria-selected="false" aria-controls="fuel-stop-finder" id="fuel-stop-finder-tab" data-tool-title="Find a fuel stop" tabindex="-1">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10v18H5V3Zm2 2v6h6V5H7Zm9 3h2l2 3v7.5a2.5 2.5 0 0 1-5 0V16h2v2.5a.5.5 0 0 0 1 0V12l-2-2V8Z"/></svg>
+                <span>Fuel stop</span>
+            </button>
+            <button class="tab tool-button" type="button" role="tab" aria-selected="false" aria-controls="route-planning" id="route-planning-tab" data-tool-title="Route planning" tabindex="-1">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm12 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM8.5 6H14a4 4 0 0 1 0 8h-4a2 2 0 0 0 0 4h5.5v2H10a4 4 0 0 1 0-8h4a2 2 0 0 0 0-4H8.5V6Z"/></svg>
+                <span>Route</span>
+            </button>
+            <?php if ($containerManagementEnabled): ?>
+            <button class="tab tool-button tool-button-admin" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab" data-tool-title="Container management" tabindex="-1">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Zm0 2.3L6.2 7.5 12 10.7l5.8-3.2L12 4.3ZM6 9.2v5.1l5 2.8V12L6 9.2Zm7 7.9 5-2.8V9.2L13 12v5.1Z"/></svg>
+                <span>Admin</span>
+            </button>
+            <?php endif; ?>
         </nav>
 
-        <section class="content">
+        <button class="sheet-reopen" type="button" id="workspace-sheet-reopen" aria-controls="workspace-sheet" aria-label="Open active tool panel">
+            <span aria-hidden="true">›</span>
+        </button>
+
+        <aside class="workspace-sheet" id="workspace-sheet" aria-label="Active tool panel">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <header class="sheet-header">
+                <div>
+                    <span class="sheet-eyebrow">FuelAU tool</span>
+                    <strong id="sheet-tool-title">Explore prices</strong>
+                </div>
+                <button class="sheet-toggle" type="button" id="workspace-sheet-toggle" aria-controls="workspace-sheet" aria-expanded="true" aria-label="Collapse active tool panel">
+                    <span aria-hidden="true">‹</span>
+                </button>
+            </header>
+
+            <section class="content">
             <div class="panel active" role="tabpanel" id="fuel-prices" aria-labelledby="fuel-prices-tab">
                 <h1>Fuel Prices</h1>
                 <p>App-owned price analytics from the ingested fuel datasets. Western Australia is sourced from the public FuelWatch RSS feed and refreshes after the daily 2:30pm release window. Weekly and monthly trend charts are rendered locally with SVG.</p>
@@ -93,36 +141,44 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                     </div>
 
                     <div class="status-line" id="fuel-status">Loading fuel dashboard...</div>
-                    <div class="summary-grid" id="fuel-summary"></div>
+                    <section class="fuel-station-detail" id="fuel-station-detail" aria-live="polite" hidden></section>
 
-                    <div class="fuel-grid">
-                        <section class="surface-block">
-                            <h2>Weekly Trend</h2>
-                            <p>Rolling daily average over the last six weeks.</p>
-                            <div id="fuel-weekly-chart"></div>
-                            <div class="chart-meta" id="fuel-weekly-meta"></div>
-                        </section>
+                    <details class="panel-disclosure insights-disclosure" open>
+                        <summary>
+                            <span>Insights</span>
+                            <small>Weekly, monthly, and recent prices</small>
+                        </summary>
+                        <div class="fuel-grid">
+                            <section class="surface-block">
+                                <h2>Weekly Trend</h2>
+                                <p>Rolling daily average over the last six weeks.</p>
+                                <div id="fuel-weekly-chart"></div>
+                                <div class="chart-meta" id="fuel-weekly-meta"></div>
+                            </section>
 
-                        <section class="surface-block">
-                            <h2>Monthly Trend</h2>
-                            <p>Monthly average over the last twelve months.</p>
-                            <div id="fuel-monthly-chart"></div>
-                            <div class="chart-meta" id="fuel-monthly-meta"></div>
-                        </section>
+                            <section class="surface-block">
+                                <h2>Monthly Trend</h2>
+                                <p>Monthly average over the last twelve months.</p>
+                                <div id="fuel-monthly-chart"></div>
+                                <div class="chart-meta" id="fuel-monthly-meta"></div>
+                            </section>
 
-                        <section class="surface-block">
-                            <h2>Recent Snapshot</h2>
-                            <p>Most recent prices from the filtered dataset.</p>
-                            <div id="fuel-snapshot"></div>
-                        </section>
-                    </div>
+                            <section class="surface-block">
+                                <h2>Recent Snapshot</h2>
+                                <p>Most recent prices from the filtered dataset.</p>
+                                <div id="fuel-snapshot"></div>
+                            </section>
+                        </div>
+                    </details>
 
-                    <section class="surface-block fuel-map-panel">
-                        <h2>Station Map</h2>
-                        <p>Click a station to inspect the selected fuel price.</p>
-                        <div class="fuel-map-frame" id="fuel-map"></div>
-                        <div class="fuel-map-legend" id="fuel-map-legend"></div>
-                    </section>
+                    <details class="panel-disclosure state-summary-disclosure">
+                        <summary>
+                            <span>State summaries</span>
+                            <small>Coverage and latest reports by state</small>
+                        </summary>
+                        <div class="summary-grid" id="fuel-summary"></div>
+                    </details>
+
                 </div>
             </div>
             <div class="panel" role="tabpanel" id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab">
@@ -175,12 +231,6 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                     </section>
 
                     <section class="surface-block">
-                        <h2>Route Map</h2>
-                        <div class="route-map-frame" id="fuel-stop-finder-map"></div>
-                        <div class="route-map-legend" id="fuel-stop-finder-map-legend"></div>
-                    </section>
-
-                    <section class="surface-block">
                         <h2>Route Breakdown</h2>
                         <div id="fuel-stop-finder-legs"></div>
                     </section>
@@ -195,12 +245,17 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                         <h2>Trip Inputs</h2>
                         <p>Configure the vehicle, then add the trip origin and destinations.</p>
 
-                        <div class="route-vehicle-configuration">
-                            <div class="route-section-heading">
-                                <h3>Vehicle Configuration</h3>
-                                <p>Fuel, capacity, consumption, and refill preferences.</p>
-                            </div>
-                            <div class="route-vehicle-grid">
+                        <details class="panel-disclosure route-settings-disclosure">
+                            <summary>
+                                <span>Vehicle and fuel settings</span>
+                                <small>Fuel, capacity, consumption, and refill preferences</small>
+                            </summary>
+                            <div class="route-vehicle-configuration">
+                                <div class="route-section-heading">
+                                    <h3>Vehicle Configuration</h3>
+                                    <p>Fuel, capacity, consumption, and refill preferences.</p>
+                                </div>
+                                <div class="route-vehicle-grid">
                                 <div class="field">
                                     <label for="route-fuel-type">Fuel</label>
                                     <select id="route-fuel-type"></select>
@@ -228,8 +283,9 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                                         <option value="fewer_stops">Fewer fuel stops</option>
                                     </select>
                                 </div>
+                                </div>
                             </div>
-                        </div>
+                        </details>
 
                         <div class="route-itinerary-inputs">
                             <div class="field">
@@ -284,12 +340,6 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                     </section>
 
                     <section class="surface-block">
-                        <h2>Route Map</h2>
-                        <div class="route-map-frame" id="route-map"></div>
-                        <div class="route-map-legend" id="route-map-legend"></div>
-                    </section>
-
-                    <section class="surface-block">
                         <h2>Leg Breakdown</h2>
                         <div id="route-legs"></div>
                     </section>
@@ -314,7 +364,8 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 <pre class="logs" id="container-logs">Select a container to load logs.</pre>
             </div>
             <?php endif; ?>
-        </section>
+            </section>
+        </aside>
     </main>
 
     <script src="/resources/maplibre-gl.js"></script>

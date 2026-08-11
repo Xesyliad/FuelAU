@@ -1,5 +1,10 @@
 const tabs = document.querySelectorAll('.tab');
 const panels = document.querySelectorAll('.panel');
+const appShell = document.querySelector('.app-shell');
+const activeToolTitle = document.getElementById('active-tool-title');
+const sheetToolTitle = document.getElementById('sheet-tool-title');
+const workspaceSheetToggle = document.getElementById('workspace-sheet-toggle');
+const workspaceSheetReopen = document.getElementById('workspace-sheet-reopen');
 const themeOptions = document.querySelectorAll('[data-theme-preference]');
 const themeColourMeta = document.querySelector('meta[name="theme-color"]');
 const themePreferenceKey = 'fuelau_theme_v1';
@@ -16,6 +21,7 @@ const fuelState = document.getElementById('fuel-state');
 const fuelRegion = document.getElementById('fuel-region');
 const fuelType = document.getElementById('fuel-type');
 const fuelStatus = document.getElementById('fuel-status');
+const fuelStationDetail = document.getElementById('fuel-station-detail');
 const fuelSummary = document.getElementById('fuel-summary');
 const fuelWeeklyChart = document.getElementById('fuel-weekly-chart');
 const fuelWeeklyMeta = document.getElementById('fuel-weekly-meta');
@@ -24,6 +30,7 @@ const fuelMonthlyMeta = document.getElementById('fuel-monthly-meta');
 const fuelSnapshot = document.getElementById('fuel-snapshot');
 const refreshFuelDashboard = document.getElementById('refresh-fuel-dashboard');
 const fuelMap = document.getElementById('fuel-map');
+const mapStatusOverlay = document.getElementById('map-status-overlay');
 const fuelMapLegend = document.getElementById('fuel-map-legend');
 const fuelStopFinderOrigin = document.getElementById('fuel-stop-finder-origin');
 const fuelStopFinderDestination = document.getElementById('fuel-stop-finder-destination');
@@ -35,7 +42,6 @@ const fuelStopFinderStatus = document.getElementById('fuel-stop-finder-status');
 const fuelStopFinderDetail = document.getElementById('fuel-stop-finder-detail');
 const fuelStopFinderSummary = document.getElementById('fuel-stop-finder-summary');
 const fuelStopFinderRecommendation = document.getElementById('fuel-stop-finder-recommendation');
-const fuelStopFinderMap = document.getElementById('fuel-stop-finder-map');
 const fuelStopFinderMapLegend = document.getElementById('fuel-stop-finder-map-legend');
 const fuelStopFinderLegs = document.getElementById('fuel-stop-finder-legs');
 const routeOrigin = document.getElementById('route-origin');
@@ -55,7 +61,6 @@ const routeTest = document.getElementById('route-test');
 const routeReset = document.getElementById('route-reset');
 const routeStatus = document.getElementById('route-status');
 const routeSummary = document.getElementById('route-summary');
-const routeMap = document.getElementById('route-map');
 const routeMapLegend = document.getElementById('route-map-legend');
 const routeLegs = document.getElementById('route-legs');
 const containerManagementEnabled = Boolean(window.fuelauAppConfig?.containerManagementEnabled);
@@ -75,10 +80,78 @@ let fuelMapAutoRefreshSuppressed = false;
 let fuelMapViewportAbortController = null;
 let fuelMapViewportLastRequestKey = '';
 let fuelMapLegendContext = '';
-let fuelStopFinderMapInstance = null;
 let fuelStopFinderMarkers = [];
-let routeMapInstance = null;
 let routeFuelMarkers = [];
+let activeMapWorkflow = 'fuel-prices';
+let mapCameraRestoreInProgress = false;
+const mapWorkflowCameras = new Map();
+const mapWorkflowStatuses = new Map();
+const mapWorkflowDefinitions = {
+    'fuel-prices': {
+        sourceIds: ['fuelau-prices-stations', 'fuelau-prices-highlights', 'fuelau-prices-selection'],
+        layerIds: [
+            'fuelau-prices-stations-circle',
+            'fuelau-prices-stations-brand',
+            'fuelau-prices-highlight-min',
+            'fuelau-prices-highlight-max',
+            'fuelau-prices-highlights-brand',
+            'fuelau-prices-selection-ring',
+        ],
+    },
+    'fuel-stop-finder': {
+        sourceIds: ['fuelau-stop-finder-lines', 'fuelau-stop-finder-markers'],
+        layerIds: [
+            'fuelau-stop-finder-lines',
+            'fuelau-stop-finder-origin-marker',
+            'fuelau-stop-finder-destination-marker',
+            'fuelau-stop-finder-origin-label',
+            'fuelau-stop-finder-destination-label',
+        ],
+    },
+    'route-planning': {
+        sourceIds: ['fuelau-route-planner-lines', 'fuelau-route-planner-markers'],
+        layerIds: [
+            'fuelau-route-planner-lines',
+            'fuelau-route-planner-origin-marker',
+            'fuelau-route-planner-destination-marker',
+            'fuelau-route-planner-origin-label',
+            'fuelau-route-planner-destination-label',
+        ],
+    },
+};
+const fuelBrandRegistry = {
+    ampol: { label: 'Ampol', background: '#ed1c24', foreground: '#ffffff', aliases: ['ampol', 'eg ampol'] },
+    bp: { label: 'bp', background: '#087f3d', foreground: '#ffffff', aliases: ['bp', 'b p'] },
+    caltex: { label: 'Caltex', background: '#d71920', foreground: '#ffffff', aliases: ['caltex'] },
+    shell: { label: 'Shell', background: '#ffd500', foreground: '#c8102e', aliases: ['shell', 'reddy express'] },
+    seven_eleven: { label: '7-Eleven', background: '#ffffff', foreground: '#167348', aliases: ['7 eleven', '7-eleven', '7eleven'] },
+    mobil: { label: 'Mobil', background: '#ffffff', foreground: '#005daa', aliases: ['mobil', 'mobiloil'] },
+    united: { label: 'United', background: '#005596', foreground: '#ffffff', aliases: ['united petroleum', 'united'] },
+    metro: { label: 'Metro', background: '#111827', foreground: '#fbbf24', aliases: ['metro petroleum', 'metro'] },
+    liberty: { label: 'Liberty', background: '#00539f', foreground: '#ffffff', aliases: ['liberty'] },
+    costco: { label: 'Costco', background: '#e31837', foreground: '#ffffff', aliases: ['costco'] },
+    otr: { label: 'OTR', background: '#e31b23', foreground: '#ffffff', aliases: ['on the run', 'otr'] },
+    x_convenience: { label: 'X', background: '#ef3123', foreground: '#ffffff', aliases: ['x convenience'] },
+    apco: { label: 'APCO', background: '#006838', foreground: '#ffffff', aliases: ['apco'] },
+    puma: { label: 'Puma', background: '#005baa', foreground: '#ffffff', aliases: ['puma'] },
+    budget: { label: 'Budget', background: '#ec1c24', foreground: '#ffffff', aliases: ['budget petrol', 'budget'] },
+    pearl: { label: 'Pearl', background: '#0096a6', foreground: '#ffffff', aliases: ['pearl energy', 'pearl'] },
+    vibe: { label: 'Vibe', background: '#702082', foreground: '#ffffff', aliases: ['vibe'] },
+    fuelau: { label: 'FuelAU', background: '#0f766e', foreground: '#ffffff', aliases: [] },
+};
+const routeLegPalette = [
+    '#0f766e', '#2563eb', '#7c3aed', '#c2410c', '#be123c',
+    '#0891b2', '#4d7c0f', '#a21caf', '#b45309', '#475569',
+];
+
+function routeLegColor(index) {
+    if (index < routeLegPalette.length) {
+        return routeLegPalette[index];
+    }
+    const hue = Math.round((index * 137.508 + 174) % 360);
+    const lightness = index % 2 === 0 ? 42 : 52;
+    return `hsl(${hue} 68% ${lightness}%)`;
+}
 const fuelSelectionCookieName = 'fuelau_selected_fuel';
 const fuelRegionCookieName = 'fuelau_selected_region';
 const fuelStopFinderStateKey = 'fuelau_fuel_stop_finder_state_v1';
@@ -168,27 +241,41 @@ const fuelauDarkMapPaint = {
         'text-color': '#c7a87f',
         'text-halo-color': '#101a24',
     },
-    'route-origin-marker': {
+    'fuelau-stop-finder-origin-marker': {
         'circle-stroke-color': '#0b1118',
     },
-    'route-destination-marker': {
+    'fuelau-stop-finder-destination-marker': {
         'circle-stroke-color': '#0b1118',
     },
-    'route-origin-label': {
+    'fuelau-stop-finder-origin-label': {
         'text-color': '#e6edf3',
         'text-halo-color': '#0b1118',
     },
-    'route-destination-label': {
+    'fuelau-stop-finder-destination-label': {
         'text-color': '#e6edf3',
         'text-halo-color': '#0b1118',
     },
-    'fuel-stations-circle': {
+    'fuelau-route-planner-origin-marker': {
         'circle-stroke-color': '#0b1118',
     },
-    'fuel-station-highlight-min': {
+    'fuelau-route-planner-destination-marker': {
         'circle-stroke-color': '#0b1118',
     },
-    'fuel-station-highlight-max': {
+    'fuelau-route-planner-origin-label': {
+        'text-color': '#e6edf3',
+        'text-halo-color': '#0b1118',
+    },
+    'fuelau-route-planner-destination-label': {
+        'text-color': '#e6edf3',
+        'text-halo-color': '#0b1118',
+    },
+    'fuelau-prices-stations-circle': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'fuelau-prices-highlight-min': {
+        'circle-stroke-color': '#0b1118',
+    },
+    'fuelau-prices-highlight-max': {
         'circle-stroke-color': '#0b1118',
     },
 };
@@ -290,9 +377,7 @@ function fuelauApplyMapTheme(map) {
 }
 
 function fuelauApplyThemeToActiveMaps() {
-    [fuelMapInstance, fuelStopFinderMapInstance, routeMapInstance].forEach((map) => {
-        fuelauApplyMapTheme(map);
-    });
+    fuelauApplyMapTheme(fuelMapInstance);
 }
 
 document.addEventListener('fuelau:themechange', fuelauApplyThemeToActiveMaps);
@@ -512,9 +597,71 @@ const fuelRegionCatalog = {
     ],
 };
 
+function setWorkspaceSheetExpanded(expanded) {
+    if (!appShell) {
+        return;
+    }
+
+    appShell.classList.toggle('sheet-collapsed', !expanded);
+    workspaceSheetToggle?.setAttribute('aria-expanded', String(expanded));
+    workspaceSheetToggle?.setAttribute(
+        'aria-label',
+        expanded ? 'Collapse active tool panel' : 'Open active tool panel',
+    );
+
+    window.setTimeout(() => {
+        scheduleMapResize(fuelMapInstance);
+    }, 240);
+}
+
+function syncMapFirstShell(tab, panelId) {
+    const mapViewId = panelId === 'container-management' ? 'fuel-prices' : panelId;
+    const toolTitle = String(tab.dataset.toolTitle || tab.textContent || '').trim();
+
+    if (appShell) {
+        appShell.dataset.activeTool = panelId;
+        appShell.classList.toggle('admin-mode', panelId === 'container-management');
+    }
+    if (activeToolTitle) {
+        activeToolTitle.textContent = toolTitle;
+    }
+    if (sheetToolTitle) {
+        sheetToolTitle.textContent = toolTitle;
+    }
+    syncSharedMapWorkflow(mapViewId);
+    setWorkspaceSheetExpanded(true);
+}
+
+workspaceSheetToggle?.addEventListener('click', () => {
+    setWorkspaceSheetExpanded(Boolean(appShell?.classList.contains('sheet-collapsed')));
+});
+workspaceSheetReopen?.addEventListener('click', () => {
+    setWorkspaceSheetExpanded(true);
+    workspaceSheetToggle?.focus();
+});
+
 tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
         activateTab(tab.id);
+    });
+    tab.addEventListener('keydown', (event) => {
+        const supportedKeys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
+        if (!supportedKeys.includes(event.key)) {
+            return;
+        }
+
+        event.preventDefault();
+        const toolTabs = Array.from(tabs);
+        const currentIndex = toolTabs.indexOf(tab);
+        const nextIndex = event.key === 'Home'
+            ? 0
+            : (event.key === 'End'
+                ? toolTabs.length - 1
+                : (currentIndex + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + toolTabs.length)
+                    % toolTabs.length);
+        const nextTab = toolTabs[nextIndex];
+        activateTab(nextTab.id);
+        nextTab.focus();
     });
 });
 
@@ -541,11 +688,22 @@ function activateTab(tabId) {
         return;
     }
 
-    tabs.forEach((item) => item.setAttribute('aria-selected', 'false'));
+    const panelId = tab.getAttribute('aria-controls');
+    const panel = panelId ? document.getElementById(panelId) : null;
+    if (!panel || !panelId) {
+        return;
+    }
+
+    tabs.forEach((item) => {
+        item.setAttribute('aria-selected', 'false');
+        item.setAttribute('tabindex', '-1');
+    });
     panels.forEach((panel) => panel.classList.remove('active'));
 
     tab.setAttribute('aria-selected', 'true');
-    document.getElementById(tab.getAttribute('aria-controls')).classList.add('active');
+    tab.setAttribute('tabindex', '0');
+    panel.classList.add('active');
+    syncMapFirstShell(tab, panelId);
     saveActiveTab(tab.id);
 
     if (tab.id !== 'fuel-prices-tab') {
@@ -557,7 +715,6 @@ function activateTab(tabId) {
             fuelMapViewportAbortController.abort();
             fuelMapViewportAbortController = null;
         }
-        destroyFuelMap();
     }
 
     if (containerManagementEnabled && tab.id === 'container-management-tab') {
@@ -565,31 +722,8 @@ function activateTab(tabId) {
     }
     if (tab.id === 'fuel-prices-tab') {
         loadFuelDashboard();
-        if (fuelMapInstance) {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    fuelMapInstance.resize();
-                    fuelMapInstance.triggerRepaint();
-                });
-            });
-        }
     }
-    if (tab.id === 'fuel-stop-finder-tab' && fuelStopFinderMapInstance) {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                fuelStopFinderMapInstance.resize();
-                fuelStopFinderMapInstance.triggerRepaint();
-            });
-        });
-    }
-    if (tab.id === 'route-planning-tab' && routeMapInstance) {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                routeMapInstance.resize();
-                routeMapInstance.triggerRepaint();
-            });
-        });
-    }
+    scheduleMapResize(fuelMapInstance);
 }
 
 function scheduleMapResize(map) {
@@ -609,21 +743,93 @@ function scheduleMapResize(map) {
     });
 }
 
-function destroyFuelMap() {
-    if (fuelMapPopup) {
-        fuelMapPopup.remove();
+function mapWorkflowMarkers(workflow) {
+    if (workflow === 'fuel-stop-finder') {
+        return fuelStopFinderMarkers;
     }
-    if (fuelMapInstance) {
-        fuelMapInstance.remove();
+    if (workflow === 'route-planning') {
+        return routeFuelMarkers;
     }
-    fuelMapInstance = null;
-    fuelMapReady = false;
-    fuelMapPopup = null;
-    fuelMapPendingData = null;
-    fuelMapViewportLastRequestKey = '';
-    if (fuelMap) {
-        fuelMap.innerHTML = '';
+    return [];
+}
+
+function updateMapStatusOverlay() {
+    if (!mapStatusOverlay) {
+        return;
     }
+    const status = mapWorkflowStatuses.get(activeMapWorkflow);
+    mapStatusOverlay.hidden = !status?.message;
+    mapStatusOverlay.textContent = status?.message || '';
+    if (status?.kind) {
+        mapStatusOverlay.dataset.kind = status.kind;
+    } else {
+        delete mapStatusOverlay.dataset.kind;
+    }
+}
+
+function setMapWorkflowStatus(workflow, message, kind = '') {
+    mapWorkflowStatuses.set(workflow, { message: String(message || ''), kind });
+    updateMapStatusOverlay();
+}
+
+function clearMapWorkflowStatus(workflow) {
+    setMapWorkflowStatus(workflow, '');
+}
+
+function captureMapWorkflowCamera(workflow) {
+    if (!fuelMapInstance || !fuelMapReady || mapCameraRestoreInProgress) {
+        return;
+    }
+    const center = fuelMapInstance.getCenter();
+    mapWorkflowCameras.set(workflow, {
+        center: [center.lng, center.lat],
+        zoom: fuelMapInstance.getZoom(),
+        bearing: fuelMapInstance.getBearing(),
+        pitch: fuelMapInstance.getPitch(),
+    });
+}
+
+function syncSharedMapWorkflow(workflow) {
+    const nextWorkflow = mapWorkflowDefinitions[workflow] ? workflow : 'fuel-prices';
+    if (nextWorkflow !== activeMapWorkflow) {
+        captureMapWorkflowCamera(activeMapWorkflow);
+    }
+    activeMapWorkflow = nextWorkflow;
+
+    Object.entries(mapWorkflowDefinitions).forEach(([workflowId, definition]) => {
+        const visibility = workflowId === activeMapWorkflow ? 'visible' : 'none';
+        definition.layerIds.forEach((layerId) => {
+            try {
+                if (fuelMapInstance?.getLayer(layerId)) {
+                    fuelMapInstance.setLayoutProperty(layerId, 'visibility', visibility);
+                }
+            } catch (error) {
+                void error;
+            }
+        });
+        mapWorkflowMarkers(workflowId).forEach((marker) => {
+            const element = marker?.getElement?.();
+            if (element) {
+                element.hidden = workflowId !== activeMapWorkflow;
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-map-legend]').forEach((legend) => {
+        legend.hidden = legend.dataset.mapLegend !== activeMapWorkflow;
+    });
+    if (activeMapWorkflow !== 'fuel-prices') {
+        fuelMapPopup?.remove();
+    }
+    updateMapStatusOverlay();
+
+    const savedCamera = mapWorkflowCameras.get(activeMapWorkflow);
+    if (savedCamera && fuelMapInstance && fuelMapReady) {
+        mapCameraRestoreInProgress = true;
+        fuelMapInstance.jumpTo(savedCamera);
+        mapCameraRestoreInProgress = false;
+    }
+    scheduleMapResize(fuelMapInstance);
 }
 
 function runWhenMapStyleReady(map, callback) {
@@ -1042,6 +1248,7 @@ function renderFuelStopFinderRecommendation(stop, plan) {
     }
 
     const scope = String(plan?.segments?.[0]?.routePieces?.find((piece) => piece.type === 'fuel-stop')?.selectionScope || '').trim();
+    const wazeLink = routeFuelWazeLink(stop);
     fuelStopFinderRecommendation.innerHTML = `
         <div class="fuel-stop-finder-card">
             <strong>${escapeHtml(routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')}</strong>
@@ -1049,6 +1256,7 @@ function renderFuelStopFinderRecommendation(stop, plan) {
             <span>Price: ${escapeHtml(routeFuelPriceText(stop.price) || '$0.00')}/L</span>
             <span>Route detour: ${escapeHtml(Number(stop.offRouteDistanceKm || 0).toFixed(1))} km</span>
             <span>Selected because it is the cheapest eligible stop${scope !== '' ? ` within the ${escapeHtml(scope)} detour window` : ''}.</span>
+            ${wazeLink}
         </div>
     `;
 }
@@ -1836,6 +2044,28 @@ function routeFuelStationDisplay(candidate) {
     return [station, address].filter((part) => part !== '').join(' - ');
 }
 
+function routeFuelWazeUrl(candidate) {
+    const latitude = Number(candidate?.latitude ?? candidate?.lat);
+    const longitude = Number(candidate?.longitude ?? candidate?.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        return '';
+    }
+    const url = new URL('https://www.waze.com/ul');
+    url.searchParams.set('ll', `${latitude.toFixed(6)},${longitude.toFixed(6)}`);
+    url.searchParams.set('navigate', 'yes');
+    url.searchParams.set('utm_source', 'FuelAU');
+    return url.href;
+}
+
+function routeFuelWazeLink(candidate, label = 'Navigate with Waze') {
+    const url = routeFuelWazeUrl(candidate);
+    if (url === '') {
+        return '';
+    }
+    return `<a class="waze-navigation-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(`${label}: ${String(candidate?.station_name || 'fuel station')}`)}">${escapeHtml(label)}</a>`;
+}
+
 function routeFuelRateLPerKm(economyLPer100km) {
     return Number(economyLPer100km || 0) / 100;
 }
@@ -1875,16 +2105,25 @@ function createRouteFuelMarkerElement(feature) {
     const visitIndex = Number(feature?.properties?.visit_index || 1);
     const visitCount = Number(feature?.properties?.visit_count || 1);
     const segmentIndex = Number(feature?.properties?.segment_index || 0);
+    const stopIndex = Number(feature?.properties?.stop_index || visitIndex || 1);
+    const wazeLink = routeFuelWazeLink({
+        station_name: station,
+        latitude: feature?.geometry?.coordinates?.[1],
+        longitude: feature?.geometry?.coordinates?.[0],
+    }, 'Open in Waze');
     const wrapper = document.createElement('div');
     wrapper.className = 'route-fuel-marker';
+    wrapper.setAttribute('role', 'group');
+    wrapper.setAttribute('aria-label', `${station || 'Fuel stop'}, ${price || 'price unavailable'}, leg ${Math.max(segmentIndex, 1)}`);
     wrapper.style.setProperty('--route-fuel-color', color);
     wrapper.innerHTML = `
-        <span class="route-fuel-marker-icon" aria-hidden="true"></span>
+        <span class="route-fuel-marker-icon" aria-hidden="true"><span class="route-fuel-marker-sequence">${stopIndex}</span></span>
         <span class="route-fuel-marker-copy">
             <strong>${escapeHtml(station !== '' ? station : 'Fuel stop')}</strong>
             ${visitCount > 1 ? `<span class="route-fuel-marker-visit">Visit ${visitIndex} of ${visitCount}${segmentIndex > 0 ? ` · Leg ${segmentIndex}` : ''}</span>` : ''}
             ${address !== '' ? `<span>${escapeHtml(address)}</span>` : ''}
             <span>${escapeHtml(price !== '' ? `${price}/L` : 'Price unavailable')}</span>
+            ${wazeLink}
         </span>
     `;
     return wrapper;
@@ -2368,30 +2607,287 @@ function renderRouteSummary(plan) {
     `).join('');
 }
 
+function emptyMapFeatureCollection(features = []) {
+    return { type: 'FeatureCollection', features };
+}
+
+function routeMapPadding() {
+    if (window.matchMedia('(max-width: 760px)').matches) {
+        return { top: 110, right: 36, bottom: 270, left: 36 };
+    }
+    return {
+        top: 110,
+        right: 72,
+        bottom: 72,
+        left: appShell?.classList.contains('sheet-collapsed') ? 72 : 590,
+    };
+}
+
+function setGeoJsonSourceData(map, sourceId, features) {
+    const data = emptyMapFeatureCollection(features);
+    const source = map.getSource(sourceId);
+    if (source) {
+        source.setData(data);
+        return;
+    }
+    map.addSource(sourceId, { type: 'geojson', data });
+}
+
+function addRouteWorkflowLayers(map, workflow) {
+    const prefix = workflow === 'fuel-stop-finder' ? 'fuelau-stop-finder' : 'fuelau-route-planner';
+    const linesSource = `${prefix}-lines`;
+    const markersSource = `${prefix}-markers`;
+    const visibility = workflow === activeMapWorkflow ? 'visible' : 'none';
+    const layers = [
+        {
+            id: `${prefix}-lines`,
+            type: 'line',
+            source: linesSource,
+            layout: { visibility },
+            paint: {
+                'line-color': ['get', 'color'],
+                'line-width': 5,
+                'line-opacity': 0.92,
+            },
+        },
+        {
+            id: `${prefix}-origin-marker`,
+            type: 'circle',
+            source: markersSource,
+            filter: ['==', ['get', 'kind'], 'origin'],
+            layout: { visibility },
+            paint: {
+                'circle-radius': 8,
+                'circle-color': '#166534',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2,
+            },
+        },
+        {
+            id: `${prefix}-destination-marker`,
+            type: 'circle',
+            source: markersSource,
+            filter: ['==', ['get', 'kind'], 'destination'],
+            layout: { visibility },
+            paint: {
+                'circle-radius': 8,
+                'circle-color': '#0f766e',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2,
+            },
+        },
+        {
+            id: `${prefix}-origin-label`,
+            type: 'symbol',
+            source: markersSource,
+            filter: ['==', ['get', 'kind'], 'origin'],
+            layout: {
+                visibility,
+                'text-field': ['get', 'label'],
+                'text-font': ['Noto Sans Regular'],
+                'text-size': 12,
+                'text-offset': ['literal', [0, -1.3]],
+                'text-anchor': 'top',
+                'text-allow-overlap': true,
+            },
+            paint: {
+                'text-color': '#16212d',
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 1.2,
+            },
+        },
+        {
+            id: `${prefix}-destination-label`,
+            type: 'symbol',
+            source: markersSource,
+            filter: ['==', ['get', 'kind'], 'destination'],
+            layout: {
+                visibility,
+                'text-field': ['get', 'label'],
+                'text-font': ['Noto Sans Regular'],
+                'text-size': 12,
+                'text-offset': ['literal', [0, 1.2]],
+                'text-anchor': 'bottom',
+                'text-allow-overlap': true,
+            },
+            paint: {
+                'text-color': '#16212d',
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 1.2,
+            },
+        },
+    ];
+    layers.forEach((layer) => {
+        if (!map.getLayer(layer.id)) {
+            map.addLayer(layer);
+        }
+    });
+}
+
+function renderSharedRouteWorkflow(workflow, routeFeatures, markerFeatures, bounds) {
+    const legend = workflow === 'fuel-stop-finder' ? fuelStopFinderMapLegend : routeMapLegend;
+    if (!window.maplibregl) {
+        setMapWorkflowStatus(workflow, 'Route map unavailable in this browser.', 'error');
+        legend.innerHTML = '';
+        return;
+    }
+    if (bounds.length === 0) {
+        clearRouteWorkflow(workflow, 'Plan a route to see the map.');
+        return;
+    }
+    if (!fuelMapInstance) {
+        renderFuelMap(fuelMapRows, null, true);
+    }
+    if (!fuelMapInstance) {
+        setMapWorkflowStatus(workflow, 'Map style is not configured.', 'error');
+        legend.innerHTML = '';
+        return;
+    }
+
+    runWhenMapStyleReady(fuelMapInstance, () => {
+        const prefix = workflow === 'fuel-stop-finder' ? 'fuelau-stop-finder' : 'fuelau-route-planner';
+        setGeoJsonSourceData(fuelMapInstance, `${prefix}-lines`, routeFeatures);
+        setGeoJsonSourceData(fuelMapInstance, `${prefix}-markers`, markerFeatures);
+        addRouteWorkflowLayers(fuelMapInstance, workflow);
+
+        if (workflow === 'fuel-stop-finder') {
+            clearFuelStopFinderMarkers();
+        } else {
+            clearRouteFuelMarkers();
+        }
+        const markerCollection = workflow === 'fuel-stop-finder'
+            ? fuelStopFinderMarkers
+            : routeFuelMarkers;
+        markerFeatures
+            .filter((feature) => feature.properties.kind === 'fuel-stop')
+            .forEach((feature) => {
+                const element = createRouteFuelMarkerElement(feature);
+                element.hidden = workflow !== activeMapWorkflow;
+                markerCollection.push(new maplibregl.Marker({
+                    element,
+                    anchor: 'bottom',
+                    offset: routeFuelMarkerOffset(feature),
+                }).setLngLat(feature.geometry.coordinates).addTo(fuelMapInstance));
+            });
+
+        fuelauApplyMapTheme(fuelMapInstance);
+        syncSharedMapWorkflow(activeMapWorkflow);
+        if (workflow === activeMapWorkflow) {
+            const pointBounds = new maplibregl.LngLatBounds();
+            bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
+            mapWorkflowCameras.delete(workflow);
+            fuelMapInstance.fitBounds(pointBounds, {
+                padding: routeMapPadding(),
+                maxZoom: 13,
+                duration: 0,
+            });
+            captureMapWorkflowCamera(workflow);
+        }
+        clearMapWorkflowStatus(workflow);
+        scheduleMapResize(fuelMapInstance);
+    });
+
+    const routeLegs = Array.from(new Map(routeFeatures.map((feature) => [
+        Number(feature?.properties?.segment_index || 1),
+        String(feature?.properties?.color || routeLegColor(0)),
+    ])).entries()).sort(([left], [right]) => left - right);
+    const legLegend = workflow === 'route-planning' && routeLegs.length > 1
+        ? routeLegs.map(([legNumber, color]) => (
+            `<span class="route-map-chip"><span class="route-map-line" style="--route-leg-color:${escapeHtml(color)}"></span>Leg ${legNumber}</span>`
+        ))
+        : [];
+    legend.innerHTML = [
+        ...legLegend,
+        '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
+        '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
+        '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
+    ].join('');
+}
+
+function clearRouteWorkflow(workflow, message) {
+    const definition = mapWorkflowDefinitions[workflow];
+    definition?.sourceIds.forEach((sourceId) => {
+        try {
+            fuelMapInstance?.getSource(sourceId)?.setData(emptyMapFeatureCollection());
+        } catch (error) {
+            // A reset can race the initial style load; there is no workflow data to clear yet.
+            void error;
+        }
+    });
+    if (workflow === 'fuel-stop-finder') {
+        clearFuelStopFinderMarkers();
+        fuelStopFinderMapLegend.innerHTML = '';
+    } else {
+        clearRouteFuelMarkers();
+        routeMapLegend.innerHTML = '';
+    }
+    mapWorkflowCameras.delete(workflow);
+    setMapWorkflowStatus(workflow, message);
+}
+
+function splitRoutePointsByItineraryLeg(routePoints, itineraryTargets) {
+    const points = Array.isArray(routePoints) ? routePoints : [];
+    const targets = (Array.isArray(itineraryTargets) ? itineraryTargets : []).filter((target) => (
+        Number.isFinite(Number(target?.lat)) && Number.isFinite(Number(target?.lon))
+    ));
+    if (points.length < 2 || targets.length < 2) {
+        return [points];
+    }
+
+    const groups = [];
+    let startIndex = 0;
+    targets.forEach((target, targetIndex) => {
+        let endIndex = points.length - 1;
+        if (targetIndex < targets.length - 1) {
+            let bestDistance = Number.POSITIVE_INFINITY;
+            const remainingTargets = targets.length - targetIndex - 1;
+            const maximumIndex = Math.max(startIndex + 1, points.length - 1 - remainingTargets);
+            for (let pointIndex = startIndex + 1; pointIndex <= maximumIndex; pointIndex += 1) {
+                const point = points[pointIndex];
+                const latDelta = Number(point?.lat) - Number(target.lat);
+                const lonDelta = Number(point?.lon) - Number(target.lon);
+                const distance = latDelta * latDelta + lonDelta * lonDelta;
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    endIndex = pointIndex;
+                }
+            }
+        }
+        endIndex = Math.max(startIndex + 1, Math.min(endIndex, points.length - 1));
+        groups.push(points.slice(startIndex, endIndex + 1));
+        startIndex = endIndex;
+    });
+    return groups.filter((group) => group.length > 1);
+}
+
 function renderRouteMap(plan) {
     const segments = Array.isArray(plan.segments) ? plan.segments : [];
     const routeFeatures = [];
     const markerFeatures = [];
     const bounds = [];
-    const palette = ['#0f766e', '#2563eb', '#7c3aed', '#b45309', '#c2410c'];
+    const itineraryTargets = Array.isArray(plan.itineraryTargets) ? plan.itineraryTargets : [];
 
     segments.forEach((segment, segmentIndex) => {
         const routePieces = segment.routePieces.filter((item) => item.type === 'route');
         routePieces.forEach((piece, pieceIndex) => {
             const routePoints = Array.isArray(piece.route.geometry) ? piece.route.geometry : [];
             if (routePoints.length > 0) {
-                const coordinates = routePoints.map((point) => [Number(point.lon), Number(point.lat)]);
-                routeFeatures.push({
-                    type: 'Feature',
-                    properties: {
-                        color: palette[segmentIndex % palette.length],
-                        segment_index: segmentIndex + 1,
-                        piece_index: pieceIndex + 1,
-                    },
-                    geometry: {
-                        type: 'LineString',
-                        coordinates,
-                    },
+                const routeLegGroups = segments.length === 1 && routePieces.length === 1
+                    ? splitRoutePointsByItineraryLeg(routePoints, itineraryTargets)
+                    : [routePoints];
+                routeLegGroups.forEach((legPoints, legIndex) => {
+                    routeFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            color: routeLegColor(segments.length === 1 ? legIndex : segmentIndex),
+                            segment_index: segments.length === 1 ? legIndex + 1 : segmentIndex + 1,
+                            piece_index: pieceIndex + 1,
+                        },
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: legPoints.map((point) => [Number(point.lon), Number(point.lat)]),
+                        },
+                    });
                 });
                 routePoints.forEach((point) => bounds.push([Number(point.lat), Number(point.lon)]));
             }
@@ -2441,7 +2937,7 @@ function renderRouteMap(plan) {
                     station_name: stop.station_name || '',
                     address: stop.address || '',
                     station_key: stationKey(stop),
-                    color: palette[(stopLegNumber - 1) % palette.length],
+                    color: routeLegColor(stopLegNumber - 1),
                 },
                 geometry: {
                     type: 'Point',
@@ -2475,167 +2971,7 @@ function renderRouteMap(plan) {
         });
     annotateRepeatedRouteFuelMarkers(markerFeatures);
 
-    routeMap.innerHTML = '';
-    if (!window.maplibregl) {
-        routeMap.innerHTML = renderRouteEmpty('Route map unavailable in this browser.');
-        routeMapLegend.innerHTML = '';
-        return;
-    }
-
-    if (routeMapInstance) {
-        routeMapInstance.remove();
-        routeMapInstance = null;
-    }
-    clearRouteFuelMarkers();
-
-    if (bounds.length === 0) {
-        routeMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
-        routeMapLegend.innerHTML = '';
-        return;
-    }
-
-    const mapConfig = window.fuelauMapConfig || {};
-    const styleUrl = mapConfig.style_url;
-    if (!styleUrl) {
-        routeMap.innerHTML = renderRouteEmpty('Map style is not configured.');
-        routeMapLegend.innerHTML = '';
-        return;
-    }
-
-    const map = new maplibregl.Map({
-        container: routeMap,
-        style: styleUrl,
-        center: [Number(segments[0]?.routePieces?.[0]?.route?.from?.lon || 133.7751), Number(segments[0]?.routePieces?.[0]?.route?.from?.lat || -25.2744)],
-        zoom: 4,
-        pitch: 0,
-        bearing: 0,
-        attributionControl: true,
-        preserveDrawingBuffer: false,
-    });
-    routeMapInstance = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
-    scheduleMapResize(map);
-
-    runWhenMapStyleReady(map, () => {
-        fuelauAddTopographicEnhancements(map);
-        map.addSource('route-lines', {
-            type: 'geojson',
-            data: {
-                type: 'FeatureCollection',
-                features: routeFeatures,
-            },
-        });
-        map.addSource('route-markers', {
-            type: 'geojson',
-            data: {
-                type: 'FeatureCollection',
-                features: markerFeatures,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-lines',
-            type: 'line',
-            source: 'route-lines',
-            paint: {
-                'line-color': ['get', 'color'],
-                'line-width': 5,
-                'line-opacity': 0.92,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-origin-marker',
-            type: 'circle',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'origin'],
-            paint: {
-                'circle-radius': 8,
-                'circle-color': '#166534',
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-destination-marker',
-            type: 'circle',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'destination'],
-            paint: {
-                'circle-radius': 8,
-                'circle-color': '#0f766e',
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-origin-label',
-            type: 'symbol',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'origin'],
-            layout: {
-                'text-field': ['get', 'label'],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': 12,
-                'text-offset': ['literal', [0, -1.3]],
-                'text-anchor': 'top',
-                'text-allow-overlap': true,
-            },
-            paint: {
-                'text-color': '#16212d',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-destination-label',
-            type: 'symbol',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'destination'],
-            layout: {
-                'text-field': ['get', 'label'],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': 12,
-                'text-offset': ['literal', [0, 1.2]],
-                'text-anchor': 'bottom',
-                'text-allow-overlap': true,
-            },
-            paint: {
-                'text-color': '#16212d',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.2,
-            },
-        });
-
-        fuelauApplyMapTheme(map);
-        const pointBounds = new maplibregl.LngLatBounds();
-        bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
-        map.fitBounds(pointBounds, { padding: 36, duration: 0 });
-        scheduleMapResize(map);
-
-        markerFeatures
-            .filter((feature) => feature.properties.kind === 'fuel-stop')
-            .forEach((feature) => {
-                const marker = new maplibregl.Marker({
-                    element: createRouteFuelMarkerElement(feature),
-                    anchor: 'bottom',
-                    offset: routeFuelMarkerOffset(feature),
-                })
-                    .setLngLat(feature.geometry.coordinates)
-                    .addTo(map);
-                routeFuelMarkers.push(marker);
-            });
-    });
-    scheduleMapResize(map);
-
-    routeMapLegend.innerHTML = [
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
-    ].join('');
+    renderSharedRouteWorkflow('route-planning', routeFeatures, markerFeatures, bounds);
 }
 
 function clearFuelStopFinderMarkers() {
@@ -2654,7 +2990,6 @@ function renderFuelStopFinderMap(plan) {
     const routeFeatures = [];
     const markerFeatures = [];
     const bounds = [];
-    const palette = ['#0f766e', '#2563eb', '#7c3aed', '#b45309', '#c2410c'];
 
     segments.forEach((segment, segmentIndex) => {
         const routePieces = segment.routePieces.filter((item) => item.type === 'route');
@@ -2665,7 +3000,7 @@ function renderFuelStopFinderMap(plan) {
                 routeFeatures.push({
                     type: 'Feature',
                     properties: {
-                        color: palette[segmentIndex % palette.length],
+                        color: routeLegColor(segmentIndex),
                         segment_index: segmentIndex + 1,
                         piece_index: pieceIndex + 1,
                     },
@@ -2721,7 +3056,7 @@ function renderFuelStopFinderMap(plan) {
                     station_name: stop.station_name || '',
                     address: stop.address || '',
                     station_key: stationKey(stop),
-                    color: palette[segmentIndex % palette.length],
+                    color: routeLegColor(segmentIndex),
                 },
                 geometry: {
                     type: 'Point',
@@ -2733,167 +3068,7 @@ function renderFuelStopFinderMap(plan) {
     });
     annotateRepeatedRouteFuelMarkers(markerFeatures);
 
-    fuelStopFinderMap.innerHTML = '';
-    if (!window.maplibregl) {
-        fuelStopFinderMap.innerHTML = renderRouteEmpty('Route map unavailable in this browser.');
-        fuelStopFinderMapLegend.innerHTML = '';
-        return;
-    }
-
-    if (fuelStopFinderMapInstance) {
-        fuelStopFinderMapInstance.remove();
-        fuelStopFinderMapInstance = null;
-    }
-    clearFuelStopFinderMarkers();
-
-    if (bounds.length === 0) {
-        fuelStopFinderMap.innerHTML = renderRouteEmpty('Plan a route to see the map.');
-        fuelStopFinderMapLegend.innerHTML = '';
-        return;
-    }
-
-    const mapConfig = window.fuelauMapConfig || {};
-    const styleUrl = mapConfig.style_url;
-    if (!styleUrl) {
-        fuelStopFinderMap.innerHTML = renderRouteEmpty('Map style is not configured.');
-        fuelStopFinderMapLegend.innerHTML = '';
-        return;
-    }
-
-    const map = new maplibregl.Map({
-        container: fuelStopFinderMap,
-        style: styleUrl,
-        center: [Number(segments[0]?.routePieces?.[0]?.route?.from?.lon || 133.7751), Number(segments[0]?.routePieces?.[0]?.route?.from?.lat || -25.2744)],
-        zoom: 4,
-        pitch: 0,
-        bearing: 0,
-        attributionControl: true,
-        preserveDrawingBuffer: false,
-    });
-    fuelStopFinderMapInstance = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'top-right');
-    scheduleMapResize(map);
-
-    runWhenMapStyleReady(map, () => {
-        fuelauAddTopographicEnhancements(map);
-        map.addSource('route-lines', {
-            type: 'geojson',
-            data: {
-                type: 'FeatureCollection',
-                features: routeFeatures,
-            },
-        });
-        map.addSource('route-markers', {
-            type: 'geojson',
-            data: {
-                type: 'FeatureCollection',
-                features: markerFeatures,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-lines',
-            type: 'line',
-            source: 'route-lines',
-            paint: {
-                'line-color': ['get', 'color'],
-                'line-width': 5,
-                'line-opacity': 0.92,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-origin-marker',
-            type: 'circle',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'origin'],
-            paint: {
-                'circle-radius': 8,
-                'circle-color': '#166534',
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-destination-marker',
-            type: 'circle',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'destination'],
-            paint: {
-                'circle-radius': 8,
-                'circle-color': '#0f766e',
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-origin-label',
-            type: 'symbol',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'origin'],
-            layout: {
-                'text-field': ['get', 'label'],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': 12,
-                'text-offset': ['literal', [0, -1.3]],
-                'text-anchor': 'top',
-                'text-allow-overlap': true,
-            },
-            paint: {
-                'text-color': '#16212d',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.2,
-            },
-        });
-
-        map.addLayer({
-            id: 'route-destination-label',
-            type: 'symbol',
-            source: 'route-markers',
-            filter: ['==', ['get', 'kind'], 'destination'],
-            layout: {
-                'text-field': ['get', 'label'],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': 12,
-                'text-offset': ['literal', [0, 1.2]],
-                'text-anchor': 'bottom',
-                'text-allow-overlap': true,
-            },
-            paint: {
-                'text-color': '#16212d',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.2,
-            },
-        });
-
-        fuelauApplyMapTheme(map);
-        const pointBounds = new maplibregl.LngLatBounds();
-        bounds.forEach(([lat, lon]) => pointBounds.extend([lon, lat]));
-        map.fitBounds(pointBounds, { padding: 36, duration: 0 });
-        scheduleMapResize(map);
-
-        markerFeatures
-            .filter((feature) => feature.properties.kind === 'fuel-stop')
-            .forEach((feature) => {
-                const marker = new maplibregl.Marker({
-                    element: createRouteFuelMarkerElement(feature),
-                    anchor: 'bottom',
-                    offset: routeFuelMarkerOffset(feature),
-                })
-                    .setLngLat(feature.geometry.coordinates)
-                    .addTo(map);
-                fuelStopFinderMarkers.push(marker);
-            });
-    });
-    scheduleMapResize(map);
-
-    fuelStopFinderMapLegend.innerHTML = [
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#166534"></span>Origin</span>',
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#0f766e"></span>Destination</span>',
-        '<span class="route-map-chip"><span class="route-map-dot" style="background:#b45309"></span>Fuel stop</span>',
-    ].join('');
+    renderSharedRouteWorkflow('fuel-stop-finder', routeFeatures, markerFeatures, bounds);
 }
 
 function renderRouteBreakdownInto(targetElement, plan) {
@@ -3001,6 +3176,8 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         distance: '-',
                         duration: '-',
                         details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
+                        wazeUrl: routeFuelWazeUrl(piece.station),
+                        stationName: String(piece.station.station_name || 'fuel station'),
                         routeOrder: Number(piece.routeProgressKm || 0),
                         typeOrder: 1,
                     });
@@ -3027,6 +3204,8 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         distance: '-',
                         duration: '-',
                         details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
+                        wazeUrl: routeFuelWazeUrl(piece.station),
+                        stationName: String(piece.station.station_name || 'fuel station'),
                         routeOrder: Number(piece.routeProgressKm || 0),
                         typeOrder: 1,
                     });
@@ -3090,6 +3269,7 @@ function renderRouteBreakdownInto(targetElement, plan) {
                         <td>${escapeHtml(row.duration)}</td>
                         <td>
                             <span class="route-breakdown-subtext">${escapeHtml(row.details)}</span>
+                            ${row.wazeUrl ? `<a class="waze-navigation-link route-breakdown-waze" href="${escapeHtml(row.wazeUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Navigate with Waze: ${escapeHtml(row.stationName || 'fuel station')}">Navigate with Waze</a>` : ''}
                         </td>
                     </tr>
                 `).join('')}
@@ -3293,7 +3473,7 @@ async function planRoute() {
     routeStatus.classList.remove('route-status-warning');
     routeStatus.classList.remove('route-status-error');
     routeSummary.innerHTML = renderRouteEmpty('Planning route...');
-    routeMap.innerHTML = renderRouteEmpty('Resolving locations...');
+    setMapWorkflowStatus('route-planning', 'Resolving locations...');
     routeMapLegend.innerHTML = '';
     routeLegs.innerHTML = renderRouteEmpty('Building legs...');
 
@@ -3348,7 +3528,7 @@ async function planRoute() {
         setRouteStatusText(`Route planning failed: ${message}`);
         routeStatus.classList.add('route-status-error');
         routeSummary.innerHTML = renderRouteError(message);
-        routeMap.innerHTML = renderRouteError(message);
+        setMapWorkflowStatus('route-planning', message, 'error');
         routeMapLegend.innerHTML = '';
         routeLegs.innerHTML = renderRouteError(message);
     } finally {
@@ -3377,8 +3557,7 @@ function resetRoutePlanner(options = {}) {
     addRouteDestination('');
     setRouteStatusText('Enter a trip to build a route.');
     routeSummary.innerHTML = renderRouteEmpty('No route planned yet.');
-    routeMap.innerHTML = renderRouteEmpty('No route planned yet.');
-    routeMapLegend.innerHTML = '';
+    clearRouteWorkflow('route-planning', 'No route planned yet.');
     routeLegs.innerHTML = renderRouteEmpty('No route planned yet.');
     if (clearStorage) {
         clearRoutePlannerState();
@@ -3429,18 +3608,9 @@ function resetFuelStopFinder(options = {}) {
     fuelStopFinderDetail.textContent = '';
     fuelStopFinderSummary.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
     fuelStopFinderRecommendation.innerHTML = '';
-    fuelStopFinderMap.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
-    fuelStopFinderMapLegend.innerHTML = '';
+    clearRouteWorkflow('fuel-stop-finder', 'No fuel stop route planned yet.');
     fuelStopFinderLegs.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
     clearFuelStopFinderMarkers();
-    if (fuelStopFinderMapInstance) {
-        try {
-            fuelStopFinderMapInstance.remove();
-        } catch (error) {
-            void error;
-        }
-        fuelStopFinderMapInstance = null;
-    }
     if (clearStorage) {
         clearFuelStopFinderState();
     }
@@ -3472,7 +3642,7 @@ async function planFuelStopFinder() {
     fuelStopFinderDetail.textContent = '';
     fuelStopFinderSummary.innerHTML = renderRouteEmpty('Planning route...');
     fuelStopFinderRecommendation.innerHTML = '';
-    fuelStopFinderMap.innerHTML = renderRouteEmpty('Resolving locations...');
+    setMapWorkflowStatus('fuel-stop-finder', 'Resolving locations...');
     fuelStopFinderMapLegend.innerHTML = '';
     fuelStopFinderLegs.innerHTML = renderRouteEmpty('Building route...');
 
@@ -3507,7 +3677,7 @@ async function planFuelStopFinder() {
         fuelStopFinderStatus.textContent = error.message;
         fuelStopFinderSummary.innerHTML = renderRouteEmpty(error.message);
         fuelStopFinderRecommendation.innerHTML = '';
-        fuelStopFinderMap.innerHTML = renderRouteEmpty(error.message);
+        setMapWorkflowStatus('fuel-stop-finder', error.message, 'error');
         fuelStopFinderMapLegend.innerHTML = '';
         fuelStopFinderLegs.innerHTML = renderRouteEmpty(error.message);
         fuelStopFinderDetail.textContent = '';
@@ -3971,6 +4141,147 @@ function renderBarChart(container, meta, series) {
     });
 }
 
+function fuelBrandMetadata(brandName, stationName = '') {
+    const haystack = `${String(brandName || '')} ${String(stationName || '')}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const padded = ` ${haystack} `;
+    for (const [key, metadata] of Object.entries(fuelBrandRegistry)) {
+        if (key === 'fuelau') {
+            continue;
+        }
+        const matched = metadata.aliases.some((alias) => {
+            const normalizedAlias = alias.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            return normalizedAlias.length <= 3
+                ? padded.includes(` ${normalizedAlias} `)
+                : haystack.includes(normalizedAlias);
+        });
+        if (matched) {
+            return { key, ...metadata };
+        }
+    }
+    return { key: 'fuelau', ...fuelBrandRegistry.fuelau };
+}
+
+function fuelBrandImageId(brandKey) {
+    return `fuelau-brand-${brandKey}`;
+}
+
+function fuelBrandBadgeImage(metadata) {
+    const pixelRatio = 2;
+    const width = 58 * pixelRatio;
+    const height = 32 * pixelRatio;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    context.scale(pixelRatio, pixelRatio);
+    context.fillStyle = metadata.background;
+    context.strokeStyle = metadata.foreground;
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(8, 1);
+    context.lineTo(50, 1);
+    context.quadraticCurveTo(57, 1, 57, 8);
+    context.lineTo(57, 24);
+    context.quadraticCurveTo(57, 31, 50, 31);
+    context.lineTo(8, 31);
+    context.quadraticCurveTo(1, 31, 1, 24);
+    context.lineTo(1, 8);
+    context.quadraticCurveTo(1, 1, 8, 1);
+    context.closePath();
+    context.fill();
+    context.globalAlpha = 0.45;
+    context.stroke();
+    context.globalAlpha = 1;
+    context.fillStyle = metadata.foreground;
+    const fontSize = metadata.label.length > 6 ? 9 : (metadata.label.length > 4 ? 10 : 12);
+    context.font = `800 ${fontSize}px Inter, Arial, sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(metadata.label, 29, 16, 50);
+    return context.getImageData(0, 0, width, height);
+}
+
+function registerFuelBrandImages(map) {
+    Object.entries(fuelBrandRegistry).forEach(([key, metadata]) => {
+        const imageId = fuelBrandImageId(key);
+        if (!map.hasImage(imageId)) {
+            map.addImage(imageId, fuelBrandBadgeImage(metadata), { pixelRatio: 2 });
+        }
+    });
+}
+
+function fuelStationSelectionFeature(properties, coordinates) {
+    return {
+        type: 'Feature',
+        properties: { ...properties },
+        geometry: { type: 'Point', coordinates: coordinates.map(Number) },
+    };
+}
+
+function clearFuelStationSelection() {
+    if (fuelStationDetail) {
+        fuelStationDetail.hidden = true;
+        fuelStationDetail.innerHTML = '';
+    }
+    fuelMapPopup?.remove();
+    try {
+        fuelMapInstance?.getSource('fuelau-prices-selection')?.setData(emptyMapFeatureCollection());
+    } catch (error) {
+        void error;
+    }
+}
+
+function selectFuelStation(properties, coordinates, focusMap = false) {
+    if (!properties || !Array.isArray(coordinates) || coordinates.length < 2) {
+        return;
+    }
+    const brand = fuelBrandMetadata(properties.brand_name, properties.station_name);
+    if (fuelStationDetail) {
+        const station = escapeHtml(String(properties.station_name || 'Fuel station'));
+        const address = escapeHtml(String(properties.address || 'Address unavailable'));
+        const fuelName = escapeHtml(selectedFuelLabel() || String(properties.fuel_name || 'Fuel'));
+        const price = escapeHtml(String(properties.price_text || formatPrice(properties.price)));
+        const updatedAt = escapeHtml(formatDateTime(properties.updated_at));
+        const source = escapeHtml(`${String(properties.state || '').trim()} · ${String(properties.source || '').toUpperCase()}`);
+        fuelStationDetail.innerHTML = `
+            <span class="fuel-station-brand-badge" style="--station-brand-bg:${brand.background};--station-brand-fg:${brand.foreground}">${escapeHtml(brand.label)}</span>
+            <div class="fuel-station-detail-copy">
+                <strong>${station}</strong>
+                <span class="fuel-station-detail-price">${price}/L · ${fuelName}</span>
+                <span>${address}</span>
+                <span>${source} · Updated ${updatedAt}</span>
+            </div>
+            <button class="fuel-station-detail-close" type="button" aria-label="Close station details">×</button>
+        `;
+        fuelStationDetail.hidden = false;
+        fuelStationDetail.querySelector('.fuel-station-detail-close')?.addEventListener('click', clearFuelStationSelection);
+    }
+
+    try {
+        fuelMapInstance?.getSource('fuelau-prices-selection')?.setData(emptyMapFeatureCollection([
+            fuelStationSelectionFeature(properties, coordinates),
+        ]));
+    } catch (error) {
+        void error;
+    }
+    if (fuelMapInstance && fuelMapPopup) {
+        fuelMapPopup
+            .setLngLat(coordinates)
+            .setHTML(fuelMapPopupHtml(properties))
+            .addTo(fuelMapInstance);
+        if (focusMap) {
+            fuelMapAutoRefreshSuppressed = true;
+            fuelMapInstance.easeTo({ center: coordinates, zoom: Math.max(fuelMapInstance.getZoom(), 13), duration: 400 });
+            window.setTimeout(() => {
+                fuelMapAutoRefreshSuppressed = false;
+            }, 700);
+        }
+    }
+}
+
 function renderSnapshot(rows) {
     const visibleRows = fuelRowsForRendering(rows).sort((left, right) => {
         const leftTime = new Date(String(left?.updated_at || '').replace(' ', 'T') + 'Z').getTime();
@@ -3992,9 +4303,9 @@ function renderSnapshot(rows) {
                 </tr>
             </thead>
             <tbody>
-                ${visibleRows.slice(0, 8).map((row) => `
+                ${visibleRows.slice(0, 8).map((row, index) => `
                     <tr>
-                        <td>${escapeHtml(row.station_name)}<br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
+                        <td><button class="snapshot-station-select" type="button" data-snapshot-index="${index}">${escapeHtml(row.station_name)}</button><br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
                         <td>${escapeHtml(row.fuel_name)}</td>
                         <td><span class="snapshot-price-row"><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span>${snapshotPriceMovementMarkup(row)}</span><br><span>Reported ${escapeHtml(formatDateTime(row.updated_at))}</span>${row.last_seen_at ? `<br><span>Checked ${escapeHtml(formatDateTime(row.last_seen_at))}</span>` : ''}</td>
                     </tr>
@@ -4002,6 +4313,16 @@ function renderSnapshot(rows) {
             </tbody>
         </table>
     `;
+    const snapshotRows = visibleRows.slice(0, 8);
+    fuelSnapshot.querySelectorAll('[data-snapshot-index]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const row = snapshotRows[Number(button.dataset.snapshotIndex)];
+            const coordinates = [Number(row?.longitude), Number(row?.latitude)];
+            if (row && coordinates.every(Number.isFinite)) {
+                selectFuelStation(row, coordinates, true);
+            }
+        });
+    });
 }
 
 function fuelMapColor(price, minPrice, maxPrice) {
@@ -4052,6 +4373,7 @@ function renderFuelMapLegend(rows, highlight = null) {
 
 function fuelMapPopupHtml(row) {
     const station = escapeHtml(String(row.station_name || '').trim());
+    const brand = fuelBrandMetadata(row.brand_name, row.station_name);
     const address = escapeHtml(String(row.address || '').trim());
     const fuelName = escapeHtml(selectedFuelLabel() || String(row.fuel_name || 'Fuel'));
     const price = escapeHtml(String(row.price_text || formatPrice(row.price)));
@@ -4059,6 +4381,7 @@ function fuelMapPopupHtml(row) {
     const source = escapeHtml(`${String(row.state || '').trim()} · ${String(row.source || '').toUpperCase()}`);
     return `
         <div style="min-width:220px;max-width:280px;font:inherit;color:var(--text);">
+            <span class="fuel-station-brand-badge" style="--station-brand-bg:${brand.background};--station-brand-fg:${brand.foreground};margin-bottom:7px;">${escapeHtml(brand.label)}</span>
             <strong style="display:block;font-size:13px;line-height:1.3;margin-bottom:4px;">${station}</strong>
             <div style="font-size:11px;color:var(--muted);line-height:1.3;margin-bottom:6px;">${address}</div>
             <div style="font-size:12px;line-height:1.35;margin-bottom:4px;"><strong>${fuelName}</strong></div>
@@ -4078,10 +4401,16 @@ function fuelMapFeatureCollection(rows) {
     const maxPrice = prices.length > 0 ? Math.max(...prices) : null;
     const features = visibleRows
         .filter((row) => Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)))
-        .map((row) => ({
-            type: 'Feature',
-            properties: {
+        .map((row) => {
+            const brand = fuelBrandMetadata(row.brand_name, row.station_name);
+            return {
+                type: 'Feature',
+                properties: {
+                station_id: String(row.station_id || ''),
                 station_name: String(row.station_name || ''),
+                brand_name: String(row.brand_name || ''),
+                brand_key: brand.key,
+                brand_icon: fuelBrandImageId(brand.key),
                 address: String(row.address || ''),
                 price: String(row.price ?? ''),
                 price_value: Number(row.price),
@@ -4090,13 +4419,15 @@ function fuelMapFeatureCollection(rows) {
                 source: String(row.source || ''),
                 state: String(row.state || ''),
                 updated_at: String(row.updated_at || ''),
+                last_seen_at: String(row.last_seen_at || ''),
                 color: fuelMapColor(row.price, minPrice, maxPrice),
             },
             geometry: {
                 type: 'Point',
                 coordinates: [Number(row.longitude), Number(row.latitude)],
-            },
-        }));
+                },
+            };
+        });
     return {
         type: 'FeatureCollection',
         features,
@@ -4111,10 +4442,13 @@ function fuelMapHighlightCollection(highlight) {
     const features = [];
 
     minStations.filter((row) => fuelRecordHasRenderablePrice(row?.price)).forEach((row) => {
+        const brand = fuelBrandMetadata(row.brand_name, row.station_name);
         features.push({
             type: 'Feature',
             properties: {
                 station_name: String(row.station_name || ''),
+                brand_name: String(row.brand_name || ''),
+                brand_icon: fuelBrandImageId(brand.key),
                 address: String(row.address || ''),
                 price: String(row.price ?? ''),
                 price_text: formatPrice(row.price),
@@ -4132,10 +4466,13 @@ function fuelMapHighlightCollection(highlight) {
     });
 
     maxStations.filter((row) => fuelRecordHasRenderablePrice(row?.price)).forEach((row) => {
+        const brand = fuelBrandMetadata(row.brand_name, row.station_name);
         features.push({
             type: 'Feature',
             properties: {
                 station_name: String(row.station_name || ''),
+                brand_name: String(row.brand_name || ''),
+                brand_icon: fuelBrandImageId(brand.key),
                 address: String(row.address || ''),
                 price: String(row.price ?? ''),
                 price_text: formatPrice(row.price),
@@ -4211,18 +4548,18 @@ function updateFuelMapSource(collection, highlight = null, preserveViewport = fa
         ? { type: 'FeatureCollection', features: [] }
         : collection;
 
-    const source = fuelMapInstance.getSource('fuel-stations');
+    const source = fuelMapInstance.getSource('fuelau-prices-stations');
     if (source) {
         source.setData(visibleCollection);
     }
-    const highlightSource = fuelMapInstance.getSource('fuel-station-highlights');
+    const highlightSource = fuelMapInstance.getSource('fuelau-prices-highlights');
     if (highlightSource) {
         highlightSource.setData(highlightCollection);
     }
 
     const features = Array.isArray(collection.features) ? collection.features : [];
     if (features.length === 0) {
-        if (!preserveViewport) {
+        if (!preserveViewport && activeMapWorkflow === 'fuel-prices') {
             fuelMapFocusSelectedRegion();
         }
         renderFuelMapLegend([], highlight);
@@ -4236,12 +4573,12 @@ function updateFuelMapSource(collection, highlight = null, preserveViewport = fa
     const colorExpression = prices.length > 0
         ? ['interpolate', ['linear'], ['get', 'price_value'], minPrice, '#16a34a', midPrice, '#ca8a04', maxPrice, '#b91c1c']
         : '#0f766e';
-    if (fuelMapInstance.getLayer('fuel-stations-circle')) {
-        fuelMapInstance.setPaintProperty('fuel-stations-circle', 'circle-color', colorExpression);
+    if (fuelMapInstance.getLayer('fuelau-prices-stations-circle')) {
+        fuelMapInstance.setPaintProperty('fuelau-prices-stations-circle', 'circle-color', colorExpression);
     }
 
     const focusFeatures = hasHighlight ? highlightFeatures : features;
-    if (!preserveViewport && focusFeatures.length === 1) {
+    if (!preserveViewport && activeMapWorkflow === 'fuel-prices' && focusFeatures.length === 1) {
         const only = focusFeatures[0];
         fuelMapAutoRefreshSuppressed = true;
         fuelMapInstance.easeTo({
@@ -4252,7 +4589,7 @@ function updateFuelMapSource(collection, highlight = null, preserveViewport = fa
         window.setTimeout(() => {
             fuelMapAutoRefreshSuppressed = false;
         }, 700);
-    } else if (!preserveViewport && focusFeatures.length > 1) {
+    } else if (!preserveViewport && activeMapWorkflow === 'fuel-prices' && focusFeatures.length > 1) {
         if (!fuelMapFocusSelectedRegion()) {
             fuelMapAutoRefreshSuppressed = true;
             const bounds = new maplibregl.LngLatBounds();
@@ -4386,7 +4723,7 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
     const collection = fuelMapFeatureCollection(visibleRows);
     const highlightCollection = fuelMapHighlightCollection(highlight);
     if (!window.maplibregl) {
-        fuelMap.innerHTML = renderRouteEmpty('Fuel map unavailable in this browser.');
+        setMapWorkflowStatus('fuel-prices', 'Fuel map unavailable in this browser.', 'error');
         fuelMapLegend.innerHTML = '';
         return;
     }
@@ -4396,7 +4733,7 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
         const mapConfig = window.fuelauMapConfig || {};
         const styleUrl = mapConfig.style_url;
         if (!styleUrl) {
-            fuelMap.innerHTML = renderRouteEmpty('Map style is not configured.');
+            setMapWorkflowStatus('fuel-prices', 'Map style is not configured.', 'error');
             fuelMapLegend.innerHTML = '';
             return;
         }
@@ -4423,38 +4760,62 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
 
         runWhenMapStyleReady(fuelMapInstance, () => {
             fuelauAddTopographicEnhancements(fuelMapInstance);
+            registerFuelBrandImages(fuelMapInstance);
             fuelMapReady = true;
-            if (!fuelMapInstance.getSource('fuel-stations')) {
-                fuelMapInstance.addSource('fuel-stations', {
+            if (!fuelMapInstance.getSource('fuelau-prices-stations')) {
+                fuelMapInstance.addSource('fuelau-prices-stations', {
                     type: 'geojson',
                     data: collection,
                 });
             }
-            if (!fuelMapInstance.getSource('fuel-station-highlights')) {
-                fuelMapInstance.addSource('fuel-station-highlights', {
+            if (!fuelMapInstance.getSource('fuelau-prices-highlights')) {
+                fuelMapInstance.addSource('fuelau-prices-highlights', {
                     type: 'geojson',
                     data: highlightCollection,
                 });
             }
-            if (!fuelMapInstance.getLayer('fuel-stations-circle')) {
+            if (!fuelMapInstance.getSource('fuelau-prices-selection')) {
+                fuelMapInstance.addSource('fuelau-prices-selection', {
+                    type: 'geojson',
+                    data: emptyMapFeatureCollection(),
+                });
+            }
+            if (!fuelMapInstance.getLayer('fuelau-prices-stations-circle')) {
                 fuelMapInstance.addLayer({
-                    id: 'fuel-stations-circle',
+                    id: 'fuelau-prices-stations-circle',
                     type: 'circle',
-                    source: 'fuel-stations',
+                    source: 'fuelau-prices-stations',
+                    layout: { visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none' },
                     paint: {
-                        'circle-radius': 7,
-                        'circle-stroke-width': 2,
+                        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 7, 9, 11, 13, 16],
+                        'circle-stroke-width': 3,
                         'circle-stroke-color': '#ffffff',
                         'circle-opacity': 0.95,
                     },
                 });
             }
-            if (!fuelMapInstance.getLayer('fuel-station-highlight-min')) {
+            if (!fuelMapInstance.getLayer('fuelau-prices-stations-brand')) {
                 fuelMapInstance.addLayer({
-                    id: 'fuel-station-highlight-min',
+                    id: 'fuelau-prices-stations-brand',
+                    type: 'symbol',
+                    source: 'fuelau-prices-stations',
+                    minzoom: 7,
+                    layout: {
+                        visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none',
+                        'icon-image': ['get', 'brand_icon'],
+                        'icon-size': ['interpolate', ['linear'], ['zoom'], 7, 0.48, 11, 0.68, 14, 0.82],
+                        'icon-allow-overlap': false,
+                        'icon-padding': 3,
+                    },
+                });
+            }
+            if (!fuelMapInstance.getLayer('fuelau-prices-highlight-min')) {
+                fuelMapInstance.addLayer({
+                    id: 'fuelau-prices-highlight-min',
                     type: 'circle',
-                    source: 'fuel-station-highlights',
+                    source: 'fuelau-prices-highlights',
                     filter: ['==', ['get', 'kind'], 'min'],
+                    layout: { visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none' },
                     paint: {
                         'circle-radius': 10,
                         'circle-color': '#16a34a',
@@ -4464,12 +4825,13 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
                     },
                 });
             }
-            if (!fuelMapInstance.getLayer('fuel-station-highlight-max')) {
+            if (!fuelMapInstance.getLayer('fuelau-prices-highlight-max')) {
                 fuelMapInstance.addLayer({
-                    id: 'fuel-station-highlight-max',
+                    id: 'fuelau-prices-highlight-max',
                     type: 'circle',
-                    source: 'fuel-station-highlights',
+                    source: 'fuelau-prices-highlights',
                     filter: ['==', ['get', 'kind'], 'max'],
+                    layout: { visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none' },
                     paint: {
                         'circle-radius': 10,
                         'circle-color': '#b91c1c',
@@ -4479,15 +4841,43 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
                     },
                 });
             }
+            if (!fuelMapInstance.getLayer('fuelau-prices-highlights-brand')) {
+                fuelMapInstance.addLayer({
+                    id: 'fuelau-prices-highlights-brand',
+                    type: 'symbol',
+                    source: 'fuelau-prices-highlights',
+                    layout: {
+                        visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none',
+                        'icon-image': ['get', 'brand_icon'],
+                        'icon-size': 0.72,
+                        'icon-allow-overlap': true,
+                    },
+                });
+            }
+            if (!fuelMapInstance.getLayer('fuelau-prices-selection-ring')) {
+                fuelMapInstance.addLayer({
+                    id: 'fuelau-prices-selection-ring',
+                    type: 'circle',
+                    source: 'fuelau-prices-selection',
+                    layout: { visibility: activeMapWorkflow === 'fuel-prices' ? 'visible' : 'none' },
+                    paint: {
+                        'circle-radius': 22,
+                        'circle-color': 'rgba(0,0,0,0)',
+                        'circle-stroke-width': 4,
+                        'circle-stroke-color': '#0f766e',
+                        'circle-opacity': 1,
+                    },
+                });
+            }
 
             fuelauApplyMapTheme(fuelMapInstance);
-            fuelMapInstance.on('mouseenter', 'fuel-stations-circle', () => {
+            fuelMapInstance.on('mouseenter', 'fuelau-prices-stations-circle', () => {
                 fuelMapInstance.getCanvas().style.cursor = 'pointer';
             });
-            fuelMapInstance.on('mouseleave', 'fuel-stations-circle', () => {
+            fuelMapInstance.on('mouseleave', 'fuelau-prices-stations-circle', () => {
                 fuelMapInstance.getCanvas().style.cursor = '';
             });
-            ['fuel-station-highlight-min', 'fuel-station-highlight-max'].forEach((layerId) => {
+            ['fuelau-prices-highlight-min', 'fuelau-prices-highlight-max'].forEach((layerId) => {
                 fuelMapInstance.on('mouseenter', layerId, () => {
                     fuelMapInstance.getCanvas().style.cursor = 'pointer';
                 });
@@ -4495,29 +4885,26 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
                     fuelMapInstance.getCanvas().style.cursor = '';
                 });
             });
-            fuelMapInstance.on('click', 'fuel-stations-circle', (event) => {
+            fuelMapInstance.on('click', 'fuelau-prices-stations-circle', (event) => {
                 const feature = event.features && event.features[0];
-                if (!feature || !fuelMapPopup) {
+                if (!feature) {
                     return;
                 }
-                fuelMapPopup
-                    .setLngLat(feature.geometry.coordinates)
-                    .setHTML(fuelMapPopupHtml(feature.properties || {}))
-                    .addTo(fuelMapInstance);
+                selectFuelStation(feature.properties || {}, feature.geometry.coordinates);
             });
-            ['fuel-station-highlight-min', 'fuel-station-highlight-max'].forEach((layerId) => {
+            ['fuelau-prices-highlight-min', 'fuelau-prices-highlight-max'].forEach((layerId) => {
                 fuelMapInstance.on('click', layerId, (event) => {
                     const feature = event.features && event.features[0];
-                    if (!feature || !fuelMapPopup) {
+                    if (!feature) {
                         return;
                     }
-                    fuelMapPopup
-                        .setLngLat(feature.geometry.coordinates)
-                        .setHTML(fuelMapPopupHtml(feature.properties || {}))
-                        .addTo(fuelMapInstance);
+                    selectFuelStation(feature.properties || {}, feature.geometry.coordinates);
                 });
             });
-            fuelMapInstance.on('moveend', scheduleFuelMapViewportRefresh);
+            fuelMapInstance.on('moveend', () => {
+                captureMapWorkflowCamera(activeMapWorkflow);
+                scheduleFuelMapViewportRefresh();
+            });
 
             updateFuelMapSource(
                 (fuelMapPendingData && fuelMapPendingData.collection) || collection,
@@ -4526,9 +4913,12 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
             );
             scheduleMapResize(fuelMapInstance);
             fuelMapPendingData = null;
+            syncSharedMapWorkflow(activeMapWorkflow);
+            clearMapWorkflowStatus('fuel-prices');
         });
     } else if (fuelMapReady) {
         updateFuelMapSource(collection, highlight, preserveViewport);
+        clearMapWorkflowStatus('fuel-prices');
         if (!preserveViewport) {
             scheduleMapResize(fuelMapInstance);
         }
@@ -4565,6 +4955,7 @@ async function loadFuelDashboard() {
             window.clearTimeout(fuelMapAutoRefreshTimer);
             fuelMapAutoRefreshTimer = null;
         }
+        clearFuelStationSelection();
         renderFuelSummary(sources.sources || {});
         renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
         renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
@@ -4580,9 +4971,7 @@ async function loadFuelDashboard() {
         fuelWeeklyChart.innerHTML = chartEmpty(error.message);
         fuelMonthlyChart.innerHTML = chartEmpty(error.message);
         fuelSnapshot.innerHTML = chartEmpty(error.message);
-        if (fuelMap) {
-            fuelMap.innerHTML = renderRouteEmpty(error.message);
-        }
+        setMapWorkflowStatus('fuel-prices', error.message, 'error');
         if (fuelMapLegend) {
             fuelMapLegend.innerHTML = '';
         }
@@ -4809,5 +5198,8 @@ attachRouteAutocomplete(routeOrigin);
         if (savedRouteState && savedRouteState.planned) {
             await planRoute();
         }
+    }
+    if (containerManagementEnabled && savedActiveTab === 'container-management-tab') {
+        activateTab('container-management-tab');
     }
 })();

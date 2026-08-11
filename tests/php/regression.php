@@ -2770,7 +2770,7 @@ fuelauTest('live route planner expands reverse multi-destination legs without fu
     fuelauAssertSame(20.0, $response['summary']['ending_fuel_l']);
 });
 
-fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static function (): void {
+fuelauTest('shared map prevents repeated hidden viewport refreshes', static function (): void {
     $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
     fuelauAssertTrue(is_string($source), 'Unable to read public/resources/app.js');
     fuelauAssertTrue(
@@ -2785,9 +2785,14 @@ fuelauTest('fuel dashboard prevents repeated hidden viewport refreshes', static 
         str_contains($source, 'if (!preserveViewport)'),
         'Viewport-only map renders must not resize the map'
     );
+    fuelauAssertSame(
+        1,
+        substr_count($source, 'new maplibregl.Map('),
+        'All workflows must share one persistent MapLibre instance'
+    );
     fuelauAssertTrue(
-        str_contains($source, 'destroyFuelMap();'),
-        'The fuel map must release tile resources while its tab is hidden'
+        str_contains($source, 'function syncSharedMapWorkflow(workflow)'),
+        'Workflow changes must switch namespaced layers on the shared map'
     );
 });
 

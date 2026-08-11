@@ -4,7 +4,7 @@ Australian fuel price and routing API project.
 
 FuelAU is a Docker-first PHP application based on the previous Fuel app structure. It currently provides:
 
-- A fixed-width-font web UI for fuel prices and route planning.
+- A responsive map-first web UI for fuel prices and route planning.
 - Fuel price graphs, a region-based station map, and clickable station price popups for the selected fuel.
 - Route planning with Nominatim geocoding, OSRM routing, local map display, and fuel-stop planning.
 - A PHP/Apache app container with cron.
@@ -15,7 +15,7 @@ FuelAU is a Docker-first PHP application based on the previous Fuel app structur
 - Docker container status, logs, restart controls, and constrained prune actions through an opt-in admin service.
 - Optional Australia routing/geocoding services using OSRM and Nominatim.
 - Optional local Australia vector basemap using Planetiler and TileServer GL.
-- Optional Container Management tab on a separate loopback-only admin service; disabled by default.
+- Optional Container Management tool on a separate loopback-only admin service; disabled by default.
 
 All services are managed from the single root `docker-compose.yml`.
 
@@ -45,7 +45,7 @@ Recommended controls before first use:
 - Treat the separate Container Management service as a local-admin tool only; it can control allowlisted Docker resources on the host.
 - Keep `MYSQL_HOST_PORT` bound to `127.0.0.1` unless you have a specific reason to expose MariaDB on a trusted private network.
 - The application and admin ports bind to `127.0.0.1` by default. Set `APP_BIND_ADDRESS` or `ADMIN_BIND_ADDRESS` only when deliberate network access is required.
-- To enable the Container Management tab, set `CONTAINER_MANAGEMENT_TOKEN` to a strong local secret and start the `admin` profile. Open `http://localhost:18083/`; the browser exchanges the secret for a 30-minute HttpOnly session and does not persist it in local storage.
+- To enable the Container Management tool, set `CONTAINER_MANAGEMENT_TOKEN` to a strong local secret and start the `admin` profile. Open `http://localhost:18083/`; the browser exchanges the secret for a 30-minute HttpOnly session and does not persist it in local storage.
 
 If the app is reachable beyond your trusted LAN, that is a misconfiguration that should be corrected before launch.
 
@@ -56,7 +56,7 @@ If the app is reachable beyond your trusted LAN, that is a misconfiguration that
 3. Confirm the app is only reachable from trusted devices on the home LAN.
 4. Confirm `config/app.env` contains real API credentials, not sample placeholders.
 5. Confirm `MYSQL_HOST_PORT` stays loopback-only unless you intentionally expose MariaDB on a trusted private network.
-6. Confirm the Container Management tab is only used by people who are allowed to manage the host Docker daemon.
+6. Confirm the Container Management tool is only used by people who are allowed to manage the host Docker daemon.
 7. Confirm `/api/health` works before relying on the sync jobs.
 
 ## Quick Start
@@ -237,7 +237,7 @@ http://localhost:18080/
 Expected result:
 
 - The UI loads.
-- The public application has no Container Management tab or Docker socket access.
+- The public application has no Container Management tool or Docker socket access.
 - `/api/health` responds.
 - Fuel charts may be empty until API keys are added and sync jobs run.
 
@@ -247,11 +247,11 @@ To test the optional admin service, set `CONTAINER_MANAGEMENT_TOKEN` in `.env`, 
 docker compose --profile admin up -d --build admin docker-proxy
 ```
 
-Open `http://localhost:18083/`. The Container Management tab should show `app`, `admin`, and `db`.
+Open `http://localhost:18083/`. The Container Management tool should show `app`, `admin`, and `db`.
 
 ### Stage 2: Fuel Price Imports
 
-Use this stage to test the Fuel Prices tab, history graphs, station map markers, and route fuel-stop pricing.
+Use this stage to test the Explore Prices tool, history graphs, station map markers, and route fuel-stop pricing.
 
 1. Apply for the required API credentials.
 
@@ -438,7 +438,7 @@ Expected result:
 
 ### Stage 5: Tester Sanity Routes
 
-After Stages 2-4 are running, test these route examples in the Route Planning tab with Diesel, a `60 L` tank, and `12 L/100km` economy:
+After Stages 2-4 are running, test these route examples in the Route Planning tool with Diesel, a `60 L` tank, and `12 L/100km` economy:
 
 - Cairns, Queensland -> Townsville, Queensland
 - Cairns, Queensland -> Brisbane, Queensland
@@ -552,7 +552,7 @@ docker compose up -d --build
 docker compose exec app php setup.php
 ```
 
-That gives you the app, database, cron jobs, and the Fuel Prices tab. Routing and the local map stack are optional profiles and must be started separately if you want route planning maps, geocoding, local basemap tiles, or station maps backed by local tiles.
+That gives you the app, database, cron jobs, and the Explore Prices tool. Routing and the local map stack are optional profiles and must be started separately if you want route planning maps, geocoding, local basemap tiles, or station maps backed by local tiles.
 
 Default local endpoints:
 
@@ -592,8 +592,9 @@ are one-shot preprocessing services and do not stay running.
 
 ## User Experience
 
-The Fuel Prices tab has:
+The map-first Explore Prices tool has:
 
+- One persistent MapLibre canvas shared with fuel-stop finding and route planning, so changing tools does not recreate the style or restart base-tile loading.
 - `State`: limits fuel options and regions to that state.
 - `Region`: major city/region selector for the selected state. Regions are currently seeded from Australian cities over roughly 20,000 people.
 - `Fuel`: selected fuel type, persisted in a long-lived browser cookie.
@@ -601,13 +602,14 @@ The Fuel Prices tab has:
 - A recent snapshot table.
 - A station map showing current prices for the selected state, region, and fuel. Click a station marker to see station name, address, selected fuel price, source/state, and update time.
 
-The Route Planning tab has:
+The Route Planning tool has:
 
 - Origin and reorderable destinations with Photon-backed suggestions and Nominatim fallback.
 - Fuel type, tank fill size, and fuel economy controls.
 - Direct-return or reverse-path return mode.
 - A MapLibre route map using the local `/tiles/` basemap when the map stack is running.
 - Fuel stops plotted on the route and a turn-by-turn breakdown.
+- Coordinate-based Waze navigation links on recommended/planned fuel-stop cards, route breakdown rows, and map markers; mobile opens Waze when available and otherwise uses the Waze web experience.
 - If a segment cannot reach a normal or safety stop, the planner can fall back to a smaller contingency refill before showing an external reserve requirement.
 - Reserve warnings are shown under the route button in red, and the planner continues into later legs instead of stopping the whole trip.
 - Route stations that are skipped because they have no government pricing or no price are listed under the route button with the station name, address, and exclusion reason.
