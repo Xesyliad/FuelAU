@@ -6,6 +6,11 @@ const sheetToolTitle = document.getElementById('sheet-tool-title');
 const workspaceSheetToggle = document.getElementById('workspace-sheet-toggle');
 const workspaceSheetReopen = document.getElementById('workspace-sheet-reopen');
 const themeOptions = document.querySelectorAll('[data-theme-preference]');
+const appOverflow = document.querySelector('.app-overflow');
+const appOverflowToggle = document.getElementById('app-overflow-toggle');
+const appOverflowMenu = document.getElementById('app-overflow-menu');
+const openContainerManagement = document.getElementById('open-container-management');
+const containerManagementTab = document.getElementById('container-management-tab');
 const themeColourMeta = document.querySelector('meta[name="theme-color"]');
 const themePreferenceKey = 'fuelau_theme_v1';
 const supportedThemePreferences = new Set(['system', 'light', 'dark']);
@@ -13,6 +18,7 @@ const systemDarkTheme = window.matchMedia('(prefers-color-scheme: dark)');
 const containerGrid = document.getElementById('container-grid');
 const containerStatus = document.getElementById('container-status');
 const containerLogs = document.getElementById('container-logs');
+const containerLogsSummary = document.getElementById('container-logs-summary');
 const refreshContainers = document.getElementById('refresh-containers');
 const restartContainer = document.getElementById('restart-container');
 const pruneStopped = document.getElementById('prune-stopped');
@@ -641,6 +647,7 @@ function syncMapFirstShell(tab, panelId) {
     if (sheetToolTitle) {
         sheetToolTitle.textContent = toolTitle;
     }
+    openContainerManagement?.setAttribute('aria-current', panelId === 'container-management' ? 'page' : 'false');
     syncSharedMapWorkflow(mapViewId);
     setWorkspaceSheetExpanded(true);
 }
@@ -651,6 +658,37 @@ workspaceSheetToggle?.addEventListener('click', () => {
 workspaceSheetReopen?.addEventListener('click', () => {
     setWorkspaceSheetExpanded(true);
     workspaceSheetToggle?.focus();
+});
+
+function setAppOverflowExpanded(expanded) {
+    if (!appOverflowToggle || !appOverflowMenu) {
+        return;
+    }
+    appOverflowToggle.setAttribute('aria-expanded', String(expanded));
+    appOverflowMenu.hidden = !expanded;
+    if (expanded) {
+        appOverflowMenu.querySelector('[role="menuitem"]')?.focus();
+    }
+}
+
+appOverflowToggle?.addEventListener('click', () => {
+    setAppOverflowExpanded(appOverflowToggle.getAttribute('aria-expanded') !== 'true');
+});
+openContainerManagement?.addEventListener('click', () => {
+    setAppOverflowExpanded(false);
+    activateTab('container-management-tab');
+    document.getElementById('container-management')?.focus({ preventScroll: true });
+});
+document.addEventListener('pointerdown', (event) => {
+    if (appOverflow && !appOverflow.contains(event.target)) {
+        setAppOverflowExpanded(false);
+    }
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && appOverflowToggle?.getAttribute('aria-expanded') === 'true') {
+        setAppOverflowExpanded(false);
+        appOverflowToggle.focus();
+    }
 });
 
 tabs.forEach((tab) => {
@@ -711,6 +749,9 @@ function activateTab(tabId) {
         item.setAttribute('aria-selected', 'false');
         item.setAttribute('tabindex', '-1');
     });
+    if (containerManagementTab) {
+        containerManagementTab.setAttribute('aria-selected', 'false');
+    }
     panels.forEach((panel) => panel.classList.remove('active'));
 
     tab.setAttribute('aria-selected', 'true');
@@ -5390,10 +5431,16 @@ function renderContainers(services) {
         const updates = service.updates ? `<span>Updates: ${escapeHtml(service.updates)}</span>` : '';
         const logLabel = hasContainer ? 'View Logs' : (service.kind === 'setup_job' ? 'Prepared' : 'Unavailable');
         card.innerHTML = `
-            <h2>${escapeHtml(service.title || service.service)}</h2>
-            <span class="badge ${statusClass}">${escapeHtml(state)}</span>
-            <span class="badge ${escapeHtml(expectedBadge)}">Expected: ${escapeHtml(expectedState)}</span>
-            <div class="container-meta">
+            <header class="container-card-header">
+                <h2>${escapeHtml(service.title || service.service)}</h2>
+                <div class="container-badges">
+                    <span class="badge ${statusClass}">${escapeHtml(state)}</span>
+                    <span class="badge ${escapeHtml(expectedBadge)}">Expected: ${escapeHtml(expectedState)}</span>
+                </div>
+            </header>
+            <details class="container-details">
+                <summary>Service details</summary>
+                <div class="container-meta">
                 <span>Service: ${escapeHtml(service.service)}</span>
                 <span>Lifecycle: ${escapeHtml(lifecycle)}</span>
                 <span>Role: ${escapeHtml(service.role || '')}</span>
@@ -5409,8 +5456,9 @@ function renderContainers(services) {
                 <span>Start: ${escapeHtml(service.start_command || 'Not configured')}</span>
                 ${source}
                 ${updates}
-            </div>
-            <button class="button" type="button" ${hasContainer ? '' : 'disabled'}>${escapeHtml(logLabel)}</button>
+                </div>
+            </details>
+            <button class="button container-log-button" type="button" aria-pressed="${container.id === selectedContainerId ? 'true' : 'false'}" ${hasContainer ? '' : 'disabled'}>${escapeHtml(logLabel)}</button>
         `;
 
         card.querySelector('button').addEventListener('click', () => {
@@ -5421,7 +5469,7 @@ function renderContainers(services) {
             selectedContainerRestartable = Boolean(service.allow_restart);
             restartContainer.disabled = !selectedContainerRestartable;
             renderContainers(services);
-            loadLogs(container.id);
+            loadLogs(container.id, container.name || service.title || service.service);
         });
 
         containerGrid.appendChild(card);
@@ -5430,6 +5478,9 @@ function renderContainers(services) {
     if (!selectedFound) {
         selectedContainerId = null;
         selectedContainerRestartable = false;
+        if (containerLogsSummary) {
+            containerLogsSummary.textContent = 'No container selected';
+        }
     }
     restartContainer.disabled = !selectedContainerRestartable;
 }
@@ -5441,19 +5492,33 @@ async function loadContainers() {
         containerManagementCsrfToken = String(payload.csrf_token || '');
         renderContainers(payload.services || []);
         const disk = payload.disk || {};
-        containerStatus.textContent = `Project: ${payload.project}. Services: ${(payload.services || []).length}. Containers: ${(payload.containers || []).length}. Images: ${disk.image_count || 0}. Build cache: ${formatBytes(disk.build_cache_size)}.`;
+        const refreshedAt = new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
+        containerStatus.innerHTML = `
+            <span class="admin-overview-card"><strong>${escapeHtml(String(payload.project || 'FuelAU'))}</strong><small>Compose project</small></span>
+            <span class="admin-overview-card"><strong>${escapeHtml(String((payload.services || []).length))}</strong><small>Services</small></span>
+            <span class="admin-overview-card"><strong>${escapeHtml(String((payload.containers || []).length))}</strong><small>Containers</small></span>
+            <span class="admin-overview-card"><strong>${escapeHtml(String(disk.image_count || 0))}</strong><small>Images</small></span>
+            <span class="admin-overview-card"><strong>${escapeHtml(formatBytes(disk.build_cache_size))}</strong><small>Build cache</small></span>
+            <span class="admin-overview-card"><strong>${escapeHtml(refreshedAt)}</strong><small>Last refreshed</small></span>
+        `;
     } catch (error) {
         containerStatus.textContent = error.message;
     }
 }
 
-async function loadLogs(containerId) {
+async function loadLogs(containerId, containerLabel = 'Selected container') {
+    if (containerLogsSummary) {
+        containerLogsSummary.textContent = String(containerLabel || 'Selected container');
+    }
     containerLogs.textContent = 'Loading logs...';
     try {
         const payload = await apiRequest(`/api/docker/containers/${containerId}/logs?tail=200`);
         containerLogs.textContent = payload.logs || 'No log output.';
     } catch (error) {
         containerLogs.textContent = error.message;
+        if (containerLogsSummary) {
+            containerLogsSummary.textContent = 'Logs unavailable';
+        }
     }
 }
 
@@ -5487,7 +5552,7 @@ if (containerManagementEnabled && refreshContainers && restartContainer && prune
             await apiRequest(`/api/docker/containers/${selectedContainerId}/restart`, { method: 'POST' });
             containerStatus.textContent = 'Container restarted.';
             await loadContainers();
-            await loadLogs(selectedContainerId);
+            await loadLogs(selectedContainerId, containerLogsSummary?.textContent || 'Selected container');
         } catch (error) {
             containerStatus.textContent = error.message;
         }
