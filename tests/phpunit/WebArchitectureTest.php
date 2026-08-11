@@ -219,13 +219,27 @@ final class WebArchitectureTest extends TestCase
         self::assertIsString($script);
         self::assertStringContainsString('id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab" data-workflow-state="input"', $template);
         self::assertStringContainsString('id="fuel-stop-finder-state" role="status" aria-live="polite"', $template);
+        self::assertStringContainsString('class="panel-disclosure fuel-stop-results-disclosure" id="fuel-stop-finder-results"', $template);
+        self::assertStringContainsString('id="fuel-stop-finder-results-summary"', $template);
+        $recommendationPosition = strpos($template, 'class="fuel-stop-result-section fuel-stop-recommendation-section"');
+        $tripSummaryPosition = strpos($template, '<h2>Trip summary</h2>');
+        self::assertIsInt($recommendationPosition);
+        self::assertIsInt($tripSummaryPosition);
+        self::assertLessThan($tripSummaryPosition, $recommendationPosition);
         self::assertStringContainsString('function setFuelStopFinderWorkflowState(state)', $script);
         self::assertStringContainsString("setFuelStopFinderWorkflowState('calculating');", $script);
         self::assertStringContainsString("setFuelStopFinderWorkflowState('result');", $script);
         self::assertStringContainsString("setFuelStopFinderWorkflowState('stale');", $script);
         self::assertStringContainsString("setFuelStopFinderWorkflowState('error');", $script);
         self::assertStringContainsString('markFuelStopFinderInputChanged', $script);
+        self::assertStringContainsString('fuelStopFinderResults.open = true;', $script);
+        self::assertStringContainsString("renderRouteBreakdownInto(fuelStopFinderLegs, plan, { workflow: 'fuel-stop-finder' });", $script);
+        self::assertStringContainsString('function focusRouteWorkflowOnMap(workflow, options = {}, control = null)', $script);
+        self::assertStringContainsString('data-route-map-focus', $script);
+        self::assertStringContainsString('fuelMapInstance.setPaintProperty(`${prefix}-lines`, \'line-opacity\'', $script);
         self::assertStringContainsString('#fuel-stop-finder[data-workflow-state="stale"]', $stylesheet);
+        self::assertStringContainsString('.fuel-stop-results-content', $stylesheet);
+        self::assertStringContainsString('.route-fuel-marker.is-focused', $stylesheet);
     }
 
     public function testRoutePlannerAlwaysUsesBackendCompleteItineraryPlanner(): void
