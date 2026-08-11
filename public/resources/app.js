@@ -5303,6 +5303,7 @@ function renderFuelMap(rows, highlight = null, preserveViewport = false) {
             }
 
             fuelauApplyMapTheme(fuelMapInstance);
+            fuelMap.classList.add('is-map-theme-ready');
             fuelMapInstance.on('mouseenter', 'fuelau-prices-stations-circle', () => {
                 fuelMapInstance.getCanvas().style.cursor = 'pointer';
             });

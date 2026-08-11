@@ -34,6 +34,14 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             }
 
             document.documentElement.dataset.theme = preference;
+            const resolvedTheme = preference === 'dark'
+                || (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+                ? 'dark'
+                : 'light';
+            document.documentElement.dataset.themeResolved = resolvedTheme;
+            document.querySelector('meta[name="theme-color"]').content = resolvedTheme === 'dark'
+                ? '#0b1118'
+                : '#f4f6f8';
         })();
     </script>
     <link

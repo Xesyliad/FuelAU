@@ -41,6 +41,8 @@ final class WebArchitectureTest extends TestCase
         self::assertIsString($script);
         self::assertStringContainsString("const themeKey = 'fuelau_theme_v1';", $template);
         self::assertStringContainsString('document.documentElement.dataset.theme = preference;', $template);
+        self::assertStringContainsString('document.documentElement.dataset.themeResolved = resolvedTheme;', $template);
+        self::assertStringContainsString("window.matchMedia('(prefers-color-scheme: dark)').matches", $template);
         self::assertStringContainsString('data-theme-preference="system"', $template);
         self::assertStringContainsString('data-theme-preference="light"', $template);
         self::assertStringContainsString('data-theme-preference="dark"', $template);
@@ -64,6 +66,9 @@ final class WebArchitectureTest extends TestCase
             $script,
         );
         self::assertStringContainsString('fuelauApplyMapTheme(fuelMapInstance);', $script);
+        self::assertStringContainsString("fuelMap.classList.add('is-map-theme-ready');", $script);
+        self::assertStringContainsString('.fuel-map-frame .maplibregl-canvas', $stylesheet);
+        self::assertStringContainsString('.fuel-map-frame.is-map-theme-ready .maplibregl-canvas', $stylesheet);
         self::assertStringNotContainsString('.setStyle(', $script);
     }
 
