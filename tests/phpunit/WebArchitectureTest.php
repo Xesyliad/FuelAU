@@ -72,7 +72,7 @@ final class WebArchitectureTest extends TestCase
         $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
 
         self::assertIsString($source);
-        self::assertStringContainsString('function fuelPricesTabIsActive()', $source);
+        self::assertStringContainsString('function fuelPricesToolIsActive()', $source);
         self::assertStringContainsString('requestKey === fuelMapViewportLastRequestKey', $source);
         self::assertStringContainsString('if (!preserveViewport)', $source);
         self::assertStringContainsString("error?.name === 'AbortError'", $source);
@@ -81,20 +81,32 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString("'fuelau-stop-finder-lines'", $source);
         self::assertStringContainsString("'fuelau-route-planner-lines'", $source);
         self::assertStringNotContainsString('function destroyFuelMap()', $source);
-        self::assertStringContainsString('function syncMapFirstShell(tab, panelId)', $source);
+        self::assertStringContainsString('function syncMapFirstShell(toolButton, panelId)', $source);
         self::assertStringContainsString('scheduleMapResize(fuelMapInstance);', $source);
+        self::assertStringContainsString("toolButton.getAttribute('aria-pressed') === 'true'", $source);
+        self::assertStringNotContainsString('setInterval(', $source);
     }
 
     public function testPageUsesAMapFirstResponsiveApplicationShell(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
         $stylesheet = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.css');
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
 
         self::assertIsString($template);
         self::assertIsString($stylesheet);
+        self::assertIsString($script);
         self::assertStringContainsString('class="map-stage"', $template);
         self::assertStringContainsString('data-map-view="shared"', $template);
-        self::assertStringContainsString('class="tabs tool-navigation"', $template);
+        self::assertStringContainsString('class="tool-navigation" aria-label="Map tools"', $template);
+        self::assertStringContainsString('id="fuel-prices-tool"', $template);
+        self::assertStringContainsString('id="fuel-stop-finder-tool"', $template);
+        self::assertStringContainsString('id="route-planning-tool"', $template);
+        self::assertSame(3, substr_count($template, 'class="tool-button"'));
+        self::assertSame(0, substr_count($template, 'role="tab'));
+        self::assertSame(0, substr_count($template, 'aria-selected='));
+        self::assertStringContainsString('aria-pressed="true" aria-controls="fuel-prices"', $template);
+        self::assertStringContainsString('id="fuel-stop-finder" data-tool-panel role="region" aria-label="Fuel stop finder" data-workflow-state="input" hidden', $template);
         self::assertStringContainsString('class="workspace-sheet"', $template);
         self::assertStringContainsString('id="workspace-sheet-toggle"', $template);
         self::assertStringContainsString('id="workspace-sheet-reopen"', $template);
@@ -117,6 +129,12 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('height: 100dvh;', $stylesheet);
         self::assertStringContainsString('@media (max-width: 760px)', $stylesheet);
         self::assertStringContainsString('@media (prefers-reduced-motion: reduce)', $stylesheet);
+        self::assertStringContainsString("const reducedMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');", $script);
+        self::assertStringContainsString('function mapMotionDuration(duration = 400)', $script);
+        self::assertStringNotContainsString('.tab {', $stylesheet);
+        self::assertStringNotContainsString('.tabs {', $stylesheet);
+        self::assertStringNotContainsString('.switch-control', $stylesheet);
+        self::assertStringNotContainsString('.route-map-frame', $stylesheet);
         self::assertStringContainsString('.fuel-station-brand-badge', $stylesheet);
         self::assertStringContainsString('.snapshot-station-select', $stylesheet);
         self::assertStringContainsString('.workspace-sheet .fuel-filter-bar', $stylesheet);
@@ -234,7 +252,7 @@ final class WebArchitectureTest extends TestCase
         self::assertIsString($template);
         self::assertIsString($stylesheet);
         self::assertIsString($script);
-        self::assertStringContainsString('id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab" data-workflow-state="input"', $template);
+        self::assertStringContainsString('id="fuel-stop-finder" data-tool-panel role="region" aria-label="Fuel stop finder" data-workflow-state="input" hidden', $template);
         self::assertStringContainsString('id="fuel-stop-finder-state" role="status" aria-live="polite"', $template);
         self::assertStringContainsString('class="panel-disclosure fuel-stop-results-disclosure" id="fuel-stop-finder-results"', $template);
         self::assertStringContainsString('id="fuel-stop-finder-results-summary"', $template);
@@ -302,12 +320,12 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('id="app-overflow-toggle" aria-expanded="false"', $template);
         self::assertStringContainsString('id="app-overflow-menu" role="menu" hidden', $template);
         self::assertStringContainsString('id="open-container-management" role="menuitem"', $template);
-        self::assertStringContainsString('id="container-management-tab" aria-controls="container-management"', $template);
-        self::assertStringNotContainsString('class="tab tool-button tool-button-admin"', $template);
+        self::assertStringContainsString('id="container-management-tool" aria-controls="container-management"', $template);
+        self::assertStringNotContainsString('tool-button-admin', $template);
         self::assertStringContainsString('class="admin-maintenance"', $template);
         self::assertStringContainsString('id="container-logs-summary"', $template);
         self::assertStringContainsString('function setAppOverflowExpanded(expanded)', $script);
-        self::assertStringContainsString("activateTab('container-management-tab');", $script);
+        self::assertStringContainsString("activateTool('container-management-tool');", $script);
         self::assertStringContainsString("window.confirm('Restart the selected container?')", $script);
         self::assertStringContainsString("apiRequest('/api/docker/prune'", $script);
         self::assertStringContainsString('class="admin-overview-card"', $script);

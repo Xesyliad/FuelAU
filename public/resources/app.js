@@ -1,5 +1,5 @@
-const tabs = document.querySelectorAll('.tab');
-const panels = document.querySelectorAll('.panel');
+const publicToolButtons = document.querySelectorAll('.tool-navigation .tool-button');
+const toolPanels = document.querySelectorAll('[data-tool-panel]');
 const appShell = document.querySelector('.app-shell');
 const activeToolTitle = document.getElementById('active-tool-title');
 const sheetToolTitle = document.getElementById('sheet-tool-title');
@@ -10,11 +10,12 @@ const appOverflow = document.querySelector('.app-overflow');
 const appOverflowToggle = document.getElementById('app-overflow-toggle');
 const appOverflowMenu = document.getElementById('app-overflow-menu');
 const openContainerManagement = document.getElementById('open-container-management');
-const containerManagementTab = document.getElementById('container-management-tab');
+const containerManagementTool = document.getElementById('container-management-tool');
 const themeColourMeta = document.querySelector('meta[name="theme-color"]');
 const themePreferenceKey = 'fuelau_theme_v1';
 const supportedThemePreferences = new Set(['system', 'light', 'dark']);
 const systemDarkTheme = window.matchMedia('(prefers-color-scheme: dark)');
+const reducedMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
 const containerGrid = document.getElementById('container-grid');
 const containerStatus = document.getElementById('container-status');
 const containerLogs = document.getElementById('container-logs');
@@ -520,7 +521,14 @@ const routePlannerDefaultReserveL = 6;
 const routePlannerDefaultFuelEconomyLPer100km = 12;
 const routeAutocompleteMinCharacters = 3;
 const routeAutocompleteResultLimit = 10;
-const activeTabKey = 'fuelau_active_tab_v1';
+const activeToolKey = 'fuelau_active_tool_v2';
+const legacyActiveTabKey = 'fuelau_active_tab_v1';
+const legacyToolIds = {
+    'fuel-prices-tab': 'fuel-prices-tool',
+    'fuel-stop-finder-tab': 'fuel-stop-finder-tool',
+    'route-planning-tab': 'route-planning-tool',
+    'container-management-tab': 'container-management-tool',
+};
 let containerManagementCsrfToken = '';
 
 const fuelRegionCatalog = {
@@ -630,12 +638,16 @@ function setWorkspaceSheetExpanded(expanded) {
 
     window.setTimeout(() => {
         scheduleMapResize(fuelMapInstance);
-    }, 240);
+    }, reducedMotionPreference.matches ? 0 : 240);
 }
 
-function syncMapFirstShell(tab, panelId) {
+function mapMotionDuration(duration = 400) {
+    return reducedMotionPreference.matches ? 0 : duration;
+}
+
+function syncMapFirstShell(toolButton, panelId) {
     const mapViewId = panelId === 'container-management' ? 'fuel-prices' : panelId;
-    const toolTitle = String(tab.dataset.toolTitle || tab.textContent || '').trim();
+    const toolTitle = String(toolButton.dataset.toolTitle || toolButton.textContent || '').trim();
 
     if (appShell) {
         appShell.dataset.activeTool = panelId;
@@ -676,7 +688,7 @@ appOverflowToggle?.addEventListener('click', () => {
 });
 openContainerManagement?.addEventListener('click', () => {
     setAppOverflowExpanded(false);
-    activateTab('container-management-tab');
+    activateTool('container-management-tool');
     document.getElementById('container-management')?.focus({ preventScroll: true });
 });
 document.addEventListener('pointerdown', (event) => {
@@ -691,76 +703,88 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
-tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-        activateTab(tab.id);
+publicToolButtons.forEach((toolButton) => {
+    toolButton.addEventListener('click', () => {
+        activateTool(toolButton.id);
     });
-    tab.addEventListener('keydown', (event) => {
+    toolButton.addEventListener('keydown', (event) => {
         const supportedKeys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
         if (!supportedKeys.includes(event.key)) {
             return;
         }
 
         event.preventDefault();
-        const toolTabs = Array.from(tabs);
-        const currentIndex = toolTabs.indexOf(tab);
+        const tools = Array.from(publicToolButtons);
+        const currentIndex = tools.indexOf(toolButton);
         const nextIndex = event.key === 'Home'
             ? 0
             : (event.key === 'End'
-                ? toolTabs.length - 1
-                : (currentIndex + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + toolTabs.length)
-                    % toolTabs.length);
-        const nextTab = toolTabs[nextIndex];
-        activateTab(nextTab.id);
-        nextTab.focus();
+                ? tools.length - 1
+                : (currentIndex + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + tools.length)
+                    % tools.length);
+        const nextTool = tools[nextIndex];
+        activateTool(nextTool.id);
+        nextTool.focus();
     });
 });
 
-function saveActiveTab(tabId) {
+function saveActiveTool(toolId) {
     try {
-        window.localStorage.setItem(activeTabKey, tabId);
+        window.localStorage.setItem(activeToolKey, toolId);
     } catch (error) {
         void error;
     }
 }
 
-function loadActiveTab() {
+function loadActiveTool() {
     try {
-        return window.localStorage.getItem(activeTabKey) || 'fuel-prices-tab';
+        const savedToolId = window.localStorage.getItem(activeToolKey);
+        if (savedToolId) {
+            return savedToolId;
+        }
+        const legacyToolId = window.localStorage.getItem(legacyActiveTabKey);
+        return legacyToolIds[legacyToolId] || 'fuel-prices-tool';
     } catch (error) {
         void error;
-        return 'fuel-prices-tab';
+        return 'fuel-prices-tool';
     }
 }
 
-function activateTab(tabId) {
-    const tab = document.getElementById(tabId);
-    if (!tab) {
+function activateTool(toolId) {
+    const toolButton = document.getElementById(toolId);
+    if (!toolButton) {
         return;
     }
 
-    const panelId = tab.getAttribute('aria-controls');
+    const panelId = toolButton.getAttribute('aria-controls');
     const panel = panelId ? document.getElementById(panelId) : null;
     if (!panel || !panelId) {
         return;
     }
 
-    tabs.forEach((item) => {
-        item.setAttribute('aria-selected', 'false');
-        item.setAttribute('tabindex', '-1');
-    });
-    if (containerManagementTab) {
-        containerManagementTab.setAttribute('aria-selected', 'false');
+    if (toolButton.getAttribute('aria-pressed') === 'true' && panel.classList.contains('active') && !panel.hidden) {
+        setWorkspaceSheetExpanded(true);
+        return;
     }
-    panels.forEach((panel) => panel.classList.remove('active'));
 
-    tab.setAttribute('aria-selected', 'true');
-    tab.setAttribute('tabindex', '0');
+    publicToolButtons.forEach((item) => {
+        item.setAttribute('aria-pressed', 'false');
+    });
+    if (containerManagementTool) {
+        containerManagementTool.setAttribute('aria-pressed', 'false');
+    }
+    toolPanels.forEach((item) => {
+        item.classList.remove('active');
+        item.hidden = true;
+    });
+
+    toolButton.setAttribute('aria-pressed', 'true');
     panel.classList.add('active');
-    syncMapFirstShell(tab, panelId);
-    saveActiveTab(tab.id);
+    panel.hidden = false;
+    syncMapFirstShell(toolButton, panelId);
+    saveActiveTool(toolButton.id);
 
-    if (tab.id !== 'fuel-prices-tab') {
+    if (toolButton.id !== 'fuel-prices-tool') {
         if (fuelMapAutoRefreshTimer) {
             window.clearTimeout(fuelMapAutoRefreshTimer);
             fuelMapAutoRefreshTimer = null;
@@ -771,10 +795,10 @@ function activateTab(tabId) {
         }
     }
 
-    if (containerManagementEnabled && tab.id === 'container-management-tab') {
+    if (containerManagementEnabled && toolButton.id === 'container-management-tool') {
         loadContainers();
     }
-    if (tab.id === 'fuel-prices-tab') {
+    if (toolButton.id === 'fuel-prices-tool') {
         loadFuelDashboard();
     }
     scheduleMapResize(fuelMapInstance);
@@ -2799,7 +2823,7 @@ function focusRouteWorkflowOnMap(workflow, options = {}, control = null) {
             zoom: Math.max(fuelMapInstance.getZoom(), 14),
             padding: routeMapPadding(),
             retainPadding: false,
-            duration: 400,
+            duration: mapMotionDuration(),
         });
         return true;
     }
@@ -2838,7 +2862,7 @@ function focusRouteWorkflowOnMap(workflow, options = {}, control = null) {
     fuelMapInstance.fitBounds(bounds, {
         padding: routeMapPadding(),
         maxZoom: 14,
-        duration: 400,
+        duration: mapMotionDuration(),
     });
     return true;
 }
@@ -4697,7 +4721,7 @@ function selectFuelStation(properties, coordinates, focusMap = false) {
             .addTo(fuelMapInstance);
         if (focusMap) {
             fuelMapAutoRefreshSuppressed = true;
-            fuelMapInstance.easeTo({ center: coordinates, zoom: Math.max(fuelMapInstance.getZoom(), 13), duration: 400 });
+            fuelMapInstance.easeTo({ center: coordinates, zoom: Math.max(fuelMapInstance.getZoom(), 13), duration: mapMotionDuration() });
             window.setTimeout(() => {
                 fuelMapAutoRefreshSuppressed = false;
             }, 700);
@@ -4951,7 +4975,7 @@ function fuelMapSelectedRegionBounds(radiusKm = 25) {
     );
 }
 
-function fuelMapFocusSelectedRegion(radiusKm = 25, duration = 400) {
+function fuelMapFocusSelectedRegion(radiusKm = 25, duration = mapMotionDuration()) {
     if (!fuelMapInstance || !fuelMapReady) {
         return false;
     }
@@ -5021,7 +5045,7 @@ function updateFuelMapSource(collection, highlight = null, preserveViewport = fa
         fuelMapInstance.easeTo({
             center: only.geometry.coordinates,
             zoom: 15,
-            duration: 400,
+            duration: mapMotionDuration(),
         });
         window.setTimeout(() => {
             fuelMapAutoRefreshSuppressed = false;
@@ -5036,7 +5060,7 @@ function updateFuelMapSource(collection, highlight = null, preserveViewport = fa
             fuelMapInstance.fitBounds(bounds, {
                 padding: 50,
                 maxZoom: 12,
-                duration: 400,
+                duration: mapMotionDuration(),
             });
             window.setTimeout(() => {
                 fuelMapAutoRefreshSuppressed = false;
@@ -5084,12 +5108,12 @@ function fuelMapRowsInsideBounds(rows, bounds) {
     });
 }
 
-function fuelPricesTabIsActive() {
-    return document.getElementById('fuel-prices-tab')?.getAttribute('aria-selected') === 'true';
+function fuelPricesToolIsActive() {
+    return document.getElementById('fuel-prices-tool')?.getAttribute('aria-pressed') === 'true';
 }
 
 async function refreshFuelMapForViewport() {
-    if (!fuelPricesTabIsActive()) {
+    if (!fuelPricesToolIsActive()) {
         return;
     }
 
@@ -5138,7 +5162,7 @@ async function refreshFuelMapForViewport() {
 }
 
 function scheduleFuelMapViewportRefresh() {
-    if (fuelMapAutoRefreshSuppressed || !fuelPricesTabIsActive()) {
+    if (fuelMapAutoRefreshSuppressed || !fuelPricesToolIsActive()) {
         return;
     }
 
@@ -5615,7 +5639,7 @@ routeFuelType.addEventListener('change', async () => {
 refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
 attachRouteAutocomplete(routeOrigin);
 (async () => {
-    const savedActiveTab = loadActiveTab();
+    const savedActiveTool = loadActiveTool();
     resetRoutePlanner({ clearStorage: false });
     resetFuelStopFinder({ clearStorage: false });
     syncFuelRegions();
@@ -5631,19 +5655,19 @@ attachRouteAutocomplete(routeOrigin);
         restoreFuelStopFinderState(savedFuelStopFinderState);
     }
 
-    if (savedActiveTab === 'fuel-stop-finder-tab') {
-        activateTab('fuel-stop-finder-tab');
+    if (savedActiveTool === 'fuel-stop-finder-tool') {
+        activateTool('fuel-stop-finder-tool');
         if (savedFuelStopFinderState && savedFuelStopFinderState.planned) {
             await planFuelStopFinder();
         }
     }
-    if (savedActiveTab === 'route-planning-tab') {
-        activateTab('route-planning-tab');
+    if (savedActiveTool === 'route-planning-tool') {
+        activateTool('route-planning-tool');
         if (savedRouteState && savedRouteState.planned) {
             await planRoute();
         }
     }
-    if (containerManagementEnabled && savedActiveTab === 'container-management-tab') {
-        activateTab('container-management-tab');
+    if (containerManagementEnabled && savedActiveTool === 'container-management-tool') {
+        activateTool('container-management-tool');
     }
 })();
