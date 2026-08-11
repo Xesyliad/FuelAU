@@ -183,7 +183,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
 
                 </div>
             </div>
-            <div class="panel" role="tabpanel" id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab">
+            <div class="panel" role="tabpanel" id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab" data-workflow-state="input">
                 <h1>Fuel Stop Finder</h1>
                 <p>Enter an origin, destination, fuel type, and fuel economy. The planner will find the best station to fill up at between the two points while keeping the route detour sensible.</p>
 
@@ -222,7 +222,10 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                             <button class="button" type="button" id="fuel-stop-finder-reset">Reset</button>
                         </div>
 
-                        <div class="status-line" id="fuel-stop-finder-status">Enter a trip to find the best fuel stop.</div>
+                        <div class="route-workflow-status">
+                            <span class="route-workflow-state" id="fuel-stop-finder-state" role="status" aria-live="polite">Ready</span>
+                            <div class="status-line" id="fuel-stop-finder-status">Enter a trip to find the best fuel stop.</div>
+                        </div>
                         <div class="status-line route-status-muted" id="fuel-stop-finder-detail"></div>
                     </section>
 

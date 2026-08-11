@@ -38,6 +38,8 @@ const fuelStopFinderFuelType = document.getElementById('fuel-stop-finder-fuel-ty
 const fuelStopFinderEconomy = document.getElementById('fuel-stop-finder-economy');
 const fuelStopFinderPlan = document.getElementById('fuel-stop-finder-plan');
 const fuelStopFinderReset = document.getElementById('fuel-stop-finder-reset');
+const fuelStopFinderPanel = document.getElementById('fuel-stop-finder');
+const fuelStopFinderState = document.getElementById('fuel-stop-finder-state');
 const fuelStopFinderStatus = document.getElementById('fuel-stop-finder-status');
 const fuelStopFinderDetail = document.getElementById('fuel-stop-finder-detail');
 const fuelStopFinderSummary = document.getElementById('fuel-stop-finder-summary');
@@ -75,6 +77,9 @@ let fuelMapPopup = null;
 let fuelMapPendingData = null;
 let fuelCurrentRows = [];
 let fuelMapRows = [];
+let fuelSelectedStation = null;
+let fuelSnapshotRows = [];
+let fuelStopFinderHasResult = false;
 let fuelMapAutoRefreshTimer = null;
 let fuelMapAutoRefreshSuppressed = false;
 let fuelMapViewportAbortController = null;
@@ -1624,6 +1629,9 @@ function selectRouteAutocompleteResult(input, result) {
     }
     input.value = value;
     clearRouteAutocomplete(input);
+    if (input === fuelStopFinderOrigin || input === fuelStopFinderDestination) {
+        markFuelStopFinderInputChanged();
+    }
 }
 
 function setRouteAutocompleteActiveOption(input, index) {
@@ -3595,7 +3603,39 @@ function restoreFuelStopFinderState(state) {
     }
     fuelStopFinderEconomy.value = String(state.economy || '');
     fuelStopFinderStatus.textContent = state.planned ? 'Restored last planned fuel stop route.' : 'Restored saved fuel stop inputs.';
+    setFuelStopFinderWorkflowState(state.planned ? 'stale' : 'input');
     return true;
+}
+
+function setFuelStopFinderWorkflowState(state) {
+    const labels = {
+        input: 'Ready',
+        calculating: 'Calculating',
+        result: 'Route ready',
+        stale: 'Recalculate',
+        error: 'Needs attention',
+    };
+    const workflowState = Object.hasOwn(labels, state) ? state : 'input';
+    if (fuelStopFinderPanel) {
+        fuelStopFinderPanel.dataset.workflowState = workflowState;
+    }
+    if (fuelStopFinderState) {
+        fuelStopFinderState.textContent = labels[workflowState];
+    }
+}
+
+function markFuelStopFinderInputChanged() {
+    saveFuelStopFinderState(false);
+    if (!fuelStopFinderHasResult) {
+        if (fuelStopFinderPanel?.dataset.workflowState === 'error') {
+            setFuelStopFinderWorkflowState('input');
+        }
+        return;
+    }
+
+    setFuelStopFinderWorkflowState('stale');
+    fuelStopFinderStatus.classList.remove('route-status-warning');
+    fuelStopFinderStatus.textContent = 'Trip inputs changed. Find the best stop again to refresh this route.';
 }
 
 function resetFuelStopFinder(options = {}) {
@@ -3605,6 +3645,9 @@ function resetFuelStopFinder(options = {}) {
     syncFuelStopFinderSelector();
     fuelStopFinderEconomy.value = '';
     fuelStopFinderStatus.classList.remove('route-status-warning');
+    fuelStopFinderStatus.classList.remove('route-status-error');
+    fuelStopFinderHasResult = false;
+    setFuelStopFinderWorkflowState('input');
     fuelStopFinderDetail.textContent = '';
     fuelStopFinderSummary.innerHTML = renderRouteEmpty('No fuel stop route planned yet.');
     fuelStopFinderRecommendation.innerHTML = '';
@@ -3624,21 +3667,27 @@ async function planFuelStopFinder() {
     const fuelQuery = fuelStopFinderFuelSelectedLabel();
 
     if (originValue === '') {
+        setFuelStopFinderWorkflowState('error');
         fuelStopFinderStatus.textContent = 'Origin is required.';
         return;
     }
     if (destinationValue === '') {
+        setFuelStopFinderWorkflowState('error');
         fuelStopFinderStatus.textContent = 'Destination is required.';
         return;
     }
     if (economy <= 0) {
+        setFuelStopFinderWorkflowState('error');
         fuelStopFinderStatus.textContent = 'Fuel economy must be greater than zero.';
         return;
     }
 
     fuelStopFinderPlan.disabled = true;
+    fuelStopFinderHasResult = false;
+    setFuelStopFinderWorkflowState('calculating');
     fuelStopFinderStatus.textContent = 'Resolving locations and searching for the best fuel stop...';
     fuelStopFinderStatus.classList.remove('route-status-warning');
+    fuelStopFinderStatus.classList.remove('route-status-error');
     fuelStopFinderDetail.textContent = '';
     fuelStopFinderSummary.innerHTML = renderRouteEmpty('Planning route...');
     fuelStopFinderRecommendation.innerHTML = '';
@@ -3664,6 +3713,8 @@ async function planFuelStopFinder() {
         renderFuelStopFinderRecommendation(stop, plan);
         renderFuelStopFinderMap(plan);
         renderRouteBreakdownInto(fuelStopFinderLegs, plan);
+        fuelStopFinderHasResult = true;
+        setFuelStopFinderWorkflowState('result');
         saveFuelStopFinderState(true);
 
         fuelStopFinderDetail.textContent = `Evaluating ${fuelQuery || 'Diesel'} stations along the route and selecting the cheapest eligible stop with a sensible detour.`;
@@ -3673,7 +3724,10 @@ async function planFuelStopFinder() {
             ? `Selected ${routeFuelStationDisplay(stop) || stop.station_name || 'a fuel stop'} for this route${selectionScope !== 'strict' ? ` using the ${selectionScope} detour window.` : '.'}`
             : 'No eligible fuel stop was selected for this route.';
     } catch (error) {
+        fuelStopFinderHasResult = false;
+        setFuelStopFinderWorkflowState('error');
         fuelStopFinderStatus.classList.remove('route-status-warning');
+        fuelStopFinderStatus.classList.add('route-status-error');
         fuelStopFinderStatus.textContent = error.message;
         fuelStopFinderSummary.innerHTML = renderRouteEmpty(error.message);
         fuelStopFinderRecommendation.innerHTML = '';
@@ -4221,7 +4275,28 @@ function fuelStationSelectionFeature(properties, coordinates) {
     };
 }
 
-function clearFuelStationSelection() {
+function fuelStationIdentity(row) {
+    if (!row || typeof row !== 'object') {
+        return '';
+    }
+    const source = String(row.source || '').trim().toLowerCase();
+    const stationId = String(row.station_id || '').trim().toLowerCase();
+    const fuel = String(row.fuel_code || row.fuel_name || '').trim().toLowerCase();
+    if (source !== '' && stationId !== '') {
+        return `${source}:${stationId}:${fuel}`;
+    }
+
+    const stationName = String(row.station_name || '').trim().toLowerCase();
+    const latitude = Number(row.latitude);
+    const longitude = Number(row.longitude);
+    const coordinateKey = Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? `${latitude.toFixed(5)}:${longitude.toFixed(5)}`
+        : '';
+    return `${source}:${stationName}:${coordinateKey}:${fuel}`;
+}
+
+function clearFuelStationSelection(options = {}) {
+    fuelSelectedStation = null;
     if (fuelStationDetail) {
         fuelStationDetail.hidden = true;
         fuelStationDetail.innerHTML = '';
@@ -4232,12 +4307,21 @@ function clearFuelStationSelection() {
     } catch (error) {
         void error;
     }
+    if (options.renderSnapshot !== false) {
+        renderSnapshot(fuelCurrentRows);
+    }
 }
 
 function selectFuelStation(properties, coordinates, focusMap = false) {
     if (!properties || !Array.isArray(coordinates) || coordinates.length < 2) {
         return;
     }
+    fuelSelectedStation = {
+        ...properties,
+        longitude: Number(coordinates[0]),
+        latitude: Number(coordinates[1]),
+    };
+    renderSnapshot(fuelCurrentRows);
     const brand = fuelBrandMetadata(properties.brand_name, properties.station_name);
     if (fuelStationDetail) {
         const station = escapeHtml(String(properties.station_name || 'Fuel station'));
@@ -4250,7 +4334,7 @@ function selectFuelStation(properties, coordinates, focusMap = false) {
             <span class="fuel-station-brand-badge" style="--station-brand-bg:${brand.background};--station-brand-fg:${brand.foreground}">${escapeHtml(brand.label)}</span>
             <div class="fuel-station-detail-copy">
                 <strong>${station}</strong>
-                <span class="fuel-station-detail-price">${price}/L · ${fuelName}</span>
+                <span class="fuel-station-detail-price">${price} · ${fuelName}</span>
                 <span>${address}</span>
                 <span>${source} · Updated ${updatedAt}</span>
             </div>
@@ -4289,8 +4373,19 @@ function renderSnapshot(rows) {
         return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
     });
     if (visibleRows.length === 0) {
+        fuelSnapshotRows = [];
         fuelSnapshot.innerHTML = chartEmpty('No current prices available for this filter.');
         return;
+    }
+
+    const selectedIdentity = fuelStationIdentity(fuelSelectedStation);
+    fuelSnapshotRows = visibleRows.slice(0, 8);
+    if (selectedIdentity !== '' && !fuelSnapshotRows.some((row) => fuelStationIdentity(row) === selectedIdentity)) {
+        const selectedRow = visibleRows.find((row) => fuelStationIdentity(row) === selectedIdentity)
+            || fuelSelectedStation;
+        if (selectedRow) {
+            fuelSnapshotRows = [selectedRow, ...fuelSnapshotRows].slice(0, 8);
+        }
     }
 
     fuelSnapshot.innerHTML = `
@@ -4303,20 +4398,24 @@ function renderSnapshot(rows) {
                 </tr>
             </thead>
             <tbody>
-                ${visibleRows.slice(0, 8).map((row, index) => `
-                    <tr>
-                        <td><button class="snapshot-station-select" type="button" data-snapshot-index="${index}">${escapeHtml(row.station_name)}</button><br><span>${escapeHtml(`${row.state} · ${row.source.toUpperCase()}`)}</span></td>
+                ${fuelSnapshotRows.map((row, index) => {
+                    const isSelected = selectedIdentity !== '' && fuelStationIdentity(row) === selectedIdentity;
+                    const stationLabel = String(row.station_name || 'Fuel station');
+                    const selectionLabel = `${isSelected ? 'Selected station' : 'Select station'}: ${stationLabel}, ${String(row.fuel_name || 'fuel')}, ${formatPrice(row.price)}`;
+                    return `
+                    <tr class="${isSelected ? 'is-selected' : ''}">
+                        <td><button class="snapshot-station-select" type="button" data-snapshot-index="${index}" aria-pressed="${isSelected ? 'true' : 'false'}" aria-label="${escapeHtml(selectionLabel)}">${escapeHtml(stationLabel)}</button><br><span>${escapeHtml(`${row.state} · ${String(row.source || '').toUpperCase()}`)}</span></td>
                         <td>${escapeHtml(row.fuel_name)}</td>
                         <td><span class="snapshot-price-row"><span class="snapshot-price">${escapeHtml(formatPrice(row.price))}</span>${snapshotPriceMovementMarkup(row)}</span><br><span>Reported ${escapeHtml(formatDateTime(row.updated_at))}</span>${row.last_seen_at ? `<br><span>Checked ${escapeHtml(formatDateTime(row.last_seen_at))}</span>` : ''}</td>
                     </tr>
-                `).join('')}
+                `;
+                }).join('')}
             </tbody>
         </table>
     `;
-    const snapshotRows = visibleRows.slice(0, 8);
     fuelSnapshot.querySelectorAll('[data-snapshot-index]').forEach((button) => {
         button.addEventListener('click', () => {
-            const row = snapshotRows[Number(button.dataset.snapshotIndex)];
+            const row = fuelSnapshotRows[Number(button.dataset.snapshotIndex)];
             const coordinates = [Number(row?.longitude), Number(row?.latitude)];
             if (row && coordinates.every(Number.isFinite)) {
                 selectFuelStation(row, coordinates, true);
@@ -4415,6 +4514,7 @@ function fuelMapFeatureCollection(rows) {
                 price: String(row.price ?? ''),
                 price_value: Number(row.price),
                 price_text: formatPrice(row.price),
+                fuel_code: String(row.fuel_code || ''),
                 fuel_name: String(row.fuel_name || ''),
                 source: String(row.source || ''),
                 state: String(row.state || ''),
@@ -4446,12 +4546,14 @@ function fuelMapHighlightCollection(highlight) {
         features.push({
             type: 'Feature',
             properties: {
+                station_id: String(row.station_id || ''),
                 station_name: String(row.station_name || ''),
                 brand_name: String(row.brand_name || ''),
                 brand_icon: fuelBrandImageId(brand.key),
                 address: String(row.address || ''),
                 price: String(row.price ?? ''),
                 price_text: formatPrice(row.price),
+                fuel_code: String(row.fuel_code || ''),
                 fuel_name: String(row.fuel_name || ''),
                 source: String(row.source || ''),
                 state: String(row.state || ''),
@@ -4470,12 +4572,14 @@ function fuelMapHighlightCollection(highlight) {
         features.push({
             type: 'Feature',
             properties: {
+                station_id: String(row.station_id || ''),
                 station_name: String(row.station_name || ''),
                 brand_name: String(row.brand_name || ''),
                 brand_icon: fuelBrandImageId(brand.key),
                 address: String(row.address || ''),
                 price: String(row.price ?? ''),
                 price_text: formatPrice(row.price),
+                fuel_code: String(row.fuel_code || ''),
                 fuel_name: String(row.fuel_name || ''),
                 source: String(row.source || ''),
                 state: String(row.state || ''),
@@ -4955,7 +5059,7 @@ async function loadFuelDashboard() {
             window.clearTimeout(fuelMapAutoRefreshTimer);
             fuelMapAutoRefreshTimer = null;
         }
-        clearFuelStationSelection();
+        clearFuelStationSelection({ renderSnapshot: false });
         renderFuelSummary(sources.sources || {});
         renderLineChart(fuelWeeklyChart, fuelWeeklyMeta, weekly.series || []);
         renderBarChart(fuelMonthlyChart, fuelMonthlyMeta, monthly.series || []);
@@ -5145,10 +5249,10 @@ routeReturnOneWay.addEventListener('change', syncRouteReturnModeControls);
 routeTankCapacity.addEventListener('input', syncRouteVehicleInputBounds);
 fuelStopFinderPlan.addEventListener('click', planFuelStopFinder);
 fuelStopFinderReset.addEventListener('click', resetFuelStopFinder);
-fuelStopFinderOrigin.addEventListener('input', () => saveFuelStopFinderState(false));
-fuelStopFinderDestination.addEventListener('input', () => saveFuelStopFinderState(false));
-fuelStopFinderFuelType.addEventListener('change', () => saveFuelStopFinderState(false));
-fuelStopFinderEconomy.addEventListener('input', () => saveFuelStopFinderState(false));
+fuelStopFinderOrigin.addEventListener('input', markFuelStopFinderInputChanged);
+fuelStopFinderDestination.addEventListener('input', markFuelStopFinderInputChanged);
+fuelStopFinderFuelType.addEventListener('change', markFuelStopFinderInputChanged);
+fuelStopFinderEconomy.addEventListener('input', markFuelStopFinderInputChanged);
 attachRouteAutocomplete(fuelStopFinderOrigin);
 attachRouteAutocomplete(fuelStopFinderDestination);
 

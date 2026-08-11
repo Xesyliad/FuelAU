@@ -134,6 +134,10 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('brand_name: String(row.brand_name || \'\')', $source);
         self::assertStringContainsString('function selectFuelStation(properties, coordinates, focusMap = false)', $source);
         self::assertStringContainsString('data-snapshot-index=', $source);
+        self::assertStringContainsString('function fuelStationIdentity(row)', $source);
+        self::assertStringContainsString('let fuelSelectedStation = null;', $source);
+        self::assertStringContainsString('aria-pressed="${isSelected ? \'true\' : \'false\'}"', $source);
+        self::assertStringContainsString('fuelSnapshotRows = [selectedRow, ...fuelSnapshotRows].slice(0, 8);', $source);
         self::assertStringContainsString('function splitRoutePointsByItineraryLeg(routePoints, itineraryTargets)', $source);
         self::assertStringContainsString('routeLegColor(stopLegNumber - 1)', $source);
         self::assertStringContainsString('class="route-fuel-marker-sequence"', $source);
@@ -202,6 +206,26 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('routeAutocompleteResolvedLocation(fuelStopFinderOrigin, originValue)', $script);
         self::assertStringContainsString('attachRouteAutocomplete(fuelStopFinderDestination);', $script);
         self::assertStringContainsString('attachRouteAutocomplete(routeOrigin);', $script);
+    }
+
+    public function testFuelStopFinderExposesExplicitResultLifecycleStates(): void
+    {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
+        $stylesheet = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.css');
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($template);
+        self::assertIsString($stylesheet);
+        self::assertIsString($script);
+        self::assertStringContainsString('id="fuel-stop-finder" aria-labelledby="fuel-stop-finder-tab" data-workflow-state="input"', $template);
+        self::assertStringContainsString('id="fuel-stop-finder-state" role="status" aria-live="polite"', $template);
+        self::assertStringContainsString('function setFuelStopFinderWorkflowState(state)', $script);
+        self::assertStringContainsString("setFuelStopFinderWorkflowState('calculating');", $script);
+        self::assertStringContainsString("setFuelStopFinderWorkflowState('result');", $script);
+        self::assertStringContainsString("setFuelStopFinderWorkflowState('stale');", $script);
+        self::assertStringContainsString("setFuelStopFinderWorkflowState('error');", $script);
+        self::assertStringContainsString('markFuelStopFinderInputChanged', $script);
+        self::assertStringContainsString('#fuel-stop-finder[data-workflow-state="stale"]', $stylesheet);
     }
 
     public function testRoutePlannerAlwaysUsesBackendCompleteItineraryPlanner(): void
