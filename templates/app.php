@@ -252,7 +252,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                     </details>
                 </div>
             </div>
-            <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab">
+            <div class="panel" role="tabpanel" id="route-planning" aria-labelledby="route-planning-tab" data-workflow-state="input">
                 <h1>Route Planning</h1>
                 <p>Plan routes through the app-owned geocoding and routing API. Add multiple destinations, reorder them, and choose how the return leg behaves.</p>
 
@@ -264,7 +264,7 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                         <details class="panel-disclosure route-settings-disclosure">
                             <summary>
                                 <span>Vehicle and fuel settings</span>
-                                <small>Fuel, capacity, consumption, and refill preferences</small>
+                                <small id="route-vehicle-settings-summary">Diesel · 60 L tank · 12 L/100km</small>
                             </summary>
                             <div class="route-vehicle-configuration">
                                 <div class="route-section-heading">
@@ -323,23 +323,24 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                             </div>
                         </div>
 
-                        <div class="route-switches" role="group" aria-label="Return mode">
-                            <label class="switch-control">
+                        <fieldset class="route-return-selector">
+                            <legend>Return journey</legend>
+                            <div class="route-switches" role="radiogroup" aria-label="Return mode">
+                            <label class="route-return-option">
                                 <input type="radio" name="route-return-mode" id="route-return-reverses" value="reverses">
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>Return reverses path</span>
+                                <span><strong>Reverse path</strong><small>Retrace every stop</small></span>
                             </label>
-                            <label class="switch-control">
+                            <label class="route-return-option">
                                 <input type="radio" name="route-return-mode" id="route-return-direct" value="direct" checked>
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>Return direct to origin</span>
+                                <span><strong>Direct return</strong><small>Return from the final stop</small></span>
                             </label>
-                            <label class="switch-control">
-                                <input type="checkbox" id="route-return-one-way" value="one-way">
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>One Way</span>
+                            <label class="route-return-option">
+                                <input type="radio" name="route-return-mode" id="route-return-one-way" value="one-way">
+                                <span><strong>One way</strong><small>End at the final stop</small></span>
                             </label>
-                        </div>
+                            </div>
+                            <small class="route-return-summary" id="route-return-summary">Direct return · 2 route legs</small>
+                        </fieldset>
 
                         <div class="route-actions">
                             <button class="button primary" type="button" id="route-plan">Plan Route</button>
@@ -347,18 +348,29 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                             <button class="button" type="button" id="route-reset">Reset</button>
                         </div>
 
-                        <div class="status-line" id="route-status" role="status" aria-live="polite">Enter a trip to build a route.</div>
+                        <div class="route-workflow-status">
+                            <span class="route-workflow-state" id="route-planner-state" role="status" aria-live="polite">Ready</span>
+                            <div class="status-line" id="route-status" role="status" aria-live="polite">Enter a trip to build a route.</div>
+                        </div>
                     </section>
 
-                    <section class="surface-block route-results">
-                        <h2>Route Summary</h2>
-                        <div class="route-summary-grid" id="route-summary"></div>
-                    </section>
-
-                    <section class="surface-block">
-                        <h2>Leg Breakdown</h2>
-                        <div id="route-legs"></div>
-                    </section>
+                    <details class="panel-disclosure route-results-disclosure" id="route-planner-results">
+                        <summary>
+                            <span>Route results</span>
+                            <small id="route-planner-results-summary">Plan a trip to see route details</small>
+                        </summary>
+                        <div class="route-results-content">
+                            <section class="route-result-section">
+                                <h2>Route summary</h2>
+                                <div class="route-summary-grid" id="route-summary"></div>
+                            </section>
+                            <section class="route-result-section">
+                                <h2>Leg and fuel breakdown</h2>
+                                <p>Select a route instruction or fuel stop to focus it on the map.</p>
+                                <div id="route-legs"></div>
+                            </section>
+                        </div>
+                    </details>
                 </div>
             </div>
             <?php if ($containerManagementEnabled): ?>
