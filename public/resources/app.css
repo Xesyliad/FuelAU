@@ -335,14 +335,28 @@ p {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 12px;
-    margin: 18px 0;
+    margin: 12px 0 18px;
 }
 
 .container-card {
+    display: grid;
+    align-content: start;
+    gap: 10px;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 14px;
     background: var(--surface);
+}
+
+.container-card-header {
+    display: grid;
+    gap: 8px;
+}
+
+.container-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
 }
 
 .container-card.selected {
@@ -351,9 +365,22 @@ p {
 }
 
 .container-card h2 {
-    margin: 0 0 8px;
+    margin: 0;
     font-size: 16px;
     line-height: 1.3;
+}
+
+.container-details {
+    border-top: 1px solid var(--border-soft);
+    border-bottom: 1px solid var(--border-soft);
+}
+
+.container-details > summary {
+    padding: 8px 0;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 750;
 }
 
 .container-meta {
@@ -362,6 +389,16 @@ p {
     margin: 10px 0 12px;
     color: var(--muted);
     font-size: 13px;
+}
+
+.container-log-button {
+    justify-self: start;
+}
+
+.container-log-button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
 }
 
 .badge {
@@ -429,6 +466,18 @@ p {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font: inherit;
+}
+
+.admin-logs {
+    margin-top: 18px;
+}
+
+.admin-logs .logs {
+    width: calc(100% - 24px);
+    box-sizing: border-box;
+    min-height: 320px;
+    max-height: min(46vh, 520px);
+    margin: 0 12px 12px;
 }
 
 .fuel-layout {
@@ -1737,9 +1786,110 @@ textarea {
 }
 
 .app-bar .theme-switcher {
-    margin: 0 0 0 auto;
+    margin: 0;
     border-color: var(--border-soft);
     background: var(--surface-muted);
+}
+
+.app-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.app-overflow {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.app-overflow-toggle {
+    width: 38px;
+    height: 38px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: 9px;
+    background: var(--surface-muted);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+}
+
+.app-overflow-toggle[aria-expanded="true"],
+.app-overflow-toggle:focus-visible {
+    border-color: var(--accent);
+    outline: 3px solid var(--accent-focus);
+    outline-offset: 1px;
+}
+
+.app-overflow-menu {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(280px, calc(100vw - 24px));
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--overlay-surface);
+    box-shadow: 0 18px 44px var(--shadow);
+    backdrop-filter: blur(16px);
+}
+
+.app-overflow-menu[hidden] {
+    display: none;
+}
+
+.app-overflow-menu button {
+    width: 100%;
+    min-height: 54px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.app-overflow-menu button:hover,
+.app-overflow-menu button:focus-visible,
+.app-overflow-menu button[aria-current="page"] {
+    background: var(--accent-soft);
+    outline: none;
+}
+
+.app-overflow-menu svg {
+    width: 24px;
+    height: 24px;
+    fill: var(--accent);
+}
+
+.app-overflow-menu span,
+.app-overflow-menu strong,
+.app-overflow-menu small {
+    display: block;
+}
+
+.app-overflow-menu strong {
+    font-size: 12px;
+}
+
+.app-overflow-menu small {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 10px;
 }
 
 .tool-navigation.tabs {
@@ -1909,6 +2059,135 @@ textarea {
 
 .app-shell.admin-mode .workspace-sheet {
     width: min(920px, calc(100vw - 152px));
+}
+
+.admin-panel {
+    min-height: 100%;
+}
+
+.admin-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 0.72fr);
+    gap: 12px;
+    align-items: start;
+    margin: 16px 0;
+}
+
+.admin-primary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.admin-maintenance,
+.admin-logs {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-muted);
+    overflow: clip;
+}
+
+.admin-maintenance > summary,
+.admin-logs > summary {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    list-style: none;
+}
+
+.admin-maintenance > summary::-webkit-details-marker,
+.admin-logs > summary::-webkit-details-marker {
+    display: none;
+}
+
+.admin-maintenance > summary::after,
+.admin-logs > summary::after {
+    content: "+";
+    color: var(--muted);
+    font-size: 18px;
+}
+
+.admin-maintenance[open] > summary::after,
+.admin-logs[open] > summary::after {
+    content: "−";
+}
+
+.admin-maintenance-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+
+.admin-maintenance-actions p {
+    flex: 1 0 100%;
+    font-size: 11px;
+}
+
+.admin-overview {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    min-height: 0;
+    margin-bottom: 16px;
+}
+
+.admin-overview-card {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+}
+
+.admin-overview-card strong,
+.admin-overview-card small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-overview-card strong {
+    color: var(--text);
+    font-size: 14px;
+}
+
+.admin-overview-card small {
+    color: var(--muted);
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+.admin-service-section {
+    min-width: 0;
+}
+
+.admin-section-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: end;
+}
+
+.admin-section-heading h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.admin-section-heading small,
+.admin-logs > summary small {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 600;
 }
 
 .workspace-sheet .panel > h1 {
@@ -2359,6 +2638,15 @@ textarea {
         padding: 2px;
     }
 
+    .app-actions {
+        gap: 5px;
+    }
+
+    .app-overflow-toggle {
+        width: 32px;
+        height: 32px;
+    }
+
     .app-bar .theme-option {
         width: 28px;
         min-height: 28px;
@@ -2428,6 +2716,24 @@ textarea {
     .app-shell.admin-mode .workspace-sheet {
         width: auto;
         max-height: calc(100dvh - 96px);
+    }
+
+    .admin-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-overview {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .admin-section-heading {
+        display: grid;
+        align-items: start;
+    }
+
+    .admin-logs .logs {
+        min-height: 240px;
+        max-height: 42vh;
     }
 
     .sheet-grabber {

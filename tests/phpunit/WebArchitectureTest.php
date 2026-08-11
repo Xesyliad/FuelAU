@@ -289,4 +289,30 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString("'Planned stop'", $script);
         self::assertStringNotContainsString('fatigue spacing', $script);
     }
+
+    public function testAdministrationUsesSecondaryOverflowAndProtectedManagementSurface(): void
+    {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
+        $stylesheet = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.css');
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($template);
+        self::assertIsString($stylesheet);
+        self::assertIsString($script);
+        self::assertStringContainsString('id="app-overflow-toggle" aria-expanded="false"', $template);
+        self::assertStringContainsString('id="app-overflow-menu" role="menu" hidden', $template);
+        self::assertStringContainsString('id="open-container-management" role="menuitem"', $template);
+        self::assertStringContainsString('id="container-management-tab" aria-controls="container-management"', $template);
+        self::assertStringNotContainsString('class="tab tool-button tool-button-admin"', $template);
+        self::assertStringContainsString('class="admin-maintenance"', $template);
+        self::assertStringContainsString('id="container-logs-summary"', $template);
+        self::assertStringContainsString('function setAppOverflowExpanded(expanded)', $script);
+        self::assertStringContainsString("activateTab('container-management-tab');", $script);
+        self::assertStringContainsString("window.confirm('Restart the selected container?')", $script);
+        self::assertStringContainsString("apiRequest('/api/docker/prune'", $script);
+        self::assertStringContainsString('class="admin-overview-card"', $script);
+        self::assertStringContainsString('.app-overflow-menu', $stylesheet);
+        self::assertStringContainsString('.admin-overview-card', $stylesheet);
+        self::assertStringContainsString('.admin-logs .logs', $stylesheet);
+    }
 }

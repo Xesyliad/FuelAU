@@ -71,10 +71,23 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 <span>Map workspace</span>
                 <strong id="active-tool-title">Explore prices</strong>
             </div>
-            <div class="theme-switcher" role="group" aria-label="Colour theme">
-                <button class="theme-option" type="button" data-theme-preference="system" aria-pressed="false">System</button>
-                <button class="theme-option" type="button" data-theme-preference="light" aria-pressed="false">Light</button>
-                <button class="theme-option" type="button" data-theme-preference="dark" aria-pressed="false">Dark</button>
+            <div class="app-actions">
+                <div class="theme-switcher" role="group" aria-label="Colour theme">
+                    <button class="theme-option" type="button" data-theme-preference="system" aria-pressed="false">System</button>
+                    <button class="theme-option" type="button" data-theme-preference="light" aria-pressed="false">Light</button>
+                    <button class="theme-option" type="button" data-theme-preference="dark" aria-pressed="false">Dark</button>
+                </div>
+                <?php if ($containerManagementEnabled): ?>
+                <div class="app-overflow">
+                    <button class="app-overflow-toggle" type="button" id="app-overflow-toggle" aria-expanded="false" aria-controls="app-overflow-menu" aria-label="Open application menu">•••</button>
+                    <div class="app-overflow-menu" id="app-overflow-menu" role="menu" hidden>
+                        <button type="button" id="open-container-management" role="menuitem">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Zm0 2.3L6.2 7.5 12 10.7l5.8-3.2L12 4.3ZM6 9.2v5.1l5 2.8V12L6 9.2Zm7 7.9 5-2.8V9.2L13 12v5.1Z"/></svg>
+                            <span><strong>Administration</strong><small>Services, logs, and maintenance</small></span>
+                        </button>
+                    </div>
+                </div>
+                <?php endif; ?>
             </div>
         </header>
 
@@ -91,13 +104,10 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm12 12a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM8.5 6H14a4 4 0 0 1 0 8h-4a2 2 0 0 0 0 4h5.5v2H10a4 4 0 0 1 0-8h4a2 2 0 0 0 0-4H8.5V6Z"/></svg>
                 <span>Route</span>
             </button>
-            <?php if ($containerManagementEnabled): ?>
-            <button class="tab tool-button tool-button-admin" type="button" role="tab" aria-selected="false" aria-controls="container-management" id="container-management-tab" data-tool-title="Container management" tabindex="-1">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Zm0 2.3L6.2 7.5 12 10.7l5.8-3.2L12 4.3ZM6 9.2v5.1l5 2.8V12L6 9.2Zm7 7.9 5-2.8V9.2L13 12v5.1Z"/></svg>
-                <span>Admin</span>
-            </button>
-            <?php endif; ?>
         </nav>
+        <?php if ($containerManagementEnabled): ?>
+        <button type="button" id="container-management-tab" aria-controls="container-management" aria-selected="false" data-tool-title="Container management" hidden></button>
+        <?php endif; ?>
 
         <button class="sheet-reopen" type="button" id="workspace-sheet-reopen" aria-controls="workspace-sheet" aria-label="Open active tool panel">
             <span aria-hidden="true">›</span>
@@ -374,22 +384,38 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
                 </div>
             </div>
             <?php if ($containerManagementEnabled): ?>
-            <div class="panel" role="tabpanel" id="container-management" aria-labelledby="container-management-tab">
+            <div class="panel admin-panel" role="tabpanel" id="container-management" aria-labelledby="open-container-management" tabindex="-1">
                 <h1>Container Management</h1>
                 <p>Status, logs, restart controls, and constrained cleanup tasks for this Compose project.</p>
 
-                <div class="toolbar">
-                    <button class="button primary" type="button" id="refresh-containers">Refresh</button>
-                    <button class="button" type="button" id="restart-container" disabled>Restart Selected</button>
-                    <button class="button danger" type="button" id="prune-stopped">Prune Stopped Project Containers</button>
-                    <button class="button danger" type="button" id="prune-images">Prune Dangling Images</button>
+                <div class="admin-toolbar">
+                    <div class="admin-primary-actions">
+                        <button class="button primary" type="button" id="refresh-containers">Refresh status</button>
+                        <button class="button" type="button" id="restart-container" disabled>Restart selected</button>
+                    </div>
+                    <details class="admin-maintenance">
+                        <summary>Maintenance actions</summary>
+                        <div class="admin-maintenance-actions">
+                            <p>Cleanup remains limited to this Compose project and dangling images. Every action requires confirmation.</p>
+                            <button class="button danger" type="button" id="prune-stopped">Prune stopped project containers</button>
+                            <button class="button danger" type="button" id="prune-images">Prune dangling images</button>
+                        </div>
+                    </details>
                 </div>
 
-                <div class="status-line" id="container-status">Loading container status...</div>
-                <div class="container-grid" id="container-grid"></div>
+                <div class="status-line admin-overview" id="container-status" role="status" aria-live="polite">Loading container status...</div>
+                <section class="admin-service-section" aria-labelledby="admin-services-title">
+                    <div class="admin-section-heading">
+                        <h2 id="admin-services-title">Compose services</h2>
+                        <small>Select a running container to view logs or enable restart.</small>
+                    </div>
+                    <div class="container-grid" id="container-grid"></div>
+                </section>
 
-                <h1>Logs</h1>
-                <pre class="logs" id="container-logs">Select a container to load logs.</pre>
+                <details class="admin-logs" open>
+                    <summary><span>Container logs</span><small id="container-logs-summary">No container selected</small></summary>
+                    <pre class="logs" id="container-logs" tabindex="0">Select a container to load logs.</pre>
+                </details>
             </div>
             <?php endif; ?>
             </section>
