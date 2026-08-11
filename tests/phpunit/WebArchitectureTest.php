@@ -67,7 +67,7 @@ final class WebArchitectureTest extends TestCase
         self::assertStringNotContainsString('.setStyle(', $script);
     }
 
-    public function testFuelMapViewportRefreshIsGuarded(): void
+    public function testFuelMapViewportRefreshIsGuardedOnPersistentSharedMap(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
 
@@ -76,7 +76,68 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('requestKey === fuelMapViewportLastRequestKey', $source);
         self::assertStringContainsString('if (!preserveViewport)', $source);
         self::assertStringContainsString("error?.name === 'AbortError'", $source);
-        self::assertStringContainsString('destroyFuelMap();', $source);
+        self::assertSame(1, substr_count($source, 'new maplibregl.Map('));
+        self::assertStringContainsString('function syncSharedMapWorkflow(workflow)', $source);
+        self::assertStringContainsString("'fuelau-stop-finder-lines'", $source);
+        self::assertStringContainsString("'fuelau-route-planner-lines'", $source);
+        self::assertStringNotContainsString('function destroyFuelMap()', $source);
+        self::assertStringContainsString('function syncMapFirstShell(tab, panelId)', $source);
+        self::assertStringContainsString('scheduleMapResize(fuelMapInstance);', $source);
+    }
+
+    public function testPageUsesAMapFirstResponsiveApplicationShell(): void
+    {
+        $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');
+        $stylesheet = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.css');
+
+        self::assertIsString($template);
+        self::assertIsString($stylesheet);
+        self::assertStringContainsString('class="map-stage"', $template);
+        self::assertStringContainsString('data-map-view="shared"', $template);
+        self::assertStringContainsString('class="tabs tool-navigation"', $template);
+        self::assertStringContainsString('class="workspace-sheet"', $template);
+        self::assertStringContainsString('id="workspace-sheet-toggle"', $template);
+        self::assertStringContainsString('id="workspace-sheet-reopen"', $template);
+        self::assertSame(1, substr_count($template, 'id="fuel-map"'));
+        self::assertSame(0, substr_count($template, 'id="fuel-stop-finder-map"'));
+        self::assertSame(0, substr_count($template, 'id="route-map"'));
+        self::assertSame(1, substr_count($template, 'id="map-status-overlay"'));
+        self::assertStringContainsString('class="panel-disclosure insights-disclosure" open', $template);
+        self::assertStringContainsString('class="panel-disclosure state-summary-disclosure"', $template);
+        self::assertStringContainsString('id="fuel-station-detail"', $template);
+        $insightsPosition = strpos($template, 'class="panel-disclosure insights-disclosure"');
+        $stateSummaryPosition = strpos($template, 'class="panel-disclosure state-summary-disclosure"');
+        self::assertIsInt($insightsPosition);
+        self::assertIsInt($stateSummaryPosition);
+        self::assertLessThan($stateSummaryPosition, $insightsPosition);
+        self::assertStringContainsString('/* Map-first application shell */', $stylesheet);
+        self::assertStringContainsString('height: 100dvh;', $stylesheet);
+        self::assertStringContainsString('@media (max-width: 760px)', $stylesheet);
+        self::assertStringContainsString('@media (prefers-reduced-motion: reduce)', $stylesheet);
+        self::assertStringContainsString('.fuel-station-brand-badge', $stylesheet);
+        self::assertStringContainsString('.snapshot-station-select', $stylesheet);
+    }
+
+    public function testExplorePricesUsesBrandAwareSelectableStationMarkers(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($source);
+        self::assertStringContainsString('const fuelBrandRegistry = {', $source);
+        self::assertStringContainsString('function registerFuelBrandImages(map)', $source);
+        self::assertStringContainsString("id: 'fuelau-prices-stations-brand'", $source);
+        self::assertStringContainsString("id: 'fuelau-prices-selection-ring'", $source);
+        self::assertStringContainsString('brand_name: String(row.brand_name || \'\')', $source);
+        self::assertStringContainsString('function selectFuelStation(properties, coordinates, focusMap = false)', $source);
+        self::assertStringContainsString('data-snapshot-index=', $source);
+        self::assertStringContainsString('function splitRoutePointsByItineraryLeg(routePoints, itineraryTargets)', $source);
+        self::assertStringContainsString('routeLegColor(stopLegNumber - 1)', $source);
+        self::assertStringContainsString('class="route-fuel-marker-sequence"', $source);
+        self::assertStringContainsString('function routeFuelWazeUrl(candidate)', $source);
+        self::assertStringContainsString("new URL('https://www.waze.com/ul')", $source);
+        self::assertStringContainsString("url.searchParams.set('navigate', 'yes')", $source);
+        self::assertStringContainsString('class="waze-navigation-link"', $source);
+        self::assertStringContainsString('target="_blank" rel="noopener noreferrer"', $source);
     }
 
     public function testDashboardFiltersStaleAndImplausiblePrices(): void
