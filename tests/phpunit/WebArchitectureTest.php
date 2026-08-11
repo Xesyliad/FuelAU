@@ -122,14 +122,18 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('.workspace-sheet .fuel-filter-bar', $stylesheet);
     }
 
-    public function testExplorePricesUsesBrandAwareSelectableStationMarkers(): void
+    public function testExplorePricesUsesCleanSelectableDotsAndBrandAwareDetails(): void
     {
         $source = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
 
         self::assertIsString($source);
         self::assertStringContainsString('const fuelBrandRegistry = {', $source);
-        self::assertStringContainsString('function registerFuelBrandImages(map)', $source);
-        self::assertStringContainsString("id: 'fuelau-prices-stations-brand'", $source);
+        self::assertStringNotContainsString('function registerFuelBrandImages(map)', $source);
+        self::assertStringNotContainsString("id: 'fuelau-prices-stations-brand'", $source);
+        self::assertStringNotContainsString("id: 'fuelau-prices-highlights-brand'", $source);
+        self::assertStringNotContainsString('brand_icon:', $source);
+        self::assertStringContainsString("id: 'fuelau-prices-stations-circle'", $source);
+        self::assertStringContainsString('class="fuel-station-brand-badge snapshot-brand-badge"', $source);
         self::assertStringContainsString("id: 'fuelau-prices-selection-ring'", $source);
         self::assertStringContainsString('brand_name: String(row.brand_name || \'\')', $source);
         self::assertStringContainsString('function selectFuelStation(properties, coordinates, focusMap = false)', $source);
@@ -182,6 +186,11 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('id="route-starting-fuel"', $template);
         self::assertStringContainsString('id="route-fuel-reserve"', $template);
         self::assertStringContainsString('id="route-optimization-mode"', $template);
+        self::assertStringContainsString('id="route-vehicle-settings-summary"', $template);
+        self::assertStringContainsString('class="route-return-selector"', $template);
+        self::assertStringContainsString('type="radio" name="route-return-mode" id="route-return-one-way"', $template);
+        self::assertStringContainsString('id="route-planner-state" role="status" aria-live="polite"', $template);
+        self::assertStringContainsString('class="panel-disclosure route-results-disclosure" id="route-planner-results"', $template);
         self::assertStringContainsString('<h3>Vehicle Configuration</h3>', $template);
         self::assertStringContainsString('class="route-vehicle-grid"', $template);
         self::assertStringNotContainsString('>Fuel Fill (L)<', $template);
@@ -190,6 +199,14 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('startingFuel: routeStartingFuel.value.trim()', $script);
         self::assertStringContainsString('fuelReserve: routeFuelReserve.value.trim()', $script);
         self::assertStringContainsString('Starting fuel must be between zero and tank capacity.', $script);
+        self::assertStringContainsString('function updateRouteVehicleSettingsSummary()', $script);
+        self::assertStringContainsString('function moveRouteDestination(row, direction)', $script);
+        self::assertStringContainsString('data-action="move-up"', $script);
+        self::assertStringContainsString('data-action="move-down"', $script);
+        self::assertStringContainsString('function setRoutePlannerWorkflowState(state)', $script);
+        self::assertStringContainsString("renderRouteBreakdownInto(routeLegs, plan, { workflow: 'route-planning' });", $script);
+        self::assertStringContainsString('routePlannerResults.open = true;', $script);
+        self::assertStringContainsString("map.on('click', layer.id", $script);
     }
 
     public function testRouteInputsOfferAccessibleCompletionAfterThreeCharacters(): void
