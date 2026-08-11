@@ -118,25 +118,27 @@ $appJsVersion = is_string($appJsHash) ? substr($appJsHash, 0, 12) : 'dev';
             <section class="content">
             <div class="panel active" role="tabpanel" id="fuel-prices" aria-labelledby="fuel-prices-tab">
                 <h1>Fuel Prices</h1>
-                <p>App-owned price analytics from the ingested fuel datasets. Western Australia is sourced from the public FuelWatch RSS feed and refreshes after the daily 2:30pm release window. Weekly and monthly trend charts are rendered locally with SVG.</p>
+                <p>Compare current prices, inspect nearby stations, and open trends when you need more detail.</p>
 
                 <div class="fuel-layout">
-                    <div class="fuel-toolbar">
-                        <div class="field">
+                    <div class="fuel-toolbar fuel-filter-bar" role="group" aria-label="Fuel price filters">
+                        <div class="field fuel-filter-chip fuel-filter-state">
                             <label for="fuel-state">State</label>
                             <select id="fuel-state"></select>
                         </div>
-                        <div class="field">
+                        <div class="field fuel-filter-chip fuel-filter-region">
                             <label for="fuel-region">Region</label>
                             <select id="fuel-region"></select>
                         </div>
-                        <div class="field">
+                        <div class="field fuel-filter-chip fuel-filter-type">
                             <label for="fuel-type">Fuel</label>
                             <select id="fuel-type"></select>
                         </div>
-                        <div class="field">
-                            <label>&nbsp;</label>
-                            <button class="button primary" type="button" id="refresh-fuel-dashboard">Refresh Graphs</button>
+                        <div class="field fuel-filter-refresh">
+                            <button class="button primary fuel-refresh-button" type="button" id="refresh-fuel-dashboard" aria-label="Refresh fuel prices and insights" title="Refresh fuel prices and insights">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.1 8A7.5 7.5 0 1 0 20 14h-2.1a5.5 5.5 0 1 1-.45-4H14v2h7V5h-2l.1 3Z"/></svg>
+                                <span>Refresh</span>
+                            </button>
                         </div>
                     </div>
 
