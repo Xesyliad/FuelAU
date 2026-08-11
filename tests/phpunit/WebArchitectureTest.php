@@ -105,6 +105,9 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('class="panel-disclosure insights-disclosure" open', $template);
         self::assertStringContainsString('class="panel-disclosure state-summary-disclosure"', $template);
         self::assertStringContainsString('id="fuel-station-detail"', $template);
+        self::assertStringContainsString('class="fuel-toolbar fuel-filter-bar"', $template);
+        self::assertStringContainsString('class="field fuel-filter-chip fuel-filter-region"', $template);
+        self::assertStringContainsString('class="button primary fuel-refresh-button"', $template);
         $insightsPosition = strpos($template, 'class="panel-disclosure insights-disclosure"');
         $stateSummaryPosition = strpos($template, 'class="panel-disclosure state-summary-disclosure"');
         self::assertIsInt($insightsPosition);
@@ -116,6 +119,7 @@ final class WebArchitectureTest extends TestCase
         self::assertStringContainsString('@media (prefers-reduced-motion: reduce)', $stylesheet);
         self::assertStringContainsString('.fuel-station-brand-badge', $stylesheet);
         self::assertStringContainsString('.snapshot-station-select', $stylesheet);
+        self::assertStringContainsString('.workspace-sheet .fuel-filter-bar', $stylesheet);
     }
 
     public function testExplorePricesUsesBrandAwareSelectableStationMarkers(): void
