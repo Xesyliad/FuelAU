@@ -1321,9 +1321,19 @@ p {
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    background:
-        radial-gradient(circle at center, rgba(15, 118, 110, 0.02), rgba(15, 118, 110, 0.00)),
-        var(--control-bg);
+    background: #0b1118;
+}
+
+:root[data-theme-resolved="light"] .fuel-map-frame {
+    background: #e9eef3;
+}
+
+.fuel-map-frame .maplibregl-canvas {
+    visibility: hidden;
+}
+
+.fuel-map-frame.is-map-theme-ready .maplibregl-canvas {
+    visibility: visible;
 }
 
 .fuel-map-frame > .route-empty {
