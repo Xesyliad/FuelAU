@@ -2,6 +2,8 @@
 
 Australian fuel price and routing API project.
 
+Demo available at <a href="https://fuelau.familysnaps.net" target="_blank" rel="noopener noreferrer">https://fuelau.familysnaps.net</a>.
+
 FuelAU is a Docker-first PHP application based on the previous Fuel app structure. It currently provides:
 
 - A responsive map-first web UI for fuel prices and route planning.
