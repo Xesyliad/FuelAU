@@ -1522,6 +1522,13 @@ textarea {
     font-family: inherit;
 }
 
+select,
+select option,
+select optgroup {
+    background-color: var(--control-bg);
+    color: var(--text);
+}
+
 .app-shell {
     position: fixed;
     inset: 0;

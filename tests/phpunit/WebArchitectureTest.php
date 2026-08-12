@@ -53,6 +53,8 @@ final class WebArchitectureTest extends TestCase
         self::assertLessThan($stylesheetPosition, $themeBootstrapPosition);
         self::assertStringContainsString('@media (prefers-color-scheme: dark)', $stylesheet);
         self::assertStringContainsString(':root[data-theme="dark"]', $stylesheet);
+        self::assertStringContainsString("select option,\nselect optgroup {", $stylesheet);
+        self::assertStringContainsString('background-color: var(--control-bg);', $stylesheet);
         self::assertStringContainsString("window.localStorage.setItem(themePreferenceKey", $script);
         self::assertStringContainsString("systemDarkTheme.addEventListener('change'", $script);
         self::assertStringContainsString("option.setAttribute(\n            'aria-pressed'", $script);
