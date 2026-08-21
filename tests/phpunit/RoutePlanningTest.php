@@ -680,6 +680,9 @@ final class RoutePlanningTest extends TestCase
         self::assertSame(26_800, $response['summary']['generalized_cost_cents']);
         self::assertSame('2026-07-29T00:00:00Z', $response['summary']['price_as_of']);
         self::assertCount(2, $response['stops']);
+        self::assertSame('Ethanol 94', $response['stops'][0]['fuel_name']);
+        self::assertSame('E10', $response['stops'][0]['fuel_code']);
+        self::assertSame('cheapest_unleaded', $response['objective']['fuel_profile']);
         self::assertSame(3, $response['diagnostics']['candidate_count']);
         self::assertCount(4, $result->exactRouteCoordinates());
 
@@ -977,7 +980,7 @@ final class RoutePlanningTest extends TestCase
             ) use (&$candidateLoaderCalls, $candidateRows): array {
                 $candidateLoaderCalls++;
                 self::assertCount(13, $points);
-                self::assertSame('E10', $fuel);
+                self::assertSame('cheapest_unleaded', $fuel);
 
                 return $candidateRows;
             },
@@ -1155,6 +1158,7 @@ final class RoutePlanningTest extends TestCase
             'station_id' => $stationId,
             'station_name' => $stationName,
             'fuel_code' => 'E10',
+            'fuel_name' => 'Ethanol 94',
             'latitude' => -30.0,
             'longitude' => $longitude,
             'price' => $price,

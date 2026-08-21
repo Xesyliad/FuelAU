@@ -2280,7 +2280,7 @@ fuelauTest('live single-corridor orchestration stays within bounded dependencies
         candidateLoader: static function (array $points, string $fuel) use (&$candidateLoaderCalls): array {
             $candidateLoaderCalls++;
             fuelauAssertSame(13, count($points));
-            fuelauAssertSame('E10', $fuel);
+            fuelauAssertSame('cheapest_unleaded', $fuel);
 
             return [
                 ['source' => 'nsw', 'state' => 'NSW', 'station_id' => 'required', 'station_name' => 'Required', 'fuel_code' => 'E10', 'latitude' => -30.0, 'longitude' => 150.5, 'price' => 200, 'updated_at' => '2026-07-29T00:00:00Z'],

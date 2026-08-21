@@ -74,7 +74,7 @@ final class RequestDtoTest extends TestCase
         ]);
 
         self::assertSame([['lat' => -27.5, 'lon' => 153.0]], $request->points);
-        self::assertSame('U91', $request->fuel);
+        self::assertSame('unleaded_91_plus', $request->fuel);
         self::assertSame(100.0, $request->radiusKm);
         self::assertSame(5000, $request->limit);
     }
@@ -111,6 +111,7 @@ final class RequestDtoTest extends TestCase
         self::assertSame(60.0, $request->fuel->tankCapacityL);
         self::assertSame(60.0, $request->fuel->startingFuelL);
         self::assertSame(6.0, $request->fuel->reserveL);
+        self::assertSame('diesel', $request->fuel->type);
         self::assertSame('practical_least_cost', $request->preferences->mode);
         self::assertNull($request->preferences->maximumFuelOnlyStops);
         self::assertNull($request->preferences->minimumDiscretionaryPurchaseL);
@@ -118,6 +119,27 @@ final class RequestDtoTest extends TestCase
         self::assertSame(90.0, $request->preferences->minimumStopSpacingMinutes);
         self::assertSame(1000, $request->preferences->minimumNetSavingCents);
         self::assertSame(3000, $request->preferences->driverTimeValueCentsPerHour);
+    }
+
+    public function testRouteFuelRequestRejectsUnknownOrElectricProducts(): void
+    {
+        foreach (['unknown fuel', 'EV', 'EV charge'] as $type) {
+            try {
+                FuelauRouteOptimizationFuel::fromBody([
+                    'type' => $type,
+                    'tank_capacity_l' => 60,
+                    'starting_fuel_l' => 40,
+                    'economy_l_per_100km' => 8,
+                    'reserve_l' => 6,
+                ]);
+                self::fail("Expected {$type} to be rejected");
+            } catch (FuelauValidationException $exception) {
+                self::assertSame(
+                    'fuel.type must be a supported grouped route fuel.',
+                    $exception->getMessage(),
+                );
+            }
+        }
     }
 
     public function testDirectAndReverseItinerarySemanticsAreExpandedInOrder(): void

@@ -5,6 +5,262 @@ declare(strict_types=1);
 const FUELAU_FUEL_SOURCES = ['all', 'qld', 'sa', 'nsw', 'tas', 'vic', 'wa', 'nt'];
 const FUELAU_FUEL_STATES = ['QLD', 'SA', 'NSW', 'TAS', 'VIC', 'WA', 'NT'];
 
+/**
+ * Route fuel choices are compatibility policies, not provider fuel names.
+ * Keep this list independent from the state-specific Explore Prices filters.
+ *
+ * @return list<array{value: string, label: string, class: string, warning?: string}>
+ */
+function fuelauRouteFuelProfiles(): array
+{
+    return [
+        ['value' => 'unleaded_91_plus', 'label' => 'Unleaded', 'class' => 'petrol'],
+        ['value' => 'premium_unleaded_95_plus', 'label' => 'Premium Unleaded 95', 'class' => 'petrol'],
+        ['value' => 'premium_unleaded_98', 'label' => 'Premium Unleaded 98', 'class' => 'petrol'],
+        [
+            'value' => 'cheapest_unleaded',
+            'label' => 'Cheapest Unleaded',
+            'class' => 'petrol',
+            'warning' => 'Includes ethanol blends up to E85 and specialist petrol products.',
+        ],
+        ['value' => 'diesel', 'label' => 'Diesel', 'class' => 'diesel'],
+        ['value' => 'premium_diesel', 'label' => 'Premium Diesel', 'class' => 'diesel'],
+        [
+            'value' => 'cheapest_diesel',
+            'label' => 'Cheapest Diesel',
+            'class' => 'diesel',
+            'warning' => 'Includes biodiesel blends such as B20.',
+        ],
+        ['value' => 'lpg', 'label' => 'LPG', 'class' => 'lpg'],
+        ['value' => 'cng', 'label' => 'CNG/NGV', 'class' => 'cng'],
+        ['value' => 'lng', 'label' => 'LNG', 'class' => 'lng'],
+        ['value' => 'hydrogen', 'label' => 'Hydrogen', 'class' => 'hydrogen'],
+    ];
+}
+
+/**
+ * Explicit upstream product registry. Unknown products are deliberately not
+ * considered route-compatible until reviewed. EV is classified as excluded
+ * because the route planner models litres, L/100 km and cents per litre.
+ *
+ * @return array<string, array<string, array{
+ *     class: string,
+ *     grade?: int,
+ *     ethanol?: bool,
+ *     biodiesel?: bool,
+ *     premium?: bool,
+ *     specialist?: bool,
+ *     route_excluded?: bool
+ * }>>
+ */
+function fuelauAustralianFuelProductRegistry(): array
+{
+    $qldAndSa = [
+        '2' => ['class' => 'petrol', 'grade' => 91, 'ethanol' => false],
+        '5' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+        '8' => ['class' => 'petrol', 'grade' => 98, 'ethanol' => false],
+        '11' => ['class' => 'petrol', 'specialist' => true],
+        '12' => ['class' => 'petrol', 'ethanol' => true],
+        '13' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => true],
+        '19' => ['class' => 'petrol', 'ethanol' => true],
+        '21' => ['class' => 'petrol', 'specialist' => true],
+        '999' => ['class' => 'petrol', 'ethanol' => true],
+        '3' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+        '6' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+        '14' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => true],
+        '16' => ['class' => 'diesel', 'biodiesel' => true, 'premium' => false],
+        '1000' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+        '4' => ['class' => 'lpg'],
+        '22' => ['class' => 'cng'],
+        '23' => ['class' => 'lng'],
+    ];
+
+    return [
+        'qld' => $qldAndSa,
+        'sa' => $qldAndSa,
+        'nsw' => [
+            'U91' => ['class' => 'petrol', 'grade' => 91, 'ethanol' => false],
+            'P95' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+            'P95-P98' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+            'P98' => ['class' => 'petrol', 'grade' => 98, 'ethanol' => false],
+            'E10' => ['class' => 'petrol', 'ethanol' => true],
+            'E10-U91' => ['class' => 'petrol', 'ethanol' => true],
+            'E85' => ['class' => 'petrol', 'ethanol' => true],
+            'DL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+            'DL-PDL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+            'PDL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => true],
+            'B20' => ['class' => 'diesel', 'biodiesel' => true, 'premium' => false],
+            'LPG' => ['class' => 'lpg'],
+            'CNG' => ['class' => 'cng'],
+            'LNG' => ['class' => 'lng'],
+            'H2' => ['class' => 'hydrogen'],
+            'EV' => ['class' => 'electric', 'route_excluded' => true],
+        ],
+        'vic' => [
+            'U91' => ['class' => 'petrol', 'grade' => 91, 'ethanol' => false],
+            'P95' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+            'P98' => ['class' => 'petrol', 'grade' => 98, 'ethanol' => false],
+            'E10' => ['class' => 'petrol', 'ethanol' => true],
+            'E85' => ['class' => 'petrol', 'ethanol' => true],
+            'DSL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+            'PDSL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => true],
+            'B20' => ['class' => 'diesel', 'biodiesel' => true, 'premium' => false],
+            'LPG' => ['class' => 'lpg'],
+            'CNG' => ['class' => 'cng'],
+            'LNG' => ['class' => 'lng'],
+        ],
+        'wa' => [
+            '1' => ['class' => 'petrol', 'grade' => 91, 'ethanol' => false],
+            '2' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+            '6' => ['class' => 'petrol', 'grade' => 98, 'ethanol' => false],
+            '10' => ['class' => 'petrol', 'ethanol' => true],
+            '4' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+            '11' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => true],
+            '5' => ['class' => 'lpg'],
+        ],
+        'nt' => [
+            'U91' => ['class' => 'petrol', 'grade' => 91, 'ethanol' => false],
+            'P95' => ['class' => 'petrol', 'grade' => 95, 'ethanol' => false],
+            'P98' => ['class' => 'petrol', 'grade' => 98, 'ethanol' => false],
+            'E10' => ['class' => 'petrol', 'ethanol' => true],
+            'E85' => ['class' => 'petrol', 'ethanol' => true],
+            'LAF' => ['class' => 'petrol', 'specialist' => true],
+            'DL' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => false],
+            'PD' => ['class' => 'diesel', 'biodiesel' => false, 'premium' => true],
+            'B20' => ['class' => 'diesel', 'biodiesel' => true, 'premium' => false],
+            'LPG' => ['class' => 'lpg'],
+        ],
+    ];
+}
+
+function fuelauRouteFuelProfileId(string $value): ?string
+{
+    $normalized = strtolower(trim($value));
+    $aliases = [
+        'unleaded' => 'unleaded_91_plus',
+        'unleaded 91' => 'unleaded_91_plus',
+        'u91' => 'unleaded_91_plus',
+        'premium 95' => 'premium_unleaded_95_plus',
+        'premium unleaded 95' => 'premium_unleaded_95_plus',
+        'p95' => 'premium_unleaded_95_plus',
+        'p95-p98' => 'premium_unleaded_95_plus',
+        'premium 98' => 'premium_unleaded_98',
+        'premium unleaded 98' => 'premium_unleaded_98',
+        'p98' => 'premium_unleaded_98',
+        'e10' => 'cheapest_unleaded',
+        'e85' => 'cheapest_unleaded',
+        'e10-u91' => 'cheapest_unleaded',
+        'opal' => 'cheapest_unleaded',
+        'lrp' => 'cheapest_unleaded',
+        'laf' => 'cheapest_unleaded',
+        'diesel' => 'diesel',
+        'dl' => 'diesel',
+        'dsl' => 'diesel',
+        'ulsd' => 'diesel',
+        'premium diesel' => 'premium_diesel',
+        'pdl' => 'premium_diesel',
+        'pdsl' => 'premium_diesel',
+        'pd' => 'premium_diesel',
+        'brand diesel' => 'premium_diesel',
+        'b20' => 'cheapest_diesel',
+        'cheapest unleaded' => 'cheapest_unleaded',
+        'cheapest diesel' => 'cheapest_diesel',
+        'lpg' => 'lpg',
+        'cng/ngv' => 'cng',
+        'cng' => 'cng',
+        'lng' => 'lng',
+        'hydrogen' => 'hydrogen',
+    ];
+    foreach (fuelauRouteFuelProfiles() as $profile) {
+        $aliases[strtolower($profile['value'])] = $profile['value'];
+        $aliases[strtolower($profile['label'])] = $profile['value'];
+    }
+
+    return $aliases[$normalized] ?? null;
+}
+
+function fuelauRouteFuelProfileLabel(string $value): ?string
+{
+    $profileId = fuelauRouteFuelProfileId($value);
+    foreach (fuelauRouteFuelProfiles() as $profile) {
+        if ($profile['value'] === $profileId) {
+            return $profile['label'];
+        }
+    }
+
+    return null;
+}
+
+/** @return array<string, list<string>> */
+function fuelauRouteFuelCodesBySource(string $profileValue): array
+{
+    $profileId = fuelauRouteFuelProfileId($profileValue);
+    if ($profileId === null) {
+        return [];
+    }
+
+    $codesBySource = [];
+    foreach (fuelauAustralianFuelProductRegistry() as $source => $products) {
+        foreach ($products as $code => $product) {
+            if (($product['route_excluded'] ?? false) === true) {
+                continue;
+            }
+            $compatible = match ($profileId) {
+                'unleaded_91_plus' => $product['class'] === 'petrol'
+                    && ($product['ethanol'] ?? false) === false
+                    && ($product['specialist'] ?? false) === false
+                    && ($product['grade'] ?? 0) >= 91,
+                'premium_unleaded_95_plus' => $product['class'] === 'petrol'
+                    && ($product['ethanol'] ?? false) === false
+                    && ($product['specialist'] ?? false) === false
+                    && ($product['grade'] ?? 0) >= 95,
+                'premium_unleaded_98' => $product['class'] === 'petrol'
+                    && ($product['ethanol'] ?? false) === false
+                    && ($product['specialist'] ?? false) === false
+                    && ($product['grade'] ?? 0) >= 98,
+                'cheapest_unleaded' => $product['class'] === 'petrol',
+                'diesel' => $product['class'] === 'diesel'
+                    && ($product['biodiesel'] ?? false) === false,
+                'premium_diesel' => $product['class'] === 'diesel'
+                    && ($product['biodiesel'] ?? false) === false
+                    && ($product['premium'] ?? false) === true,
+                'cheapest_diesel' => $product['class'] === 'diesel',
+                default => $product['class'] === $profileId,
+            };
+            if ($compatible) {
+                $codesBySource[$source][] = (string) $code;
+            }
+        }
+    }
+
+    return $codesBySource;
+}
+
+/**
+ * @param list<array<string, mixed>> $optionRows
+ * @return list<array{source: string, state: string, fuel_code: string, fuel_name: string}>
+ */
+function fuelauUnclassifiedRouteFuelOptions(array $optionRows): array
+{
+    $registry = fuelauAustralianFuelProductRegistry();
+    $unclassified = [];
+    foreach ($optionRows as $row) {
+        $source = strtolower(trim((string) ($row['source'] ?? '')));
+        $code = trim((string) ($row['fuel_code'] ?? $row['value'] ?? ''));
+        if ($source !== '' && $code !== '' && isset($registry[$source][$code])) {
+            continue;
+        }
+        $unclassified[] = [
+            'source' => $source,
+            'state' => strtoupper(trim((string) ($row['state'] ?? ''))),
+            'fuel_code' => $code,
+            'fuel_name' => trim((string) ($row['fuel_name'] ?? $row['label'] ?? '')),
+        ];
+    }
+
+    return $unclassified;
+}
+
 function fuelauClampInt(int $value, int $minimum, int $maximum): int
 {
     return max($minimum, min($maximum, $value));
@@ -186,6 +442,24 @@ function fuelauNumericFuelFilterCondition(
         : "{$fuelNameField} = :fuel";
 }
 
+function fuelauRouteFuelCodeFilterCondition(array $filters, string $fuelCodeField): ?string
+{
+    $codes = $filters['route_fuel_codes'] ?? null;
+    if (!is_array($codes)) {
+        return null;
+    }
+    if ($codes === []) {
+        return '1=0';
+    }
+
+    $placeholders = array_map(
+        static fn(int $index): string => ":route_fuel_{$index}",
+        array_keys(array_values($codes)),
+    );
+
+    return "CAST({$fuelCodeField} AS CHAR) IN (" . implode(', ', $placeholders) . ')';
+}
+
 function fuelauApplyFuelLocationFilters(
     array &$where,
     string &$distanceSelect,
@@ -219,7 +493,12 @@ function fuelauBindFuelFilters(PDOStatement $statement, array $filters, bool $bi
     if ($bindState && $filters['state'] !== '') {
         $statement->bindValue(':state', $filters['state']);
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCodes = $filters['route_fuel_codes'] ?? null;
+    if (is_array($routeFuelCodes)) {
+        foreach (array_values($routeFuelCodes) as $index => $code) {
+            $statement->bindValue(":route_fuel_{$index}", (string) $code);
+        }
+    } elseif ($filters['fuel'] !== '') {
         $statement->bindValue(':fuel', $filters['fuel']);
     }
     if ($filters['lat'] !== null && $filters['lon'] !== null) {
@@ -268,7 +547,10 @@ function fuelauQldFuelRows(PDO $pdo, array $filters): array
     if ($filters['brand'] !== '') {
         $where[] = 'b.name LIKE :brand';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_id');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -325,7 +607,10 @@ function fuelauSaFuelRows(PDO $pdo, array $filters): array
     if ($filters['brand'] !== '') {
         $where[] = 'b.name LIKE :brand';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_id');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = fuelauNumericFuelFilterCondition($filters, 'c.fuel_id', 'f.name');
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -385,7 +670,10 @@ function fuelauNswFuelRows(PDO $pdo, array $filters): array
     if ($filters['state'] !== '') {
         $where[] = 'c.state = :state';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_code');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -446,7 +734,10 @@ function fuelauVicFuelRows(PDO $pdo, array $filters): array
     if ($filters['brand'] !== '') {
         $where[] = 'b.name LIKE :brand';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_code');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = '(c.fuel_code = :fuel OR f.name = :fuel)';
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -510,7 +801,10 @@ function fuelauWaFuelRows(PDO $pdo, array $filters): array
     if ($filters['brand'] !== '') {
         $where[] = 'b.name LIKE :brand';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_code');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = '(CAST(c.fuel_code AS CHAR) = :fuel OR f.name = :fuel)';
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -574,7 +868,10 @@ function fuelauNtFuelRows(PDO $pdo, array $filters): array
     if ($filters['brand'] !== '') {
         $where[] = 'b.name LIKE :brand';
     }
-    if ($filters['fuel'] !== '') {
+    $routeFuelCondition = fuelauRouteFuelCodeFilterCondition($filters, 'c.fuel_code');
+    if ($routeFuelCondition !== null) {
+        $where[] = $routeFuelCondition;
+    } elseif ($filters['fuel'] !== '') {
         $where[] = '(CAST(c.fuel_code AS CHAR) = :fuel OR f.name = :fuel)';
     }
     fuelauApplyFuelLocationFilters($where, $distanceSelect, $filters, 's.latitude', 's.longitude');
@@ -630,13 +927,23 @@ function fuelauNormalizedFuelRows(PDO $pdo, array $filters): array
     $rows = [];
 
     foreach (fuelauFuelSourcesForFilters($filters) as $source) {
+        $sourceFilters = $filters;
+        $routeCodesBySource = $filters['route_fuel_codes_by_source'] ?? null;
+        if (is_array($routeCodesBySource)) {
+            $sourceFilters['route_fuel_codes'] = array_values(
+                is_array($routeCodesBySource[$source] ?? null)
+                    ? $routeCodesBySource[$source]
+                    : [],
+            );
+            $sourceFilters['fuel'] = '';
+        }
         $sourceRows = match ($source) {
-            'qld' => fuelauQldFuelRows($pdo, $filters),
-            'sa' => fuelauSaFuelRows($pdo, $filters),
-            'nsw' => fuelauNswFuelRows($pdo, $filters),
-            'vic' => fuelauVicFuelRows($pdo, $filters),
-            'wa' => fuelauWaFuelRows($pdo, $filters),
-            'nt' => fuelauNtFuelRows($pdo, $filters),
+            'qld' => fuelauQldFuelRows($pdo, $sourceFilters),
+            'sa' => fuelauSaFuelRows($pdo, $sourceFilters),
+            'nsw' => fuelauNswFuelRows($pdo, $sourceFilters),
+            'vic' => fuelauVicFuelRows($pdo, $sourceFilters),
+            'wa' => fuelauWaFuelRows($pdo, $sourceFilters),
+            'nt' => fuelauNtFuelRows($pdo, $sourceFilters),
             default => throw new LogicException("Unsupported normalized fuel provider: {$source}"),
         };
         if ($sourceRows !== []) {
@@ -751,6 +1058,11 @@ function fuelauRouteCandidateRows(
         ]),
         $bounds
     );
+    $profileId = fuelauRouteFuelProfileId($fuel);
+    if ($profileId !== null) {
+        $filters['route_fuel_profile'] = $profileId;
+        $filters['route_fuel_codes_by_source'] = fuelauRouteFuelCodesBySource($profileId);
+    }
     $rows = fuelauNormalizedFuelRows($pdo, $filters);
     $candidates = [];
 
@@ -1055,11 +1367,14 @@ function fuelauCachedFuelOptions(
     string $cacheDirectory,
     int $ttlSeconds = 300
 ): array {
-    return fuelauRememberArray(
+    $options = fuelauRememberArray(
         rtrim($cacheDirectory, '/') . '/fuel-options.json',
         $ttlSeconds,
         static fn (): array => fuelauFuelOptions($pdo)
     );
+    $options['route_fuels'] = fuelauRouteFuelProfiles();
+
+    return $options;
 }
 
 function fuelauCachedHistoricalSeries(
@@ -1259,6 +1574,7 @@ function fuelauFuelOptions(PDO $pdo): array
         'sources' => $sources,
         'states' => $states,
         'fuels' => $fuels,
+        'route_fuels' => fuelauRouteFuelProfiles(),
     ];
 }
 

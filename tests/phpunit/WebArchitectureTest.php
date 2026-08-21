@@ -315,6 +315,24 @@ final class WebArchitectureTest extends TestCase
         self::assertStringNotContainsString('fatigue spacing', $script);
     }
 
+    public function testRouteFuelSelectorsUseCanonicalNationalGroups(): void
+    {
+        $script = file_get_contents(dirname(__DIR__, 2) . '/public/resources/app.js');
+
+        self::assertIsString($script);
+        self::assertStringContainsString('fuelOptions?.route_fuels', $script);
+        self::assertStringContainsString('type: fuelProfile', $script);
+        self::assertStringContainsString('routeFuelSelectedValue(),', $script);
+        self::assertStringContainsString(
+            'collectFuelStopFinderCandidates(progress, fuelProfile',
+            $script,
+        );
+        self::assertStringNotContainsString(
+            'const choices = filteredFuelOptions().filter',
+            $script,
+        );
+    }
+
     public function testAdministrationUsesSecondaryOverflowAndProtectedManagementSurface(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');

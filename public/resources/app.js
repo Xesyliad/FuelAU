@@ -1179,6 +1179,11 @@ function fuelStopFinderFuelSelectedLabel() {
     return option ? option.textContent.trim() : '';
 }
 
+function fuelStopFinderFuelSelectedWarning() {
+    const option = Array.from(fuelStopFinderFuelType?.options || []).find((item) => item.value === fuelStopFinderFuelSelectedValue());
+    return String(option?.dataset?.warning || '').trim();
+}
+
 function fuelStopFinderDetourLimitKm(routeKm) {
     const distance = Number(routeKm || 0);
     if (distance <= 80) {
@@ -1245,12 +1250,12 @@ async function collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, bud
     return [];
 }
 
-async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLPer100km) {
+async function buildFuelStopFinderPlan(origin, destination, fuelProfile, fuelLabel, economyLPer100km) {
     const budget = createRoutePlannerBudget();
     const route = await fetchRouteDetails(origin, destination, true, budget, 'full');
     const routeKm = route.distanceM / 1000;
     const progress = buildRouteProgress(route.geometry);
-    const candidates = await collectFuelStopFinderCandidates(progress, fuelQuery, routeKm, budget);
+    const candidates = await collectFuelStopFinderCandidates(progress, fuelProfile, routeKm, budget);
 
     if (candidates.length === 0) {
         throw new Error('No fuel stations were found along this route.');
@@ -1284,7 +1289,7 @@ async function buildFuelStopFinderPlan(origin, destination, fuelQuery, economyLP
     ];
 
     return {
-        fuelQuery,
+        fuelQuery: fuelLabel,
         segments: [
             {
                 routePieces,
@@ -1335,6 +1340,7 @@ function renderFuelStopFinderRecommendation(stop, plan) {
         <div class="fuel-stop-finder-card">
             <strong>${escapeHtml(routeFuelStationDisplay(stop) || stop.station_name || 'Recommended stop')}</strong>
             <span>${escapeHtml(String(stop.address || ''))}</span>
+            ${String(stop.fuel_name || '').trim() !== '' ? `<span>Product: ${escapeHtml(String(stop.fuel_name).trim())}</span>` : ''}
             <span>Price: ${escapeHtml(routeFuelPriceText(stop.price) || '$0.00')}/L</span>
             <span>Route detour: ${escapeHtml(Number(stop.offRouteDistanceKm || 0).toFixed(1))} km</span>
             <span>Selected because it is the cheapest eligible stop${scope !== '' ? ` within the ${escapeHtml(scope)} detour window` : ''}.</span>
@@ -2035,12 +2041,13 @@ function updateRouteVehicleSettingsSummary() {
         || 'Practical least cost';
     routeVehicleSettingsSummary.textContent = [
         routeFuelSelectedLabel() || 'Diesel',
+        routeFuelSelectedWarning(),
         `${routeTankCapacityValue().toFixed(1)} L tank`,
         `${routeStartingFuelValue().toFixed(1)} L start`,
         `${routeFuelReserveValue().toFixed(1)} L reserve`,
         `${routeFuelDefaultEconomyValue().toFixed(1)} L/100km`,
         optimisationLabel,
-    ].join(' · ');
+    ].filter((value) => String(value || '').trim() !== '').join(' · ');
 }
 
 function routeFuelDefaultEconomyValue() {
@@ -2067,13 +2074,18 @@ function fuelTypeSelectedLabel() {
 }
 
 function routeFuelChoices() {
-    const choices = filteredFuelOptions().filter((item) => String(item.value || '') !== '');
+    const choices = Array.isArray(fuelOptions?.route_fuels)
+        ? fuelOptions.route_fuels.filter((item) => String(item.value || '') !== '')
+        : [];
     return choices.length > 0 ? choices : [{ value: 'Diesel', label: 'Diesel' }];
 }
 
 function routeFuelDefaultValue() {
     const options = routeFuelChoices();
     const current = String(routeFuelType?.value || '').trim();
+    if (current !== '' && options.some((item) => item.value === current)) {
+        return current;
+    }
     const cookieValue = savedFuelLabel();
     if (cookieValue !== '') {
         const cookieMatch = options.find((item) => item.label.trim().toLowerCase() === cookieValue.toLowerCase());
@@ -2081,10 +2093,6 @@ function routeFuelDefaultValue() {
             return cookieMatch.value;
         }
     }
-    if (current !== '' && options.some((item) => item.value === current)) {
-        return current;
-    }
-
     const diesel = options.find((item) => item.label.toLowerCase() === 'diesel');
     return diesel ? diesel.value : options[0].value;
 }
@@ -2105,6 +2113,11 @@ function routeFuelSelectedValue() {
 function routeFuelSelectedLabel() {
     const option = Array.from(routeFuelType?.options || []).find((item) => item.value === routeFuelSelectedValue());
     return option ? option.textContent.trim() : '';
+}
+
+function routeFuelSelectedWarning() {
+    const option = Array.from(routeFuelType?.options || []).find((item) => item.value === routeFuelSelectedValue());
+    return String(option?.dataset?.warning || '').trim();
 }
 
 function selectedFuelLabel() {
@@ -2228,10 +2241,14 @@ function routeFuelCandidateOffRouteKm(candidate) {
 function routeFuelStopLabel(stop) {
     const station = String(stop?.station_name || '').trim();
     const address = String(stop?.address || '').trim();
+    const fuelName = String(stop?.fuel_name || '').trim();
     const price = routeFuelPriceText(stop?.price);
     const lines = [station];
     if (address !== '') {
         lines.push(address);
+    }
+    if (fuelName !== '') {
+        lines.push(fuelName);
     }
     lines.push(`${price}/L`);
     return lines.join('\n');
@@ -2612,6 +2629,8 @@ function routeOptimizerPlanFromResponse(
             station_id: String(stop?.station?.station_id || ''),
             station_name: String(stop?.station?.station_name || ''),
             address: String(stop?.station?.address || ''),
+            fuel_code: String(stop?.fuel_code || ''),
+            fuel_name: String(stop?.fuel_name || ''),
             latitude: Number(stop?.station?.latitude),
             longitude: Number(stop?.station?.longitude),
             price: Number(stop?.price_cents_per_l || 0),
@@ -2683,7 +2702,8 @@ function routeOptimizerPlanFromResponse(
 async function buildOptimizedRoutePlan(
     origin,
     destinations,
-    fuelQuery,
+    fuelProfile,
+    fuelLabel,
     tankCapacityL,
     startingFuelL,
     economyLPer100km,
@@ -2697,7 +2717,7 @@ async function buildOptimizedRoutePlan(
             destinations: destinations.map(routeOptimizerLocation),
             return_mode: routeOptimizerReturnMode(),
             fuel: {
-                type: fuelQuery,
+                type: fuelProfile,
                 tank_capacity_l: tankCapacityL,
                 starting_fuel_l: startingFuelL,
                 economy_l_per_100km: economyLPer100km,
@@ -2713,7 +2733,7 @@ async function buildOptimizedRoutePlan(
         payload,
         origin,
         destinations,
-        fuelQuery,
+        fuelLabel,
         tankCapacityL,
         economyLPer100km
     );
@@ -3442,13 +3462,14 @@ function renderRouteBreakdownInto(targetElement, plan, options = {}) {
                     const detourKm = Number(piece.detourKm || routeFuelCandidateOffRouteKm(piece.station) || 0);
                     const scope = String(piece.selectionScope || 'strict');
                     const stationRegion = routeFuelStationRegionText(piece.station);
+                    const fuelProduct = String(piece.station.fuel_name || '').trim();
                     rows.push({
                         leg: routeFuelStopLegNumber(piece, segmentIndex + 1),
                         type: 'Fuel stop',
                         instruction: `${piece.station.station_name}${stationRegion !== '' ? ` at ${stationRegion}` : ''} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',
-                        details: `Price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
+                        details: `${fuelProduct !== '' ? `${fuelProduct}, ` : ''}price: ${routeFuelPriceText(piece.station.price)}/L, detour: ${detourKm.toFixed(1)} km, selected from the ${scope} detour window`,
                         wazeUrl: routeFuelWazeUrl(piece.station),
                         stationName: String(piece.station.station_name || 'fuel station'),
                         focusLatitude: Number(piece.station.latitude ?? piece.station.lat ?? Number.NaN),
@@ -3472,13 +3493,14 @@ function renderRouteBreakdownInto(targetElement, plan, options = {}) {
                         ? `, ${piece.reasonCodes.map((reason) => String(reason).replace(/_/g, ' ')).join(', ')}`
                         : '';
                     const stationRegion = routeFuelStationRegionText(piece.station);
+                    const fuelProduct = String(piece.station.fuel_name || '').trim();
                     rows.push({
                         leg: routeFuelStopLegNumber(piece, segmentIndex + 1),
                         type: departureTopUp ? 'Departure top-up' : 'Fuel stop',
                         instruction: `${piece.station.station_name}${stationRegion !== '' ? ` at ${stationRegion}` : ''} - ${routeFuelPriceText(piece.station.price)}/L`,
                         distance: '-',
                         duration: '-',
-                        details: `${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
+                        details: `${fuelProduct !== '' ? `${fuelProduct}, ` : ''}${Number(piece.litresPurchased || 0).toFixed(1)} L, $${(Number(piece.purchaseCents || 0) / 100).toFixed(2)}${optimizerDetails}${savingDetails}${reasonDetails}${stopSuffix}`,
                         wazeUrl: routeFuelWazeUrl(piece.station),
                         stationName: String(piece.station.station_name || 'fuel station'),
                         focusLatitude: Number(piece.station.latitude ?? piece.station.lat ?? Number.NaN),
@@ -3672,7 +3694,6 @@ function restoreRoutePlannerState(state) {
     if (String(state.fuelValue || '').trim() !== '') {
         routeFuelType.value = String(state.fuelValue || '').trim();
     }
-    persistFuelLabel(routeFuelSelectedLabel());
     updateRouteVehicleSettingsSummary();
     setRoutePlannerWorkflowState(state.planned ? 'stale' : 'input');
     if (routePlannerResultsSummary) {
@@ -3849,7 +3870,8 @@ async function planRoute() {
         const plan = await buildOptimizedRoutePlan(
             origin,
             destinations,
-            routeFuelQueryLabel(),
+            routeFuelSelectedValue(),
+            routeFuelSelectedLabel(),
             tankCapacity,
             startingFuel,
             fuelEconomy,
@@ -4046,7 +4068,9 @@ async function planFuelStopFinder() {
     const originValue = fuelStopFinderOrigin.value.trim();
     const destinationValue = fuelStopFinderDestination.value.trim();
     const economy = Number(fuelStopFinderEconomy.value || 0);
-    const fuelQuery = fuelStopFinderFuelSelectedLabel();
+    const fuelProfile = fuelStopFinderFuelSelectedValue();
+    const fuelLabel = fuelStopFinderFuelSelectedLabel();
+    const fuelWarning = fuelStopFinderFuelSelectedWarning();
 
     if (originValue === '') {
         setFuelStopFinderWorkflowState('error');
@@ -4104,9 +4128,9 @@ async function planFuelStopFinder() {
         } catch (error) {
             throw new Error(`Geocoding failed for "${destinationValue}": ${error.message}`);
         }
-        const plan = await buildFuelStopFinderPlan(origin, destination, fuelQuery, economy);
+        const plan = await buildFuelStopFinderPlan(origin, destination, fuelProfile, fuelLabel, economy);
         const stop = plan.selectedStop || (Array.isArray(plan.segments) ? plan.segments.flatMap((segment) => segment.stops || [])[0] : null);
-        renderFuelStopFinderSummary(plan, stop, fuelQuery);
+        renderFuelStopFinderSummary(plan, stop, fuelLabel);
         renderFuelStopFinderRecommendation(stop, plan);
         renderFuelStopFinderMap(plan);
         renderRouteBreakdownInto(fuelStopFinderLegs, plan, { workflow: 'fuel-stop-finder' });
@@ -4123,7 +4147,7 @@ async function planFuelStopFinder() {
         }
         saveFuelStopFinderState(true);
 
-        fuelStopFinderDetail.textContent = `Evaluating ${fuelQuery || 'Diesel'} stations along the route and selecting the cheapest eligible stop with a sensible detour.`;
+        fuelStopFinderDetail.textContent = `Evaluating ${fuelLabel || 'Diesel'} stations along the route and selecting the cheapest eligible stop with a sensible detour.${fuelWarning !== '' ? ` ${fuelWarning}` : ''}`;
         const selectionScope = String(plan?.segments?.[0]?.routePieces?.find((piece) => piece.type === 'fuel-stop')?.selectionScope || 'strict');
         fuelStopFinderStatus.classList.toggle('route-status-warning', selectionScope !== 'strict');
         fuelStopFinderStatus.textContent = stop
@@ -4248,6 +4272,10 @@ function setSelectOptions(select, options, selectedValue) {
         const element = document.createElement('option');
         element.value = option.value;
         element.textContent = option.label;
+        if (String(option.warning || '').trim() !== '') {
+            element.dataset.warning = String(option.warning).trim();
+            element.title = String(option.warning).trim();
+        }
         if (option.value === selectedValue) {
             element.selected = true;
         }
@@ -5631,11 +5659,8 @@ fuelType.addEventListener('change', async () => {
     syncRouteFuelSelector();
     await loadFuelDashboard();
 });
-routeFuelType.addEventListener('change', async () => {
-    persistFuelLabel(routeFuelSelectedLabel());
+routeFuelType.addEventListener('change', () => {
     markRoutePlannerInputChanged();
-    syncFuelSelectors();
-    await loadFuelDashboard();
 });
 refreshFuelDashboard.addEventListener('click', loadFuelDashboard);
 attachRouteAutocomplete(routeOrigin);

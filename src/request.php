@@ -277,9 +277,10 @@ final readonly class FuelauRouteOptimizationFuel
      */
     public static function fromBody(array $body): self
     {
-        $type = trim(FuelauRequestValue::string($body['type'] ?? ''));
-        if ($type === '' || strlen($type) > 100) {
-            throw new FuelauValidationException('fuel.type must contain between 1 and 100 characters.');
+        $rawType = trim(FuelauRequestValue::string($body['type'] ?? ''));
+        $type = fuelauRouteFuelProfileId($rawType);
+        if ($type === null) {
+            throw new FuelauValidationException('fuel.type must be a supported grouped route fuel.');
         }
 
         $tankCapacityL = FuelauRequestValue::floatOrNull($body['tank_capacity_l'] ?? null);
@@ -632,9 +633,16 @@ final readonly class FuelauRouteCandidateRequest
             throw new FuelauValidationException($exception->getMessage(), previous: $exception);
         }
 
+        $fuel = fuelauRouteFuelProfileId(
+            trim(FuelauRequestValue::string($body['fuel'] ?? '')),
+        );
+        if ($fuel === null) {
+            throw new FuelauValidationException('fuel must be a supported grouped route fuel.');
+        }
+
         return new self(
             points: $normalizedPoints,
-            fuel: trim(FuelauRequestValue::string($body['fuel'] ?? '')),
+            fuel: $fuel,
             radiusKm: max(
                 0.1,
                 min(100.0, FuelauRequestValue::floatOrNull($body['radius_km'] ?? null) ?? 25.0),

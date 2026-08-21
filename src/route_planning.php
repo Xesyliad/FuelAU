@@ -1644,6 +1644,8 @@ final readonly class FuelauSingleCorridorOptimizationResult
                         ? (float) $row['longitude']
                         : null,
                 ],
+                'fuel_code' => (string) ($row['fuel_code'] ?? ''),
+                'fuel_name' => (string) ($row['fuel_name'] ?? ''),
                 'price_cents_per_l' => $purchase->priceCentsPerL,
                 'price_status' => 'fresh',
                 'route_progress_km' => round($purchase->progressM / 1_000, 1),
@@ -1694,6 +1696,8 @@ final readonly class FuelauSingleCorridorOptimizationResult
             'status' => 'ok',
             'objective' => [
                 'mode' => $this->request->preferences->mode,
+                'fuel_profile' => fuelauRouteFuelProfileId($this->request->fuel->type),
+                'fuel_profile_label' => fuelauRouteFuelProfileLabel($this->request->fuel->type),
                 'starting_fuel_cost_included' => false,
                 'terminal_reserve_l' => $this->request->fuel->reserveL,
                 'driver_time_value_cents_per_hour' => $this->policy->driverTimeValueCentsPerHour,

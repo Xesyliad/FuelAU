@@ -608,6 +608,9 @@ The Route Planning tool has:
 
 - Origin and reorderable destinations with Photon-backed suggestions and Nominatim fallback.
 - Fuel type, tank fill size, and fuel economy controls.
+- National route-fuel groups that map state-specific products into compatible choices: Unleaded, Premium Unleaded 95, Premium Unleaded 98, Diesel, Premium Diesel, LPG, CNG/NGV, LNG, and Hydrogen.
+- `Cheapest Unleaded` includes every mapped petrol product, including ethanol blends; `Cheapest Diesel` includes conventional, premium, and biodiesel products. Fuel classes are never mixed.
+- EV charge products remain available in fuel-price exploration but are excluded from the litre-based route planner.
 - Direct-return or reverse-path return mode.
 - A MapLibre route map using the local `/tiles/` basemap when the map stack is running.
 - Fuel stops plotted on the route and a turn-by-turn breakdown.
