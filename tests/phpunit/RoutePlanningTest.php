@@ -703,10 +703,22 @@ final class RoutePlanningTest extends TestCase
         self::assertTrue($validator->isAcceptableConservativeVariance(
             $conservativeVariance,
         ));
-        self::assertFalse($validator->isAcceptableConservativeVariance(
+        self::assertTrue($validator->isAcceptableConservativeVariance(
             $validator->validate(
                 $result,
                 ['distance' => 594_000, 'duration' => 21_450],
+            ),
+        ));
+        self::assertFalse($validator->isAcceptableConservativeVariance(
+            new FuelauExactRouteValidation(
+                modeledDistanceM: 600_000,
+                exactDistanceM: 589_999,
+                distanceDeltaM: -10_001,
+                modeledDurationS: 21_600,
+                exactDurationS: 21_450,
+                durationDeltaS: -150,
+                fuelBucketDelta: -1,
+                requiresReoptimization: true,
             ),
         ));
 

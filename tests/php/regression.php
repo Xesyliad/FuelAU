@@ -2073,10 +2073,23 @@ fuelauTest('single-corridor planner maps request policy and builds response acco
         $validator->isAcceptableConservativeVariance($conservativeVariance),
     );
     fuelauAssertSame(
-        false,
+        true,
         $validator->isAcceptableConservativeVariance($validator->validate(
             $result,
             ['distance' => 594_000, 'duration' => 21_450],
+        )),
+    );
+    fuelauAssertSame(
+        false,
+        $validator->isAcceptableConservativeVariance(new FuelauExactRouteValidation(
+            modeledDistanceM: 600_000,
+            exactDistanceM: 589_999,
+            distanceDeltaM: -10_001,
+            modeledDurationS: 21_600,
+            exactDurationS: 21_450,
+            durationDeltaS: -150,
+            fuelBucketDelta: -1,
+            requiresReoptimization: true,
         )),
     );
     $exactRouteCalls = 0;
@@ -2874,6 +2887,32 @@ fuelauTest('aggregate cache avoids repeated loaders', static function (): void {
         foreach (glob($directory . '/*') ?: [] as $path) {
             unlink($path);
         }
+        rmdir($directory);
+    }
+});
+
+fuelauTest('aggregate cache falls back when its lock file is unusable', static function (): void {
+    $directory = sys_get_temp_dir() . '/fuelau-cache-lock-' . bin2hex(random_bytes(8));
+    mkdir($directory, 0775, true);
+    mkdir($directory . '/value.json.lock');
+    $calls = 0;
+    $loader = static function () use (&$calls): array {
+        $calls++;
+        return ['value' => $calls];
+    };
+    set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+        if (!(error_reporting() & $severity)) {
+            return false;
+        }
+        throw new ErrorException($message, 0, $severity, $file, $line);
+    });
+
+    try {
+        fuelauAssertSame(['value' => 1], fuelauRememberArray($directory . '/value.json', 60, $loader));
+        fuelauAssertSame(1, $calls);
+    } finally {
+        restore_error_handler();
+        rmdir($directory . '/value.json.lock');
         rmdir($directory);
     }
 });

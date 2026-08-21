@@ -1299,10 +1299,15 @@ function fuelauRememberArray(
 ): array {
     $ttlSeconds = max(1, $ttlSeconds);
     $readCache = static function () use ($cachePath, $ttlSeconds): ?array {
-        if (!is_file($cachePath) || filemtime($cachePath) < time() - $ttlSeconds) {
+        $modifiedAt = is_file($cachePath) ? @filemtime($cachePath) : false;
+        if ($modifiedAt === false || $modifiedAt < time() - $ttlSeconds) {
             return null;
         }
-        $decoded = json_decode((string) file_get_contents($cachePath), true);
+        $contents = @file_get_contents($cachePath);
+        if ($contents === false) {
+            return null;
+        }
+        $decoded = json_decode($contents, true);
         return is_array($decoded) ? $decoded : null;
     };
 
@@ -1312,11 +1317,11 @@ function fuelauRememberArray(
     }
 
     $directory = dirname($cachePath);
-    if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+    if (!is_dir($directory) && !@mkdir($directory, 0775, true) && !is_dir($directory)) {
         return $loader();
     }
-    $lock = fopen($cachePath . '.lock', 'c+');
-    if ($lock === false || !flock($lock, LOCK_EX)) {
+    $lock = @fopen($cachePath . '.lock', 'c+');
+    if ($lock === false || !@flock($lock, LOCK_EX)) {
         if (is_resource($lock)) {
             fclose($lock);
         }
@@ -1339,13 +1344,13 @@ function fuelauRememberArray(
         }
 
         $temporaryPath = $cachePath . '.' . getmypid() . '.tmp';
-        if (file_put_contents($temporaryPath, $encoded, LOCK_EX) !== false) {
-            chmod($temporaryPath, 0664);
-            rename($temporaryPath, $cachePath);
+        if (@file_put_contents($temporaryPath, $encoded, LOCK_EX) !== false) {
+            @chmod($temporaryPath, 0664);
+            @rename($temporaryPath, $cachePath);
         }
         return $value;
     } finally {
-        flock($lock, LOCK_UN);
+        @flock($lock, LOCK_UN);
         fclose($lock);
     }
 }

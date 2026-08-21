@@ -333,6 +333,17 @@ final class WebArchitectureTest extends TestCase
         );
     }
 
+    public function testAppStartupNormalizesPersistedCacheOwnership(): void
+    {
+        $entrypoint = file_get_contents(dirname(__DIR__, 2) . '/docker/app/entrypoint.sh');
+
+        self::assertIsString($entrypoint);
+        self::assertStringContainsString(
+            'chown -R www-data:www-data "$app_state_directory"',
+            $entrypoint,
+        );
+    }
+
     public function testAdministrationUsesSecondaryOverflowAndProtectedManagementSurface(): void
     {
         $template = file_get_contents(dirname(__DIR__, 2) . '/templates/app.php');

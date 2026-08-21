@@ -1333,7 +1333,7 @@ final class FuelauExactRouteValidator
         FuelauExactRouteValidation $validation,
     ): bool {
         return $validation->distanceDeltaM <= 0
-            && $validation->distanceDeltaM >= -5_000
+            && $validation->distanceDeltaM >= -10_000
             && abs($validation->durationDeltaS) <= 180
             && $validation->fuelBucketDelta <= 0
             && $validation->fuelBucketDelta >= -1;

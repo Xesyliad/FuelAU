@@ -38,6 +38,12 @@ if [ -e /var/www/html/public/index.php ]; then
     fi
 fi
 
+# Persisted cache files can also be created by root-run maintenance commands.
+# Normalise ownership at startup so Apache can safely reuse those files.
+app_state_directory=/var/www/html/var/docker/app-state
+mkdir -p "$app_state_directory"
+chown -R www-data:www-data "$app_state_directory" 2>/dev/null || true
+
 if [ "${FUELAU_CRON_ENABLED:-true}" = "true" ]; then
     crontab /etc/cron.d/fuelau
     service cron start
