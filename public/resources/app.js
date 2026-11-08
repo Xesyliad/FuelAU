@@ -2183,7 +2183,10 @@ function routeFuelSourceIsOfficial(source) {
 
 function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
     const raw = String(updatedAt || '').trim();
-    let timestamp = Date.parse(raw.replace(' ', 'T'));
+    const normalized = raw.replace(' ', 'T');
+    // Importer timestamps are UTC, even when they have no timezone suffix.
+    let timestamp = Date.parse(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized)
+        ? `${normalized}Z` : normalized);
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
         const [year, month, day] = raw.split('-').map((part) => Number(part));
         timestamp = new Date(year, month - 1, day).getTime();
@@ -2199,7 +2202,7 @@ function routeFuelPriceIsFresh(updatedAt, maximumAgeDays = 14) {
 function routeFuelCandidateIsEligible(candidate) {
     return routeFuelSourceIsOfficial(candidate?.source)
         && routeFuelPriceIsReasonable(candidate?.price)
-        && routeFuelPriceIsFresh(candidate?.updated_at);
+        && routeFuelPriceIsFresh(candidate?.last_seen_at || candidate?.updated_at);
 }
 
 function routeFuelStationDisplay(candidate) {
@@ -4204,7 +4207,7 @@ function fuelRecordHasRenderablePrice(value) {
 
 function fuelRecordIsRenderable(row) {
     return fuelRecordHasRenderablePrice(row?.price)
-        && routeFuelPriceIsFresh(row?.updated_at);
+        && routeFuelPriceIsFresh(row?.last_seen_at || row?.updated_at);
 }
 
 function fuelRowsForRendering(rows) {

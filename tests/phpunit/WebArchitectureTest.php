@@ -183,7 +183,7 @@ final class WebArchitectureTest extends TestCase
 
         self::assertIsString($source);
         self::assertStringContainsString('return routeFuelPriceIsReasonable(value);', $source);
-        self::assertStringContainsString('routeFuelPriceIsFresh(row?.updated_at)', $source);
+        self::assertStringContainsString('routeFuelPriceIsFresh(row?.last_seen_at || row?.updated_at)', $source);
     }
 
     public function testTopographicContourWorkerUsesAnAbsoluteDemUrl(): void

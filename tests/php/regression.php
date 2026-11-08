@@ -2852,7 +2852,7 @@ fuelauTest('dashboard excludes stale and out-of-range prices', static function (
         'Dashboard price rendering must use the supported price range'
     );
     fuelauAssertTrue(
-        str_contains($source, 'routeFuelPriceIsFresh(row?.updated_at)'),
+        str_contains($source, 'routeFuelPriceIsFresh(row?.last_seen_at || row?.updated_at)'),
         'Dashboard records must pass the freshness check'
     );
 });

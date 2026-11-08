@@ -117,6 +117,27 @@ final class RoutePlanningTest extends TestCase
         );
     }
 
+    public function testPriceFreshnessUsesFeedConfirmationBeforePriceChange(): void
+    {
+        $rows = fuelauClassifyRouteCandidatePriceRows(
+            [
+                ['updated_at' => '2026-01-01', 'last_seen_at' => '2026-07-29 23:00:00'],
+                ['updated_at' => '2026-07-29', 'last_seen_at' => '2026-07-01 00:00:00'],
+                ['updated_at' => '2026-07-29', 'last_seen_at' => 'invalid'],
+                ['updated_at' => '2026-07-29', 'last_seen_at' => '2026-07-31 00:00:00'],
+                ['updated_at' => '2026-07-29', 'last_seen_at' => null],
+                ['updated_at' => '2026-07-29', 'last_seen_at' => ''],
+            ],
+            new DateTimeImmutable('2026-07-30T00:00:00Z'),
+        );
+
+        self::assertSame(
+            ['fresh', 'stale', 'stale', 'stale', 'fresh', 'fresh'],
+            array_column($rows, 'price_status'),
+        );
+        self::assertSame('2026-01-01', $rows[0]['updated_at']);
+    }
+
     public function testWaCalendarPriceDateUsesPerthTime(): void
     {
         $rows = fuelauClassifyRouteCandidatePriceRows(

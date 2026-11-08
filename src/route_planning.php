@@ -870,7 +870,11 @@ function fuelauClassifyRouteCandidatePriceRows(
     $utcTimezone = new DateTimeZone('UTC');
     $waTimezone = new DateTimeZone('Australia/Perth');
     foreach ($rows as &$row) {
-        $rawUpdatedAt = trim((string) ($row['updated_at'] ?? ''));
+        // An unchanged price remains current when the feed reconfirms it.
+        $rawUpdatedAt = trim((string) ($row['last_seen_at'] ?? ''));
+        if ($rawUpdatedAt === '') {
+            $rawUpdatedAt = trim((string) ($row['updated_at'] ?? ''));
+        }
         try {
             if (
                 strtolower(trim((string) ($row['source'] ?? ''))) === 'wa'
